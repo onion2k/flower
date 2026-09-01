@@ -1,4 +1,6 @@
 import { catalogue, catalogueNames } from './spike/catalogue';
+import { examples, exampleNames } from './dsl/examples';
+import { compile } from './dsl/index';
 import { metalNames, finishNames } from './render/materials';
 import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
@@ -12,6 +14,10 @@ const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
 const statsEl = document.getElementById('stats')!;
 const budgetEl = document.getElementById('budget')!;
+
+const editor = document.getElementById('editor')!;
+const sourceEl = document.getElementById('source') as HTMLTextAreaElement;
+const diagnosticEl = document.getElementById('diagnostic')!;
 
 const viewer = new Viewer(stage);
 
@@ -43,7 +49,10 @@ function toggle(label: string, key: 'showAnchors', onChange: () => void) {
   return wrap;
 }
 
-function picker(label: string, names: readonly string[], value: string, onPick: (v: string) => void) {
+function picker(
+  label: string, names: readonly string[], value: string,
+  onPick: (v: string) => void, register?: (sel: HTMLSelectElement) => void,
+) {
   const wrap = document.createElement('label');
   const row = document.createElement('div');
   row.className = 'row';
@@ -57,6 +66,7 @@ function picker(label: string, names: readonly string[], value: string, onPick: 
   }
   sel.value = value;
   sel.addEventListener('change', () => onPick(sel.value));
+  register?.(sel);
   wrap.append(row, sel);
   return wrap;
 }
@@ -89,7 +99,9 @@ function slider(
 const subjectSet = document.createElement('fieldset');
 subjectSet.innerHTML = '<legend>Subject</legend>';
 const select = document.createElement('select');
-for (const [label, names] of [['Forms', formNames], ['Parts', catalogueNames]] as const) {
+for (const [label, names] of [
+  ['Sketches', exampleNames], ['Forms', formNames], ['Parts', catalogueNames],
+] as const) {
   const group = document.createElement('optgroup');
   group.label = label;
   for (const n of names) {
@@ -100,12 +112,25 @@ for (const [label, names] of [['Forms', formNames], ['Parts', catalogueNames]] a
   }
   select.append(group);
 }
-select.value = `Forms:${state.subject}`;
+state.subject = exampleNames[0];
+select.value = `Sketches:${state.subject}`;
 select.addEventListener('change', () => {
-  state.subject = select.value.split(':')[1];
+  const [kind, name] = select.value.split(':');
+  state.subject = name;
+  if (kind === 'Sketches') sourceEl.value = examples[name];
+  framed = '';
   build();
 });
+
+let recompile = 0;
+sourceEl.addEventListener('input', () => {
+  clearTimeout(recompile);
+  recompile = window.setTimeout(build, 180);
+});
 subjectSet.append(select);
+
+let metalSelect: HTMLSelectElement;
+let finishSelect: HTMLSelectElement;
 
 const materialSet = document.createElement('fieldset');
 materialSet.innerHTML = '<legend>Material</legend>';
@@ -113,11 +138,11 @@ materialSet.append(
   picker('metal', metalNames, state.metal, (v) => {
     state.metal = v;
     viewer.setMaterial(state.metal, state.finish);
-  }),
+  }, (sel) => { metalSelect = sel; }),
   picker('finish', finishNames, state.finish, (v) => {
     state.finish = v;
     viewer.setMaterial(state.metal, state.finish);
-  }),
+  }, (sel) => { finishSelect = sel; }),
 );
 
 const lightSet = document.createElement('fieldset');
@@ -179,11 +204,30 @@ function groupByMesh(assembly: Assembly) {
 }
 
 function build() {
-  const isForm = select.value.startsWith('Forms:');
-  const t0 = performance.now();
+  const [kind] = select.value.split(':');
+  editor.classList.toggle('open', kind === 'Sketches');
 
+  const t0 = performance.now();
   let assembly: Assembly;
-  if (isForm) {
+
+  if (kind === 'Sketches') {
+    const result = compile(sourceEl.value);
+    if (result.error) {
+      diagnosticEl.textContent = result.error.formatted;
+      diagnosticEl.classList.add('bad');
+      // keep the last good shape on screen rather than blanking on every keystroke
+      return;
+    }
+    diagnosticEl.textContent = `${result.sketch!.formName} — ${result.sketch!.assembly.stats().instances} placements`;
+    diagnosticEl.classList.remove('bad');
+    assembly = result.sketch!.assembly;
+    // a sketch declares its own material, so follow it in the panel too
+    if (result.sketch!.metal) state.metal = result.sketch!.metal;
+    if (result.sketch!.finish) state.finish = result.sketch!.finish;
+    metalSelect.value = state.metal;
+    finishSelect.value = state.finish;
+    viewer.setMaterial(state.metal, state.finish);
+  } else if (kind === 'Forms') {
     assembly = forms[state.subject]();
   } else {
     assembly = new Assembly(state.subject);
@@ -235,6 +279,7 @@ function report(assembly: Assembly, ms: number, span: number) {
     `${s.instances} placements built from ${s.uniqueTriangles.toLocaleString()} triangles of real geometry`;
 }
 
+sourceEl.value = examples[exampleNames[0]];
 viewer.setMaterial(state.metal, state.finish);
 build();
 

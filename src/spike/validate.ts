@@ -9,6 +9,8 @@
  */
 import { catalogue } from './catalogue';
 import { forms } from './forms';
+import { compile } from '../dsl/index';
+import { examples } from '../dsl/examples';
 import { Assembly } from '../assembly/assembly';
 import { dot } from '../geom/vec';
 import { rotationAbout } from '../geom/transform';
@@ -188,6 +190,52 @@ console.log('\nconnect() mating error');
     }
   }
   console.log(`  worst position error ${worst.toExponential(1)} mm`);
+}
+
+// --- the DSL is a second front end, not a second engine ---
+// rosette is written twice, once in TypeScript and once as a sketch; every
+// placement must come out at the same matrix, or the language means something
+// slightly different from the builder and the divergence will only widen.
+console.log('\nDSL');
+{
+  const compiled = compile(examples.rosette);
+  if (compiled.error) {
+    console.log(`  rosette sketch failed to compile:\n${compiled.error.formatted}`);
+  } else {
+    const dsl = compiled.sketch!.assembly.placements;
+    const ts = forms.rosette().placements;
+    let worst = 0;
+    let mismatch = dsl.length !== ts.length ? 'placement counts differ' : '';
+    for (let i = 0; i < Math.min(dsl.length, ts.length) && !mismatch; i++) {
+      // compare structurally, not by label: a sketch names its parts and the
+      // TypeScript version leaves defaults, which says nothing about the geometry
+      if (dsl[i].part.mesh.indices.length !== ts[i].part.mesh.indices.length) {
+        mismatch = `placement ${i} uses a different part ` +
+          `(${dsl[i].part.mesh.indices.length / 3} vs ${ts[i].part.mesh.indices.length / 3} triangles)`;
+        break;
+      }
+      for (let k = 0; k < 16; k++) {
+        worst = Math.max(worst, Math.abs(dsl[i].matrix[k] - ts[i].matrix[k]));
+      }
+    }
+    console.log(
+      `  rosette: ${dsl.length} placements, ` +
+      (mismatch ? `MISMATCH — ${mismatch}` : `worst matrix difference ${worst.toExponential(1)}`),
+    );
+  }
+
+  for (const [name, source] of Object.entries(examples)) {
+    const result = compile(source);
+    if (result.error) {
+      console.log(`  ${name.padEnd(10)} FAILED\n${result.error.formatted}`);
+      continue;
+    }
+    const s2 = result.sketch!.assembly.stats();
+    console.log(
+      `  ${name.padEnd(10)} ${pad(s2.instances, 4)} placements  ${pad(s2.uniqueParts, 2)} parts  ` +
+      `${pad(s2.uniqueTriangles.toLocaleString(), 7)} unique tris  ${result.sketch!.metal}/${result.sketch!.finish}`,
+    );
+  }
 }
 
 // --- forms: instancing pays off, and no placement carries a broken matrix ---

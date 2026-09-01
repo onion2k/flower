@@ -1,0 +1,377 @@
+import { Assembly, type Placement as Placed } from '../assembly/assembly';
+import { identity, multiply, rotationAbout, translation, uniformScale, type Mat4 } from '../geom/transform';
+import type { Vec3 } from '../geom/types';
+import { finishes, metals } from '../render/materials';
+import type { Part } from '../parts/types';
+import type { Action, Expr, Placement, Program } from './ast';
+import { Args, BUILTINS, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
+import { DslError, type Span } from './lexer';
+
+export interface Sketch {
+  assembly: Assembly;
+  /** Default material for anything that did not name its own. */
+  metal?: string;
+  finish?: string;
+  formName: string;
+}
+
+/**
+ * Walk the program and build an Assembly.
+ *
+ * Part declarations are evaluated once and the resulting Part is shared by every
+ * placement of it, which is what keeps a sketch instanced: `repeat sector around
+ * ring(16)` produces sixteen matrices, not sixteen meshes.
+ */
+export function evaluate(program: Program): Sketch {
+  const scope = new Map<string, Value>();
+  const units = new Map<string, Assembly>();
+  const forms = new Map<string, Assembly>();
+  const partCache = new Map<Expr, Part>();
+  const partMaterials = new Map<Part, { metal?: string; finish?: string }>();
+
+  let defaultMetal: string | undefined;
+  let defaultFinish: string | undefined;
+  let lastForm: string | undefined;
+
+  // --- expressions ---
+
+  function evalExpr(expr: Expr): Value {
+    // every Expr kind is handled; TypeScript proves the switch exhaustive
+    switch (expr.kind) {
+      case 'number': return expr.value;
+      case 'string': return expr.value;
+
+      case 'ident': {
+        const value = scope.get(expr.name);
+        if (value === undefined) {
+          if (units.has(expr.name) || forms.has(expr.name)) {
+            throw new DslError(
+              `"${expr.name}" is a unit or form — use it with "repeat" or "place"`,
+              expr.span,
+            );
+          }
+          // a bare word is a value in its own right, for things like orient: radial
+          if (BUILTINS[expr.name]) {
+            throw new DslError(`"${expr.name}" needs arguments, like ${expr.name}(...)`, expr.span);
+          }
+          return expr.name;
+        }
+        return value;
+      }
+
+      case 'vector': {
+        const items = expr.items.map((e) => evalExpr(e));
+        for (const item of items) {
+          if (typeof item !== 'number') {
+            throw new DslError('a point is made of three numbers', expr.span);
+          }
+        }
+        return items as Vec3;
+      }
+
+      case 'unary': {
+        const value = evalExpr(expr.operand);
+        if (typeof value !== 'number') throw new DslError('cannot negate this', expr.span);
+        return -value;
+      }
+
+      case 'binary': {
+        const left = evalExpr(expr.left);
+        const right = evalExpr(expr.right);
+        if (typeof left !== 'number' || typeof right !== 'number') {
+          throw new DslError(`cannot use "${expr.op}" on these`, expr.span);
+        }
+        switch (expr.op) {
+          case '+': return left + right;
+          case '-': return left - right;
+          case '*': return left * right;
+          case '/':
+            if (right === 0) throw new DslError('division by zero', expr.span);
+            return left / right;
+        }
+        break;
+      }
+
+      case 'call': {
+        const builtin = BUILTINS[expr.callee];
+        if (!builtin) {
+          throw new DslError(`there is no "${expr.callee}" — ${suggest(expr.callee)}`, expr.span);
+        }
+        const args: CallArg[] = expr.args.map((a) => ({
+          name: a.name,
+          value: evalExpr(a.value),
+          span: a.span,
+        }));
+        const reader = new Args(expr.callee, args, expr.span, builtin.known);
+        const result = builtin.fn(reader);
+        reader.done();
+        return result;
+      }
+    }
+  }
+
+  /** Resolve an expression that must yield a Part, caching by syntax node. */
+  function evalPart(expr: Expr): Part {
+    if (expr.kind === 'ident') {
+      const value = scope.get(expr.name);
+      if (value !== undefined && isPart(value)) return value;
+      throw new DslError(`"${expr.name}" is not a part`, expr.span);
+    }
+    const cached = partCache.get(expr);
+    if (cached) return cached;
+    const value = evalExpr(expr);
+    if (!isPart(value)) {
+      throw new DslError('this is not a part', expr.span);
+    }
+    partCache.set(expr, value);
+    return value;
+  }
+
+  // --- placement modifiers into a matrix ---
+
+  function placementMatrix(placement: Placement): Mat4 {
+    let m = identity();
+    const scale = placement.scale ? num(placement.scale) : 1;
+    if (scale !== 1) m = multiply(uniformScale(scale), m);
+    if (placement.roll) m = multiply(rotationAbout([1, 0, 0], num(placement.roll)), m);
+    if (placement.pitch) m = multiply(rotationAbout([0, 1, 0], num(placement.pitch)), m);
+    if (placement.turn) m = multiply(rotationAbout([0, 0, 1], num(placement.turn)), m);
+    if (placement.at) {
+      const at = evalExpr(placement.at);
+      if (!isVec(at)) throw new DslError('"at" needs a point like (0, 10, 2)', placement.at.span);
+      m = multiply(translation(at), m);
+    }
+    return m;
+  }
+
+  const num = (expr: Expr): number => {
+    const value = evalExpr(expr);
+    if (typeof value !== 'number') throw new DslError('expected a number here', expr.span);
+    return value;
+  };
+
+  function applyMaterial(part: Part, placement: { metal?: string; finish?: string }, span: Span) {
+    if (!placement.metal && !placement.finish) return;
+    checkMaterial(placement, span);
+    // Material lives on the Part, and Parts are shared, so recording it twice with
+    // different values would silently repaint every other placement of the piece.
+    const existing = partMaterials.get(part);
+    if (existing && (existing.metal !== placement.metal || existing.finish !== placement.finish)) {
+      throw new DslError(
+        `"${part.name}" is already in ${existing.metal ?? 'the default metal'}` +
+        ` — give it its own "part" declaration to use a second material`,
+        span,
+      );
+    }
+    partMaterials.set(part, { metal: placement.metal, finish: placement.finish });
+    part.material = { metal: placement.metal, finish: placement.finish };
+  }
+
+  function checkMaterial(m: { metal?: string; finish?: string }, span: Span) {
+    if (m.metal && !metals[m.metal]) {
+      throw new DslError(
+        `there is no metal called "${m.metal}" — try ${Object.keys(metals).map(hyphenate).join(', ')}`,
+        span,
+      );
+    }
+    if (m.finish && !finishes[m.finish]) {
+      throw new DslError(
+        `there is no finish called "${m.finish}" — try ${Object.keys(finishes).join(', ')}`,
+        span,
+      );
+    }
+  }
+
+  // --- actions ---
+
+  function runActions(assembly: Assembly, actions: Action[]) {
+    const placed = new Map<string, Placed>();
+
+    for (const action of actions) {
+      if (action.kind === 'place') {
+        const name = action.placement.as ?? nameOf(action.part);
+
+        // a unit or form placed by name is merged in whole
+        if (action.part.kind === 'ident' && !scope.has(action.part.name)) {
+          const sub = units.get(action.part.name) ?? forms.get(action.part.name);
+          if (sub) {
+            assembly.merge(sub, placementMatrix(action.placement));
+            continue;
+          }
+        }
+
+        const part = evalPart(action.part);
+        applyMaterial(part, action.placement, action.span);
+        const placement = assembly.place(part, placementMatrix(action.placement));
+        if (name) placed.set(name, placement);
+        continue;
+      }
+
+      if (action.kind === 'fasten') {
+        const owner = placed.get(action.target.part);
+        if (!owner) {
+          throw new DslError(
+            `nothing called "${action.target.part}" has been placed yet` +
+            (placed.size ? ` — placed so far: ${[...placed.keys()].join(', ')}` : ''),
+            action.span,
+          );
+        }
+        const anchor = owner.anchors.find((a) => a.name === action.target.anchor);
+        if (!anchor) {
+          throw new DslError(
+            `"${action.target.part}" has no anchor "${action.target.anchor}"` +
+            ` — it has ${owner.anchors.map((a) => a.name).join(', ') || 'none'}`,
+            action.span,
+          );
+        }
+
+        const part = evalPart(action.part);
+        applyMaterial(part, action.placement, action.span);
+        const anchorName = action.partAnchor ?? part.anchors[0]?.name;
+        if (!anchorName) {
+          throw new DslError(`"${part.name}" has no anchors to fasten by`, action.span);
+        }
+        if (!part.anchors.some((a) => a.name === anchorName)) {
+          throw new DslError(
+            `"${part.name}" has no anchor "${anchorName}"` +
+            ` — it has ${part.anchors.map((a) => a.name).join(', ')}`,
+            action.span,
+          );
+        }
+
+        const placement = assembly.connect(anchor, part, anchorName, {
+          align: action.placement.flip ? 'opposed' : 'same',
+          roll: action.placement.turn ? num(action.placement.turn) : 0,
+          offset: action.placement.offset ? num(action.placement.offset) : 0,
+          scale: action.placement.scale ? num(action.placement.scale) : 1,
+        });
+        const name = action.placement.as ?? nameOf(action.part);
+        if (name) placed.set(name, placement);
+        continue;
+      }
+
+      // repeat
+      const symmetry = evalExpr(action.symmetry);
+      if (!isSymmetry(symmetry)) {
+        throw new DslError(
+          'expected a symmetry after "around" — try ring(8, radius: 20)',
+          action.symmetry.span,
+        );
+      }
+
+      let sub: Assembly | undefined;
+      if (action.subject.kind === 'ident' && !scope.has(action.subject.name)) {
+        sub = units.get(action.subject.name) ?? forms.get(action.subject.name);
+        if (!sub) {
+          throw new DslError(
+            `there is no unit called "${action.subject.name}"`,
+            action.subject.span,
+          );
+        }
+      } else {
+        const part = evalPart(action.subject);
+        sub = new Assembly(part.name);
+        sub.place(part);
+      }
+      assembly.repeat(sub, symmetry);
+    }
+  }
+
+  // --- statements ---
+
+  for (const statement of program.statements) {
+    switch (statement.kind) {
+      case 'material':
+        checkMaterial(statement, statement.span);
+        defaultMetal = statement.metal;
+        defaultFinish = statement.finish;
+        break;
+
+      case 'let':
+        scope.set(statement.name, evalExpr(statement.value));
+        break;
+
+      case 'part': {
+        const value = evalExpr(statement.value);
+        if (!isPart(value)) {
+          throw new DslError(
+            `"${statement.name}" is not a part — ${describeValue(value)}`,
+            statement.value.span,
+          );
+        }
+        value.name = statement.name;
+        applyMaterial(value, statement, statement.span);
+        scope.set(statement.name, value);
+        break;
+      }
+
+      case 'unit': {
+        const assembly = new Assembly(statement.name);
+        runActions(assembly, statement.actions);
+        units.set(statement.name, assembly);
+        break;
+      }
+
+      case 'form': {
+        const assembly = new Assembly(statement.name);
+        runActions(assembly, statement.actions);
+        forms.set(statement.name, assembly);
+        lastForm = statement.name;
+        break;
+      }
+    }
+  }
+
+  if (!lastForm) {
+    throw new DslError('a sketch needs at least one form', {
+      start: 0, end: 1, line: 1, column: 1,
+    });
+  }
+
+  return {
+    assembly: forms.get(lastForm)!,
+    metal: defaultMetal,
+    finish: defaultFinish,
+    formName: lastForm,
+  };
+}
+
+const nameOf = (expr: Expr) => (expr.kind === 'ident' ? expr.name : undefined);
+
+const hyphenate = (name: string) => name.replace(/ /g, '-');
+
+function describeValue(value: Value): string {
+  if (typeof value === 'number') return 'it is a number';
+  if (typeof value === 'string') return 'it is a word';
+  if (isVec(value)) return 'it is a point';
+  if (isSymmetry(value)) return 'it is a symmetry';
+  return 'it is a path';
+}
+
+/** Nearest builtin by edit distance, which catches the usual near-misses. */
+function suggest(name: string): string {
+  let best = '';
+  let bestScore = Infinity;
+  for (const candidate of Object.keys(BUILTINS)) {
+    const score = distance(name, candidate);
+    if (score < bestScore) { bestScore = score; best = candidate; }
+  }
+  return bestScore <= Math.max(2, Math.floor(name.length / 3))
+    ? `did you mean "${best}"?`
+    : `known shapes are ${Object.keys(BUILTINS).join(', ')}`;
+}
+
+function distance(a: string, b: string): number {
+  const rows = Array.from({ length: b.length + 1 }, (_, i) => [i, ...Array(a.length).fill(0)]);
+  for (let j = 0; j <= a.length; j++) rows[0][j] = j;
+  for (let i = 1; i <= b.length; i++) {
+    for (let j = 1; j <= a.length; j++) {
+      rows[i][j] = Math.min(
+        rows[i - 1][j] + 1,
+        rows[i][j - 1] + 1,
+        rows[i - 1][j - 1] + (a[j - 1] === b[i - 1] ? 0 : 1),
+      );
+    }
+  }
+  return rows[b.length][a.length];
+}

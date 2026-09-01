@@ -32,7 +32,7 @@ function rosette(): Assembly {
   const unit = new Assembly('rosette-unit');
   const lp = unit.place(petal);
   unit.connect(lp.anchor('boss'), stud, 'seat');
-  unit.place(curl, multiply(translation([9, -5.5, 1.4]), rotationAbout([0, 0, 1], -0.5)));
+  unit.place(curl, multiply(translation([9, -5.5, 1.4]), rotationAbout([0, 0, 1], (-29 * Math.PI) / 180)));
 
   const form = new Assembly('rosette');
   form.repeat(unit, ring(8, 5.5));
