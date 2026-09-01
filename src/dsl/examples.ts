@@ -311,8 +311,17 @@ part innerTepal = petal(length: 29, width: 17, thickness: 0.7, shape: round, cup
 part pistil = pod(length: 9, width: 4.5, ribs: 3, ribDepth: 0.18, segments: 24) in gold polished
 part stamen = wire(path: through((0,0,0), (0.4,0,5), (1.6,0,9.5)), radius: 0.5, tip: 0.5, sections: 20, sides: 8) in gold polished
 part anther = pod(length: 3.4, width: 1.2, segments: 12) in blackened steel satin
-part stalk  = stem(path: through((0,0,0), (-1,0,-20), (2,0,-40), (-1,0,-62)), radius: 2.2, tip: 0.55, nodes: 2)
-part blade  = leaf(length: 33, width: 9, thickness: 0.8, shape: linear, cup: 54deg, keel: 0.6, curl: -84deg, curlBias: 2.8)
+
+# Nearly straight, and deliberately so. A stem that wanders is prettier on its
+# own, but the leaves are placed on rings about the axis, so every millimetre the
+# stem strays is a millimetre of daylight between a leaf and the plant.
+part stalk  = stem(path: through((0.5,0,4), (0,0,-20), (0.4,0,-42), (-0.5,0,-64)), radius: 2.2, tip: 0.6, sections: 96)
+
+# Broadly lanceolate, not parallel-sided: a tulip leaf is widest low down and
+# runs out to a long point, which is what stops it reading as a strap. The
+# channel is shallow and the arch is spread along the whole leaf — cup it hard
+# and bias the curl at the tip and it stops being a leaf and becomes a ladle.
+part blade  = leaf(length: 37, width: 16, thickness: 0.8, shape: lanceolate, cup: 40deg, keel: 0.4, curl: -46deg, curlBias: 1.5, droop: 0.05)
 
 unit filament {
   place stamen
@@ -325,7 +334,13 @@ form tulip {
   place pistil at (0, 0, 5) pitch 90deg
   repeat filament around ring(6, radius: 2, z: 1, tilt: -12deg)
   place stalk
-  repeat blade around ring(2, radius: 2.5, z: -40, tilt: -66deg)
+
+  # Three leaves up the stem, not two across it. A pair on one ring is a
+  # propeller; alternating them and shrinking each one is what a tulip does, and
+  # it is also what stops the leaves reading as a second, competing symmetry.
+  repeat blade around ring(1, radius: 2.1, z: -50, phase: 20deg, tilt: -66deg)
+  repeat blade around ring(1, radius: 1.9, z: -34, phase: 155deg, tilt: -58deg, scale: 0.76)
+  repeat blade around ring(1, radius: 1.7, z: -20, phase: 285deg, tilt: -50deg, scale: 0.54)
 }
 `,
 
