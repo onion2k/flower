@@ -1,0 +1,61 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>artshape — meshing spike</title>
+    <style>
+      :root {
+        --bg: #0b0c0e;
+        --panel: #16181c;
+        --line: #2a2e35;
+        --text: #d8dce3;
+        --dim: #838b98;
+        --accent: #c9a227;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
+        font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
+      #app { display: grid; grid-template-columns: 1fr 280px; height: 100%; }
+      #stage { position: relative; overflow: hidden; }
+      #stage canvas { display: block; }
+      #panel { border-left: 1px solid var(--line); background: var(--panel);
+        padding: 16px; overflow-y: auto; }
+      h1 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
+        color: var(--accent); margin: 0 0 4px; }
+      .sub { color: var(--dim); margin: 0 0 18px; font-size: 11px; }
+      fieldset { border: 0; border-top: 1px solid var(--line); margin: 0 0 14px; padding: 12px 0 0; }
+      legend { color: var(--dim); font-size: 10px; letter-spacing: .1em; text-transform: uppercase; padding: 0 6px 0 0; }
+      label { display: block; margin-bottom: 10px; }
+      .row { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-bottom: 3px; }
+      .row b { color: var(--text); font-weight: 500; }
+      input[type=range] { width: 100%; accent-color: var(--accent); }
+      input[type=checkbox] { accent-color: var(--accent); margin-right: 6px; }
+      .check { color: var(--dim); font-size: 11px; display: flex; align-items: center; }
+      table { width: 100%; border-collapse: collapse; font-size: 11px; }
+      td { padding: 2px 0; color: var(--dim); }
+      td:last-child { text-align: right; color: var(--text); }
+      td.hi:last-child { color: var(--accent); }
+      .budget { margin-top: 10px; padding: 8px; border: 1px solid var(--line); border-radius: 3px;
+        font-size: 11px; color: var(--dim); }
+      .budget b { display: block; font-size: 15px; margin-bottom: 2px; }
+      .pass { color: #6fcf7f; } .fail { color: #e07a5f; }
+    </style>
+  </head>
+  <body>
+    <div id="app">
+      <div id="stage"></div>
+      <div id="panel">
+        <h1>Meshing spike</h1>
+        <p class="sub">Dual contouring an SDF milled plate. Watching for crisp bores, sharp scallop rims and a usable mesh time.</p>
+        <div id="controls"></div>
+        <fieldset>
+          <legend>Result</legend>
+          <table id="stats"></table>
+          <div class="budget" id="budget"></div>
+        </fieldset>
+      </div>
+    </div>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>

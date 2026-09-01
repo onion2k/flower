@@ -1,0 +1,20 @@
+{
+  "name": "artshape",
+  "private": true,
+  "version": "0.0.0",
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "tsc --noEmit && vite build",
+    "preview": "vite preview",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "ogl": "^1.0.11"
+  },
+  "devDependencies": {
+    "tsx": "^4.23.13",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.7"
+  }
+}
