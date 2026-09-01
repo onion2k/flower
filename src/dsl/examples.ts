@@ -402,21 +402,30 @@ material copper polished
 
 # A pink is told from anything else by its cut edge, so the fringe and the frill
 # are doing the work here and the silhouette barely matters.
-part frill = petal(length: 21, width: 15, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 30, edgeDepth: 0.11, cup: 40deg, curl: -26deg, curlBias: 2, ruffle: 1.2, ruffleWaves: 4)
-part inner = petal(length: 15, width: 11, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 24, edgeDepth: 0.12, cup: 62deg, curl: -14deg, ruffle: 0.8, ruffleWaves: 4)
-part calyx = bud(length: 16, width: 10, lobes: 5, lobeDepth: 0.06, point: 0.16, swell: 1.5) in bronze satin
-part stalk = stem(path: through((0,0,-16), (1,0,-32), (-2,0,-50), (1,0,-66)), radius: 1.9, tip: 0.6, nodes: 3, swell: 0.5)
+part frill = petal(length: 22, width: 15, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 30, edgeDepth: 0.11, cup: 40deg, curl: -30deg, curlBias: 2, ruffle: 1.2, ruffleWaves: 4)
+part inner = petal(length: 15, width: 11, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 24, edgeDepth: 0.12, cup: 66deg, curl: -12deg, ruffle: 0.8, ruffleWaves: 4)
+
+# The calyx is a tube, not a bud drawn to a point — that is the whole reason a
+# carnation looks the way it does. Every petal is gripped in its throat, so the
+# claws gather in a bundle a few millimetres across and the flower opens from
+# there. Spreading them over a disc instead needs a plate to hold them, and a
+# plate in the middle of a flower is exactly as bad as it sounds.
+part calyx = bell(length: 17, mouth: 9, throat: 7, wall: 0.7, flare: 1.4, lobes: 5, lobeDepth: 0.22) in bronze satin
+
+# The receptacle, sunk inside the calyx mouth where it is never seen: it catches
+# every claw and is welded into the tube wall.
+part floor = disc(radius: 4.5, thickness: 1.6, bevel: 0.35) in bronze satin
+
+part stalk = stem(path: through((0,0,0), (0.4,0,-20), (-0.4,0,-40), (0.6,0,-60)), radius: 1.9, tip: 0.6, nodes: 3, swell: 0.5)
 part blade = leaf(length: 34, width: 4.5, thickness: 0.5, shape: linear, cup: 46deg, keel: 0.5, curl: -58deg, curlBias: 2.4) in bronze satin
-# the calyx is drawn to a point, so it holds nothing: the petals need a floor
-part cup   = disc(radius: 17, thickness: 2.4, bevel: 0.6) in bronze satin
 
 form carnation {
-  place cup
-  repeat inner around phyllotaxis(8, 2.1, tilt: -72deg, fade: 0.8, rise: 1)
-  repeat frill around phyllotaxis(16, 3.3, start: 9, tilt: -44deg, fade: 1.3)
-  place calyx at (0, 0, -16)
+  place calyx at (0, 0, -17)
+  place floor
   place stalk
-  repeat blade around ring(4, radius: 0.8, z: -44, tilt: -40deg)
+  repeat inner around phyllotaxis(9, 1.0, tilt: -74deg, fade: 0.7, rise: 0.9)
+  repeat frill around phyllotaxis(18, 0.82, start: 9, tilt: -46deg, fade: 1.2)
+  repeat blade around ring(4, radius: 0.6, z: -42, tilt: -40deg)
 }
 `,
 
