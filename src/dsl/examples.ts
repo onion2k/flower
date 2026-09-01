@@ -81,7 +81,7 @@ unit scute {
 }
 
 form seedhead {
-  repeat scute around shell(78, 15, orient: tangential, lean: 0.34)
+  repeat scute around shell(78, 15, orient: flat, lean: 0.34)
 }
 `,
 
@@ -185,6 +185,102 @@ form seedcase {
   repeat floret around phyllotaxis(32, 3.6, tilt: 1.1, fade: 1.6)
   repeat stem around ring(9, radius: 21, tilt: -35deg)
   place crown at (0, 0, 9)
+}
+`,
+
+
+  // ---- real plants ----
+
+  narcissus: `# Narcissus pseudonarcissus — six tepals and a trumpet corona
+material gold satin
+
+part tepal  = blade(path: bezier((0,0,0), (9,0,3), (19,0,6), (26,0,2)), width: 11, thickness: 0.7, sections: 64)
+part corona = bell(length: 11, mouth: 15, throat: 6, wall: 0.6, flare: 2.8) in copper satin
+part stamen = wire(path: through((0,0,0), (0,0,5), (1,0,9)), radius: 0.4, tip: 0.7, sections: 20, sides: 8)
+part anther = pod(length: 2.6, width: 1.1, segments: 12) in bronze satin
+part stalk  = wire(path: through((0,0,0), (0,0,-14), (2,0,-27)), radius: 1.1, tip: 0.8, sections: 32)
+
+unit filament {
+  place stamen
+  fasten anther to stamen.tip
+}
+
+form narcissus {
+  # tepals swept back and down, as the perianth sits behind the corona
+  repeat tepal around ring(6, radius: 3.5, tilt: -0.32)
+  place corona at (0, 0, 1.5)
+  repeat filament around ring(6, radius: 2.2, z: 3, tilt: 0.25)
+  place stalk
+}
+`,
+
+  fern: `# A pinnate frond: leaflets up a curving rachis, shrinking toward the tip
+material bronze antiqued
+
+let arch = bezier((0,0,0), (16,0,9), (34,0,14), (48,0,8))
+
+part rachis  = wire(path: arch, radius: 1.1, tip: 0.22, sections: 96)
+part pinna   = leaf(length: 11, width: 4.4, thickness: 0.55, shape: lanceolate, veins: 3, teeth: 14, droop: 0.1)
+part crozier = wire(path: spiral(start: 0.7, turns: 1.1, growth: 2.6), radius: 0.55, tip: 0.2, sections: 64)
+
+form fern {
+  place rachis
+  # alternate puts successive leaflets on opposite sides, as a real frond does
+  repeat pinna around along(arch, 22, from: 0.06, to: 0.94, taper: 0.28, alternate: yes, tilt: -22deg)
+  place crozier at (48, 0, 8) turn 40deg
+}
+`,
+
+  acer: `# Acer palmatum — one palmate leaf, pierced along its veins
+material copper satin
+
+part blade = leaf(length: 34, width: 34, thickness: 0.8, lobes: 5, spread: 2.7, veins: 4, teeth: 46, toothDepth: 0.5, boss: 2)
+part stalk = wire(path: through((0,0,0), (-9,0,-1), (-19,0,-4)), radius: 0.9, tip: 0.5, sections: 28)
+part pin   = rivet(head: 3.2, height: 1, shank: 1.8, grip: 0.9) in gold polished
+
+form acer {
+  place blade as leaf
+  fasten pin to leaf.boss
+  place stalk
+}
+`,
+
+  digitalis: `# Digitalis purpurea — a spike of bells, largest at the bottom
+material bronze antiqued
+
+let spike = bezier((0,0,0), (1,0,16), (5,0,32), (11,0,44))
+
+part stalk   = wire(path: spike, radius: 1.7, tip: 0.3, sections: 96)
+part flower  = bell(length: 9, mouth: 8, throat: 3.4, wall: 0.5, flare: 1.9) in copper satin
+part foliage = leaf(length: 21, width: 8.5, thickness: 0.6, veins: 4, teeth: 26, droop: 0.12)
+part bud     = pod(length: 4, width: 3, segments: 16) in copper satin
+
+# A bell is built along its own axis, so it needs turning a quarter turn to point
+# out of the stem. After that the arrangement's tilt swings it down the spike.
+unit corolla { place flower pitch 90deg }
+unit tip { place bud pitch 90deg }
+
+form digitalis {
+  place stalk
+  repeat corolla around along(spike, 11, from: 0.16, to: 0.82, taper: 0.5, tilt: -34deg)
+  repeat tip around along(spike, 5, from: 0.86, to: 1, taper: 0.45, tilt: -20deg)
+  repeat foliage around ring(5, radius: 2.5, z: 1.5, tilt: 68deg)
+}
+`,
+
+  teasel: `# Dipsacus — a spined head over a whorl of upswept bracts
+material blackened steel sandblasted
+
+part head  = pod(length: 26, width: 15, whorls: 11, whorlDepth: 0.7)
+part spine = wire(path: through((0,0,0), (3,0,0.6), (6,0,0.2)), radius: 0.42, tip: 0.1, sections: 16, sides: 6) in silver polished
+part bract = leaf(length: 26, width: 3.6, thickness: 0.5, shape: lanceolate, teeth: 18, droop: 0.22)
+part stalk = wire(path: through((0,0,0), (0,0,-16), (1,0,-32)), radius: 1.5, tip: 0.7, sections: 32)
+
+form teasel {
+  place head
+  repeat spine around shell(96, 7.2, orient: outward)
+  repeat bract around ring(9, radius: 4, z: -11, tilt: 62deg)
+  place stalk at (0, 0, -12)
 }
 `,
 

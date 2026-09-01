@@ -205,3 +205,59 @@ export function pod(spec: PodSpec): Part {
     ],
   };
 }
+
+export interface BellSpec {
+  name?: string;
+  length: number;
+  /** Opening at the wide end. */
+  mouth: number;
+  /** Opening at the narrow end, where it joins the flower. */
+  throat: number;
+  wall?: number;
+  /** Flare exponent: 1 is a straight cone, above 2 a trumpet. */
+  flare?: number;
+  rows?: number;
+  segments?: number;
+}
+
+/**
+ * A flared corolla: a trumpet or bell, open at both ends.
+ *
+ * The daffodil's corona, the foxglove's tube, a bellflower. Modelled as a thin
+ * wall — up the outside, across the rim and back down the inside — because a
+ * solid cone reads as a funnel and a flower's is visibly a shell you can see
+ * into. The flare exponent is what distinguishes them: near 1 a campanula, near
+ * 3 a narcissus.
+ */
+export function bell(spec: BellSpec): Part {
+  const rows = spec.rows ?? 24;
+  const wall = spec.wall ?? Math.max(spec.mouth * 0.03, 0.25);
+  const flare = spec.flare ?? 2.2;
+
+  const radiusAt = (t: number) =>
+    spec.throat / 2 + (spec.mouth / 2 - spec.throat / 2) * Math.pow(t, flare);
+
+  const outer: Vec2[] = [];
+  const inner: Vec2[] = [];
+  for (let i = 0; i <= rows; i++) {
+    const t = i / rows;
+    const z = t * spec.length;
+    outer.push([radiusAt(t) + wall / 2, z]);
+    inner.push([Math.max(radiusAt(t) - wall / 2, 0.02), z]);
+  }
+  inner.reverse();
+
+  const points = [...outer, ...inner];
+  const sharp = points.map((_, i) => i === outer.length - 1 || i === points.length - 1);
+
+  const mesh = revolve({ points, sharp, closed: true }, { segments: spec.segments ?? 40 });
+  return {
+    name: spec.name ?? 'bell',
+    mesh,
+    bounds: meshBounds(mesh),
+    anchors: [
+      { name: 'throat', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.throat },
+      { name: 'mouth', position: [0, 0, spec.length], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.mouth },
+    ],
+  };
+}

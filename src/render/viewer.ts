@@ -423,7 +423,13 @@ export class Viewer {
     );
     const dist = (radius / Math.tan((this.camera.fov * Math.PI) / 360)) * 1.3;
     this.controls.target.set(cx, cy, cz);
-    const dir = new Vec3(0.42, 0.5, 0.76).normalize();
+
+    // Look down on a flat form and across a tall one. A fixed direction views a
+    // mandala nicely and a flower stem end-on, and most plants are stems.
+    const spanXY = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]);
+    const spanZ = b.max[2] - b.min[2];
+    const upright = spanZ / (spanXY + spanZ + 1e-6);
+    const dir = new Vec3(0.42 + 0.2 * upright, 0.5 + 0.28 * upright, 0.9 - 0.8 * upright).normalize();
     this.camera.position.set(cx + dir.x * dist, cy + dir.y * dist, cz + dir.z * dist);
     this.camera.near = Math.max(radius * 0.01, 0.01);
     this.camera.far = dist + radius * 12;

@@ -1,12 +1,13 @@
 import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
-import { bead, collar, pod, rivet } from '../parts/fastener';
+import type { LeafShape } from '../geom/outline';
+import { bead, bell, collar, pod, rivet } from '../parts/fastener';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
 import type { Part } from '../parts/types';
 import {
-  compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, sphereShell,
+  along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, sphereShell,
   type Symmetry,
 } from '../pattern/symmetry';
 import { DslError, type Span } from './lexer';
@@ -196,13 +197,21 @@ const CURVES = {
 
 /** Parts. Each call makes real geometry, so results are cached by the caller. */
 const PARTS = {
-  leaf: define(['length', 'width', 'thickness', 'bevel', 'piercings', 'droop', 'boss', 'segments'], (a) =>
-    leaf({
+  leaf: define(
+    ['length', 'width', 'thickness', 'shape', 'bevel', 'piercings', 'veins', 'teeth',
+     'toothDepth', 'lobes', 'spread', 'droop', 'boss', 'segments'],
+    (a) => leaf({
       length: a.num('length', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 1.1),
+      shape: a.word('shape', -1, 'ovate') as LeafShape,
       bevel: a.num('bevel', -1, NaN) || undefined,
       piercings: a.num('piercings', -1, 0) || undefined,
+      veins: a.num('veins', -1, 0) || undefined,
+      teeth: a.num('teeth', -1, 0) || undefined,
+      toothDepth: a.num('toothDepth', -1, NaN) || undefined,
+      lobes: a.num('lobes', -1, 0) || undefined,
+      spread: a.num('spread', -1, NaN) || undefined,
       droop: a.num('droop', -1, 0.18),
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 64),
@@ -264,6 +273,17 @@ const PARTS = {
       whorls: a.num('whorls', -1, 0) || undefined,
       whorlDepth: a.num('whorlDepth', -1, NaN) || undefined,
       segments: a.num('segments', -1, 32),
+    })),
+
+  bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'rows', 'segments'], (a) =>
+    bell({
+      length: a.num('length', 0),
+      mouth: a.num('mouth', 1),
+      throat: a.num('throat', 2),
+      wall: a.num('wall', -1, NaN) || undefined,
+      flare: a.num('flare', -1, 2.2),
+      rows: a.num('rows', -1, 24),
+      segments: a.num('segments', -1, 40),
     })),
 
   bar: define(['length', 'width', 'thickness', 'bore', 'intermediate', 'bevel'], (a) =>
@@ -344,10 +364,22 @@ const SYMMETRIES = {
 
   shell: define(['count', 'radius', 'orient', 'lean', 'turns'], (a) =>
     sphereShell(a.num('count', 0), a.num('radius', 1), {
-      orient: a.word('orient', -1, 'tangential') as 'radial' | 'tangential',
+      orient: a.word('orient', -1, 'flat') as 'outward' | 'flat',
       lean: a.num('lean', -1, 0),
       turns: a.num('turns', -1, 1),
     })),
+
+  along: define(['path', 'count', 'from', 'to', 'taper', 'tilt', 'fade', 'alternate'], (a) => {
+    const tilt = a.num('tilt', -1, 0);
+    const fade = a.num('fade', -1, 0);
+    return along(a.curve('path', 0), a.num('count', 1), {
+      from: a.num('from', -1, 0),
+      to: a.num('to', -1, 1),
+      taper: a.num('taper', -1, 1),
+      tilt: fade === 0 ? tilt : (t: number) => tilt * Math.pow(1 - t, fade),
+      alternate: a.flag('alternate', -1, false),
+    });
+  }),
 
   nested: define(['count', 'factor', 'spin'], (a) =>
     nested(a.num('count', 0), a.num('factor', 1), a.num('spin', 2, 0))),

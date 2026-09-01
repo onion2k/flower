@@ -17,30 +17,118 @@ export function ensureWinding(loop: Vec2[], counterClockwise: boolean): Vec2[] {
 }
 
 /**
- * A leaf: pointed at the tip, wider below the middle, gently asymmetric.
+ * Leaf silhouettes, by their botanical names.
  *
- * `droop` bends the midrib sideways. A perfectly symmetric leaf reads as a logo;
- * the whole art nouveau line depends on the axis itself being a curve.
+ * Each is the same construction — a half-width profile swept from base to tip —
+ * differing only in where the leaf is widest and how fast it tapers. That is
+ * genuinely most of what separates a willow from a lilac.
  */
-export function leafOutline(
-  length: number,
-  width: number,
-  segments = 48,
-  droop = 0.18,
-): Vec2[] {
-  const half: Vec2[] = [];
-  const other: Vec2[] = [];
-  for (let i = 0; i <= segments; i++) {
-    const t = i / segments;
-    const w = (width / 2) * Math.pow(Math.sin(Math.PI * t), 0.75) * (1 - 0.3 * t);
-    const spine = Math.sin(Math.PI * t) * droop * length;
-    const x = t * length;
-    half.push([x, spine + w]);
-    other.push([x, spine - w]);
+export type LeafShape = 'ovate' | 'lanceolate' | 'elliptic' | 'obovate' | 'cordate';
+
+/** Half-width as a fraction of the maximum, along the leaf from base to tip. */
+export function leafHalfWidth(shape: LeafShape, t: number): number {
+  const s = Math.sin(Math.PI * Math.min(Math.max(t, 0), 1));
+  switch (shape) {
+    case 'lanceolate': return Math.pow(s, 0.5) * (1 - 0.42 * t);   // willow: long, narrow
+    case 'elliptic': return Math.pow(s, 0.95);                     // widest at the middle
+    case 'obovate': return Math.pow(s, 0.8) * (0.62 + 0.55 * t);   // widest above the middle
+    case 'cordate': return Math.pow(s, 0.45) * (1 - 0.3 * t);      // heart, with a basal notch
+    default: return Math.pow(s, 0.75) * (1 - 0.3 * t);             // ovate
   }
-  other.reverse();
-  // drop the duplicated tip and base points
-  return ensureWinding([...half.slice(0, -1), ...other.slice(0, -1)], true);
+}
+
+export interface LeafOutlineOptions {
+  shape?: LeafShape;
+  segments?: number;
+  /** Sideways bend of the midrib. A straight axis reads as a logo, not a leaf. */
+  droop?: number;
+  /** Basal notch depth as a fraction of length. Cordate leaves want ~0.14. */
+  notch?: number;
+  /** Marginal teeth. */
+  teeth?: number;
+  toothDepth?: number;
+}
+
+export function leafOutline(length: number, width: number, opts: LeafOutlineOptions = {}): Vec2[] {
+  const { shape = 'ovate', segments = 48, droop = 0.18, notch = 0, teeth = 0, toothDepth = 0 } = opts;
+
+  const side = (sign: number): Vec2[] => {
+    const pts: Vec2[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const w = (width / 2) * leafHalfWidth(shape, t);
+      const spine = Math.sin(Math.PI * t) * droop * length;
+      pts.push([t * length, spine + sign * w]);
+    }
+    return pts;
+  };
+
+  const upper = side(1);
+  const lower = side(-1).reverse();
+
+  let loop: Vec2[];
+  if (notch > 0) {
+    // A cordate base is two lobes meeting at a notch part-way up the midrib, so
+    // the halves do not close at the petiole — the notch is where they meet.
+    const cut: Vec2 = [notch * length, 0];
+    loop = [cut, ...upper.slice(1, -1), upper[upper.length - 1], ...lower.slice(1, -1)];
+  } else {
+    loop = [...upper.slice(0, -1), ...lower.slice(0, -1)];
+  }
+
+  if (teeth > 0 && toothDepth > 0) loop = serrate(loop, teeth, toothDepth);
+  return ensureWinding(loop, true);
+}
+
+/**
+ * Saw teeth along a margin.
+ *
+ * Applied to the finished outline rather than built into the profile, so it works
+ * on any of them — and on a palmate leaf too, where the margin is not a function
+ * of distance along an axis at all.
+ */
+export function serrate(loop: Vec2[], teeth: number, depth: number): Vec2[] {
+  const n = loop.length;
+  const outward: Vec2[] = loop.map((_, i) => {
+    const p = loop[(i - 1 + n) % n];
+    const q = loop[(i + 1) % n];
+    const dx = q[0] - p[0];
+    const dy = q[1] - p[1];
+    const l = Math.hypot(dx, dy) || 1;
+    return [dy / l, -dx / l];
+  });
+  return loop.map(([x, y], i) => {
+    const phase = ((i / loop.length) * teeth) % 1;
+    const saw = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
+    return [x + outward[i][0] * saw * depth, y + outward[i][1] * saw * depth] as Vec2;
+  });
+}
+
+/**
+ * Palmate leaf — lobes radiating from the petiole, as a maple or a sycamore.
+ *
+ * Polar rather than axial: the lobes are peaks in the radius as the angle sweeps,
+ * which is how the leaf actually grows, and no amount of varying a half-width
+ * along an axis will produce one.
+ */
+export function palmateOutline(
+  lobes: number,
+  length: number,
+  spread: number,
+  sinus = 0.42,
+  segments = 120,
+): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const u = i / segments;
+    const theta = (u - 0.5) * spread;
+    const peak = Math.abs(Math.cos(Math.PI * u * (lobes - 1)));
+    const r = length * (sinus + (1 - sinus) * Math.pow(peak, 0.5));
+    pts.push([Math.cos(theta) * r, Math.sin(theta) * r]);
+  }
+  // close back to the petiole
+  pts.push([0, 0]);
+  return ensureWinding(pts, true);
 }
 
 /** Teardrop, for piercings and for bead silhouettes. */
@@ -76,14 +164,74 @@ export function leafPiercings(
   count: number,
   droop = 0.18,
   margin = 0.62,
+  shape: LeafShape = 'ovate',
 ): Vec2[][] {
   const holes: Vec2[][] = [];
   for (let i = 0; i < count; i++) {
     const t = (i + 0.9) / (count + 1.1);
-    const w = (width / 2) * Math.pow(Math.sin(Math.PI * t), 0.75) * (1 - 0.3 * t);
+    const w = (width / 2) * leafHalfWidth(shape, t);
     const spine = Math.sin(Math.PI * t) * droop * length;
     const hole = teardropOutline(w * 2.1 * margin, w * 1.5 * margin, 20);
     holes.push(ensureWinding(transformLoop(hole, t * length, spine, 1, 0.18), false));
+  }
+  return holes;
+}
+
+/**
+ * Palmate venation: one vein per lobe, radiating from the petiole.
+ *
+ * A palmate leaf has no midrib to hang lateral veins off — its veins fan from a
+ * single point, one into each lobe. Piercing it with the axial pattern puts slots
+ * across the sinuses and out through the margin.
+ */
+export function palmateVeins(
+  lobes: number,
+  length: number,
+  spread: number,
+  opts: { reach?: number; width?: number } = {},
+): Vec2[][] {
+  const { reach = 0.62, width = 0.16 } = opts;
+  const holes: Vec2[][] = [];
+  for (let i = 0; i < lobes; i++) {
+    const theta = (i / (lobes - 1) - 0.5) * spread;
+    const inner = length * 0.24;
+    const outer = length * reach;
+    const slot = outer - inner;
+    const mid = (inner + outer) / 2;
+    const loop = stadiumOutline(slot, Math.max(length * width * 0.12, 0.4), 6);
+    holes.push(ensureWinding(
+      transformLoop(loop, Math.cos(theta) * mid, Math.sin(theta) * mid, 1, theta),
+      false,
+    ));
+  }
+  return holes;
+}
+
+/**
+ * Lateral veins pierced as angled slots either side of the midrib.
+ *
+ * Reads far more like a leaf than a row of holes down the centre does, because
+ * the eye reads the *direction* of venation before it reads the outline.
+ */
+export function veinPiercings(
+  length: number,
+  width: number,
+  pairs: number,
+  opts: { droop?: number; shape?: LeafShape; angle?: number; margin?: number } = {},
+): Vec2[][] {
+  const { droop = 0.18, shape = 'ovate', angle = 0.62, margin = 0.66 } = opts;
+  const holes: Vec2[][] = [];
+  for (let i = 0; i < pairs; i++) {
+    const t = (i + 1) / (pairs + 1.3);
+    const w = (width / 2) * leafHalfWidth(shape, t);
+    const spine = Math.sin(Math.PI * t) * droop * length;
+    const slot = w * 1.25 * margin;
+    for (const sign of [1, -1]) {
+      const loop = stadiumOutline(slot, Math.max(w * 0.2, 0.35), 6);
+      const cx = t * length + Math.cos(angle) * slot * 0.45;
+      const cy = spine + sign * (Math.sin(angle) * slot * 0.45 + w * 0.16);
+      holes.push(ensureWinding(transformLoop(loop, cx, cy, 1, sign * angle), false));
+    }
   }
   return holes;
 }
@@ -155,4 +303,45 @@ export function boltCircle(count: number, radius: number, bore: number, segments
     ));
   }
   return holes;
+}
+
+/**
+ * Does a piercing fit inside an outline with room to spare?
+ *
+ * The bevel insets the cap outline while growing every hole, so a piercing placed
+ * by eye near a margin breaks through on the faces but not on the walls, leaving
+ * a cap that no longer matches its own boundary. Rather than hand-solve a safe
+ * position for each kind of piercing — a vein, a bolt hole, a boss — check the
+ * one thing that actually matters and drop the ones that do not fit.
+ */
+export function fitsInside(hole: Vec2[], outline: Vec2[], clearance: number): boolean {
+  for (const p of hole) {
+    if (!pointInLoop(p, outline)) return false;
+    if (distanceToLoop(p, outline) < clearance) return false;
+  }
+  return true;
+}
+
+function pointInLoop([x, y]: Vec2, loop: Vec2[]): boolean {
+  let inside = false;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const [xi, yi] = loop[i];
+    const [xj, yj] = loop[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) inside = !inside;
+  }
+  return inside;
+}
+
+function distanceToLoop([x, y]: Vec2, loop: Vec2[]): number {
+  let best = Infinity;
+  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
+    const [ax, ay] = loop[j];
+    const [bx, by] = loop[i];
+    const dx = bx - ax, dy = by - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((x - ax) * dx + (y - ay) * dy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    best = Math.min(best, Math.hypot(x - (ax + dx * t), y - (ay + dy * t)));
+  }
+  return best;
 }

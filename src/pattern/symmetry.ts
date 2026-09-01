@@ -3,7 +3,8 @@ import {
   frameAlong, fromBasis, identity, multiply, reflection, rotationAbout, translation,
   uniformScale, type Mat4,
 } from '../geom/transform';
-import { cross, dot, normalize, sub } from '../geom/vec';
+import { cross, dot, normalize, perpendicular, sub } from '../geom/vec';
+import type { Curve } from '../geom/curve';
 
 /**
  * A symmetry is just a list of placements.
@@ -123,11 +124,14 @@ export function phyllotaxis(
 
 export interface ShellOptions {
   /**
-   * 'radial' points each copy straight out, which spikes. 'tangential' lays it
-   * along the surface with its face outward — overlapping scales or petals, and
-   * the only one of the two that reads as a single body rather than a hedgehog.
+   * 'outward' points each copy straight out, which spikes — right for spines.
+   * 'flat' lays it along the surface with its face outward, giving overlapping
+   * scales or petals, and reads as a single body rather than a hedgehog.
+   *
+   * Named to avoid colliding with the symmetry called radial: a bare word in a
+   * sketch is a value, and it should never be ambiguous whether it means one.
    */
-  orient?: 'radial' | 'tangential';
+  orient?: 'outward' | 'flat';
   /** Lift the far end off the surface, in radians. Gives scales their overlap. */
   lean?: number;
   turns?: number;
@@ -141,7 +145,7 @@ export interface ShellOptions {
  * matters more when the thing being placed is a leaf than a face of a solid.
  */
 export function sphereShell(count: number, radius: number, opts: ShellOptions = {}): Symmetry {
-  const { orient = 'radial', lean = 0, turns = 1 } = opts;
+  const { orient = 'outward', lean = 0, turns = 1 } = opts;
   const golden = Math.PI * (3 - Math.sqrt(5)) * turns;
   const out: Symmetry = [];
 
@@ -152,7 +156,7 @@ export function sphereShell(count: number, radius: number, opts: ShellOptions = 
     const n = normalize([Math.cos(a) * r, Math.sin(a) * r, z]);
     const origin: Vec3 = [n[0] * radius, n[1] * radius, n[2] * radius];
 
-    if (orient === 'radial') {
+    if (orient === 'outward') {
       out.push(frameAlong(origin, n, [0, 0, 1]));
       continue;
     }
@@ -168,6 +172,63 @@ export function sphereShell(count: number, radius: number, opts: ShellOptions = 
     const y = cross(n, x);
     const base = fromBasis(origin, x, y, n);
     out.push(lean ? multiply(base, rotationAbout([0, 1, 0], -lean)) : base);
+  }
+  return out;
+}
+
+export interface AlongOptions {
+  /** Parameter range of the curve to occupy. */
+  from?: number;
+  to?: number;
+  /** Scale at the far end. Leaflets shrink toward a frond's tip. */
+  taper?: number;
+  /** Rotation about the local face normal, constant or a function of position. */
+  tilt?: number | ((t: number) => number);
+  /** Put successive copies on opposite sides, as most stems arrange their leaves. */
+  alternate?: boolean;
+  /** Plane the arrangement lies in. */
+  up?: Vec3;
+}
+
+/**
+ * Copies distributed along a curve, each facing outward from it.
+ *
+ * The arrangement every stem uses and none of the others can express: leaflets
+ * up a fern's rachis, florets up a spike, leaves up a vine. Radial and spiral
+ * symmetries all place things around a point, but a plant mostly places them
+ * along a line, and that line is usually itself a curve.
+ */
+export function along(curve: Curve, count: number, opts: AlongOptions = {}): Symmetry {
+  const { from = 0, to = 1, taper = 1, tilt = 0, alternate = false, up = [0, 0, 1] } = opts;
+  const tiltAt = typeof tilt === 'function' ? tilt : () => tilt;
+
+  const out: Symmetry = [];
+  for (let i = 0; i < count; i++) {
+    const t = count > 1 ? i / (count - 1) : 0.5;
+    const u = from + (to - from) * t;
+
+    const origin = curve.at(u);
+    const step = Math.max((to - from) * 1e-3, 1e-4);
+    const ahead = curve.at(Math.min(u + step, 1));
+    const behind = curve.at(Math.max(u - step, 0));
+    const tangent = normalize(sub(ahead, behind));
+
+    // face normal is the arrangement plane, growth direction lies across the stem
+    let z = sub(up, [tangent[0] * dot(up, tangent), tangent[1] * dot(up, tangent), tangent[2] * dot(up, tangent)]);
+    if (Math.hypot(z[0], z[1], z[2]) < 1e-6) z = perpendicular(tangent);
+    z = normalize(z);
+    let x = normalize(cross(tangent, z));
+
+    // A mirrored copy would reverse the winding, so alternate by turning the
+    // frame about the face normal rather than negating an axis. Recomputing y
+    // from the flipped x keeps the basis right-handed.
+    if (alternate && i % 2 === 1) x = [-x[0], -x[1], -x[2]];
+    const y = cross(z, x);
+
+    const scale = 1 + (taper - 1) * t;
+    const base = fromBasis(origin, x, y, z, scale);
+    const lean = tiltAt(t);
+    out.push(lean ? multiply(base, rotationAbout([0, 0, 1], lean)) : base);
   }
   return out;
 }

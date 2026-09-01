@@ -2,7 +2,7 @@ import { arc, bezier3, catmullRom, logSpiral } from '../geom/curve';
 import { band, blade, wire } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
 import { leaf } from '../parts/leaf';
-import { bead, collar, pod, rivet } from '../parts/fastener';
+import { bead, bell, collar, pod, rivet } from '../parts/fastener';
 import type { Part } from '../parts/types';
 
 /**
@@ -116,6 +116,17 @@ export const catalogue: Record<string, () => Part> = {
   'pod · whorled': () => pod({ length: 20, width: 11, whorls: 7, whorlDepth: 0.55 }),
 
   band: () => band({ radius: 22, width: 3.4, thickness: 0.9 }),
+
+  bell: () => bell({ length: 12, mouth: 16, throat: 6, wall: 0.7, flare: 2.6 }),
+
+  'leaf · lanceolate': () =>
+    leaf({ length: 34, width: 9, thickness: 0.7, shape: 'lanceolate', veins: 4, teeth: 20 }),
+
+  'leaf · cordate': () =>
+    leaf({ length: 26, width: 22, thickness: 0.8, shape: 'cordate', veins: 3, droop: 0.05 }),
+
+  'leaf · palmate': () =>
+    leaf({ length: 30, width: 30, thickness: 0.8, lobes: 5, spread: 2.7, veins: 5, teeth: 40, toothDepth: 0.45 }),
 };
 
 export const catalogueNames = Object.keys(catalogue);

@@ -52,7 +52,11 @@ export function evaluate(program: Program): Sketch {
           }
           // a bare word is a value in its own right, for things like orient: radial
           if (BUILTINS[expr.name]) {
-            throw new DslError(`"${expr.name}" needs arguments, like ${expr.name}(...)`, expr.span);
+            throw new DslError(
+              `"${expr.name}" is a shape, so it needs arguments like ${expr.name}(...)` +
+              ` — write "${expr.name}" in quotes if you meant it as a plain word`,
+              expr.span,
+            );
           }
           return expr.name;
         }

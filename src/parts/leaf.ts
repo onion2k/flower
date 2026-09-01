@@ -1,4 +1,7 @@
-import { leafOutline, leafPiercings, ensureWinding, teardropOutline, transformLoop } from '../geom/outline';
+import {
+  ensureWinding, fitsInside, leafOutline, leafPiercings, palmateOutline, palmateVeins,
+  teardropOutline, transformLoop, veinPiercings, type LeafShape,
+} from '../geom/outline';
 import { extrude } from '../mesh/extrude';
 import { meshBounds, type Anchor, type Part } from './types';
 import type { Vec2 } from '../geom/types';
@@ -12,6 +15,17 @@ export interface LeafSpec {
   bevel?: number;
   /** Teardrop piercings along the midrib. */
   piercings?: number;
+  /** Angled slots either side of the midrib, pierced as venation. */
+  veins?: number;
+  /** Silhouette family: ovate, lanceolate, elliptic, obovate, cordate. */
+  shape?: LeafShape;
+  /** Marginal teeth. */
+  teeth?: number;
+  toothDepth?: number;
+  /** Palmate lobes radiating from the petiole, as a maple. 0 gives a simple leaf. */
+  lobes?: number;
+  /** Angular spread of a palmate leaf, in radians. */
+  spread?: number;
   /** Sideways bend of the midrib. */
   droop?: number;
   segments?: number;
@@ -29,16 +43,38 @@ export function leaf(spec: LeafSpec): Part {
   const droop = spec.droop ?? 0.18;
   const bevel = spec.bevel ?? Math.min(spec.thickness * 0.28, 0.4);
 
-  const outline = leafOutline(spec.length, spec.width, segments, droop);
-  const holes: Vec2[][] = spec.piercings
-    ? leafPiercings(spec.length, spec.width, spec.piercings, droop)
-    : [];
+  const shape = spec.shape ?? 'ovate';
+  const outline = spec.lobes
+    ? palmateOutline(spec.lobes, spec.length, spec.spread ?? 2.5, 0.42, segments * 2)
+    : leafOutline(spec.length, spec.width, {
+        shape, segments, droop,
+        notch: shape === 'cordate' ? 0.14 : 0,
+        teeth: spec.teeth ?? 0,
+        toothDepth: spec.toothDepth ?? spec.width * 0.035,
+      });
+
+  const spread = spec.spread ?? 2.5;
+  const holes: Vec2[][] = [];
+  if (spec.lobes) {
+    // a palmate leaf's venation is radial, so the axial pattern does not apply
+    if (spec.veins || spec.piercings) holes.push(...palmateVeins(spec.lobes, spec.length, spread));
+  } else {
+    if (spec.piercings) {
+      holes.push(...leafPiercings(spec.length, spec.width, spec.piercings, droop, 0.62, shape));
+    }
+    if (spec.veins) {
+      holes.push(...veinPiercings(spec.length, spec.width, spec.veins, { droop, shape }));
+    }
+  }
 
   const anchors: Anchor[] = [];
   if (spec.bossBore) {
     const r = spec.bossBore / 2;
-    const t = bossPosition(spec.length, spec.width, r, bevel + spec.thickness * 0.7);
-    const at: Vec2 = [t * spec.length, Math.sin(Math.PI * t) * droop * spec.length];
+    // a palmate leaf attaches at its polar centre, so the boss sits just inside it
+    const t = spec.lobes ? 0.15 : bossPosition(spec.length, spec.width, r, bevel + spec.thickness * 0.7);
+    const at: Vec2 = spec.lobes
+      ? [spec.length * t, 0]
+      : [t * spec.length, Math.sin(Math.PI * t) * droop * spec.length];
     holes.push(ensureWinding(transformLoop(teardropOutline(r * 2, r * 2, 16), at[0], at[1]), false));
     anchors.push({
       name: 'boss',
@@ -49,7 +85,11 @@ export function leaf(spec: LeafSpec): Part {
     });
   }
 
-  const mesh = extrude({ outline, holes, thickness: spec.thickness, bevel });
+  // Anything that would break the margin is dropped rather than drawn through it.
+  const clearance = bevel + spec.thickness * 0.45;
+  const fitted = holes.filter((hole) => fitsInside(hole, outline, clearance));
+
+  const mesh = extrude({ outline, holes: fitted, thickness: spec.thickness, bevel });
   return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors };
 }
 

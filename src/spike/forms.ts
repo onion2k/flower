@@ -126,7 +126,7 @@ function orb(): Assembly {
   const form = new Assembly('orb');
   // each scale lies along the surface and lifts slightly, so they overlap the way
   // a seed head or a pine cone does rather than bristling outward
-  form.repeat(unit, sphereShell(78, 15, { orient: 'tangential', lean: 0.34 }));
+  form.repeat(unit, sphereShell(78, 15, { orient: 'flat', lean: 0.34 }));
   return form;
 }
 
