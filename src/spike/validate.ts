@@ -73,14 +73,18 @@ function analyse(name: string, mesh: Mesh): Report {
 
     volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
 
-    if (area < 1e-9) { degenerate++; continue; }
+    // Counted, but NOT excluded from the edge tally: a zero-area triangle still
+    // carries three edges, and dropping it here reported closed meshes as open.
+    if (area < 1e-9) degenerate++;
 
     // the authored vertex normal should agree with the face it belongs to;
     // disagreement means a winding or an orientation bug, not a smooth shading choice
+    if (area >= 1e-9) {
     const vn = normals[ia] + normals[ib] + normals[ic];
     const vny = normals[ia + 1] + normals[ib + 1] + normals[ic + 1];
     const vnz = normals[ia + 2] + normals[ib + 2] + normals[ic + 2];
     if (nx * vn + ny * vny + nz * vnz < 0) inverted++;
+    }
 
     const a = weld[indices[t * 3]], b = weld[indices[t * 3 + 1]], c = weld[indices[t * 3 + 2]];
     if (a !== b && b !== c && a !== c) { bump(a, b); bump(b, c); bump(c, a); }

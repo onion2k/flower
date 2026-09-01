@@ -1,8 +1,9 @@
 import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
-import { bead, collar, rivet } from '../parts/fastener';
-import { blade, wire } from '../parts/wire';
+import { bead, collar, pod, rivet } from '../parts/fastener';
+import { band, blade, wire, type Section } from '../parts/wire';
+import { bar, disc, gusset } from '../parts/panel';
 import type { Part } from '../parts/types';
 import {
   compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, sphereShell,
@@ -207,10 +208,11 @@ const PARTS = {
       segments: a.num('segments', -1, 64),
     })),
 
-  wire: define(['path', 'radius', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
+  wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
     wire({
       path: a.curve('path', 0),
       radius: a.num('radius', 1),
+      section: a.word('section', -1, 'round') as Section,
       tipScale: a.num('tip', -1, 0.2),
       twistTurns: a.num('twist', -1, 0) / (Math.PI * 2) || undefined,
       flatten: a.flag('flatten', -1, false),
@@ -245,6 +247,55 @@ const PARTS = {
       point: a.num('point', 1, NaN) || undefined,
       bore: a.num('bore', -1, 0) || undefined,
       segments: a.num('segments', -1, 24),
+    })),
+
+  band: define(['radius', 'width', 'thickness', 'segments'], (a) =>
+    band({
+      radius: a.num('radius', 0),
+      width: a.num('width', 1),
+      thickness: a.num('thickness', 2, 0.8),
+      segments: a.num('segments', -1, 128),
+    })),
+
+  pod: define(['length', 'width', 'whorls', 'whorlDepth', 'segments'], (a) =>
+    pod({
+      length: a.num('length', 0),
+      width: a.num('width', 1),
+      whorls: a.num('whorls', -1, 0) || undefined,
+      whorlDepth: a.num('whorlDepth', -1, NaN) || undefined,
+      segments: a.num('segments', -1, 32),
+    })),
+
+  bar: define(['length', 'width', 'thickness', 'bore', 'intermediate', 'bevel'], (a) =>
+    bar({
+      length: a.num('length', 0),
+      width: a.num('width', 1),
+      thickness: a.num('thickness', 2, 1.2),
+      bore: a.num('bore', 3, 2),
+      intermediate: a.num('intermediate', -1, 0) || undefined,
+      bevel: a.num('bevel', -1, NaN) || undefined,
+    })),
+
+  disc: define(['radius', 'thickness', 'sides', 'bore', 'bolts', 'boltCircle', 'boltBore', 'bevel'], (a) =>
+    disc({
+      radius: a.num('radius', 0),
+      thickness: a.num('thickness', 1, 1.2),
+      sides: a.num('sides', -1, 0) || undefined,
+      bore: a.num('bore', -1, 0) || undefined,
+      bolts: a.num('bolts', -1, 0) || undefined,
+      boltCircleRadius: a.num('boltCircle', -1, NaN) || undefined,
+      boltBore: a.num('boltBore', -1, NaN) || undefined,
+      bevel: a.num('bevel', -1, NaN) || undefined,
+    })),
+
+  gusset: define(['radius', 'thickness', 'bore', 'fillet', 'lighten', 'bevel'], (a) =>
+    gusset({
+      radius: a.num('radius', 0),
+      thickness: a.num('thickness', 1, 1.2),
+      bore: a.num('bore', 2, 2),
+      fillet: a.num('fillet', -1, NaN) || undefined,
+      lighten: a.num('lighten', -1, 0) || undefined,
+      bevel: a.num('bevel', -1, NaN) || undefined,
     })),
 
   collar: define(['inner', 'wall', 'length', 'belly', 'segments'], (a) =>

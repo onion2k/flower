@@ -51,6 +51,9 @@ export function extrude(opts: ExtrudeOptions): Mesh {
       mb.vertex(x, y, z, 0, 0, nz, (x - span.minX) / span.width, (y - span.minY) / span.height);
     }
     for (let i = 0; i < tri.length; i += 3) {
+      // Every triangle is kept, including the occasional sliver earcut leaves
+      // where an outline is nearly collinear. They are invisible, but they carry
+      // edges: dropping them tears real holes in the cap around each piercing.
       if (top) mb.triangle(base + tri[i], base + tri[i + 1], base + tri[i + 2]);
       else mb.triangle(base + tri[i], base + tri[i + 2], base + tri[i + 1]);
     }

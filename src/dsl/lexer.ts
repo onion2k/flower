@@ -99,7 +99,8 @@ export function tokenize(source: string): Token[] {
 
     if (isAlpha(c)) {
       const start = i;
-      while (i < source.length && (isAlpha(source[i]) || isDigit(source[i]) || source[i] === '-')) i++;
+      // No hyphens: they would make "span-2" a single name rather than a subtraction
+      while (i < source.length && (isAlpha(source[i]) || isDigit(source[i]))) i++;
       tokens.push({ kind: 'ident', text: source.slice(start, i), span: span(start, i) });
       continue;
     }

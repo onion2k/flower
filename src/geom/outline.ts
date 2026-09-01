@@ -87,3 +87,72 @@ export function leafPiercings(
   }
   return holes;
 }
+
+/** Regular polygon plate. */
+export function polygonOutline(sides: number, radius: number, rotate = 0): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a = rotate + (i / sides) * Math.PI * 2;
+    pts.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+  }
+  return ensureWinding(pts, true);
+}
+
+/** Stadium: a straight member with rounded ends, the classic drilled bar. */
+export function stadiumOutline(length: number, width: number, segments = 12): Vec2[] {
+  const r = width / 2;
+  const half = Math.max(length / 2 - r, 0);
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const a = -Math.PI / 2 + (i / segments) * Math.PI;
+    pts.push([half + Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  for (let i = 0; i <= segments; i++) {
+    const a = Math.PI / 2 + (i / segments) * Math.PI;
+    pts.push([-half + Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return ensureWinding(pts, true);
+}
+
+/**
+ * Triangular gusset with rounded corners.
+ *
+ * The corners are rounded because a real one is: a sharp point in sheet metal is
+ * a place to catch and a place to crack, so it gets radiused, and the radius is
+ * what makes it read as cut from stock rather than drawn on.
+ */
+export function gussetOutline(radius: number, fillet: number, segments = 6): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let corner = 0; corner < 3; corner++) {
+    const a = -Math.PI / 2 + (corner / 3) * Math.PI * 2;
+    const cx = Math.cos(a) * (radius - fillet);
+    const cy = Math.sin(a) * (radius - fillet);
+    for (let i = 0; i <= segments; i++) {
+      const t = a - Math.PI / 3 + (i / segments) * ((2 * Math.PI) / 3);
+      pts.push([cx + Math.cos(t) * fillet, cy + Math.sin(t) * fillet]);
+    }
+  }
+  return ensureWinding(pts, true);
+}
+
+export function circleOutline(radius: number, segments = 48): Vec2[] {
+  const pts: Vec2[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    pts.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+  }
+  return ensureWinding(pts, true);
+}
+
+/** A ring of drilled holes, wound for use as piercings. */
+export function boltCircle(count: number, radius: number, bore: number, segments = 14): Vec2[][] {
+  const holes: Vec2[][] = [];
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    holes.push(ensureWinding(
+      transformLoop(circleOutline(bore / 2, segments), Math.cos(a) * radius, Math.sin(a) * radius),
+      false,
+    ));
+  }
+  return holes;
+}

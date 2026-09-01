@@ -5,11 +5,15 @@ import { meshBounds, type Anchor, type Part } from './types';
 import { normalize, sub } from '../geom/vec';
 import type { Vec3 } from '../geom/types';
 
+export type Section = 'round' | 'square' | 'hex' | 'octagon' | 'flat' | 'lens';
+
 export interface WireSpec {
   name?: string;
   path: Curve;
   /** Section radius at the base. */
   radius: number;
+  /** Cross-section. Round draws as wire, the flats as rolled or drawn bar. */
+  section?: Section;
   /** Fraction of the base radius left at the tip. 0.15 is a fine drawn point. */
   tipScale?: number;
   /** Turns of twist along the whole run. Only visible on a non-round section. */
@@ -36,12 +40,14 @@ export function wire(spec: WireSpec): Part {
   const tip = spec.tipScale ?? 0.2;
 
   const path = resample(spec.path, sections);
-  const round = profile.circle(spec.radius, sides);
+  const section = spec.section ?? 'round';
+  const base = sectionProfile(section, spec.radius, sides);
+  // morphing needs matching point counts, so it only applies to the round section
   const flat = profile.lens(spec.radius * 2.6, spec.radius * 0.7, sides);
 
   const mesh = sweep(path, {
-    profile: round,
-    morphTo: spec.flatten ? flat : undefined,
+    profile: base,
+    morphTo: spec.flatten && section === 'round' ? flat : undefined,
     // eased so the heavy end holds its weight instead of thinning immediately
     taper: closed ? () => 1 : (t) => 1 - (1 - tip) * Math.pow(t, 1.4),
     twist: spec.twistTurns ? (t) => t * spec.twistTurns! * Math.PI * 2 : undefined,
@@ -68,6 +74,17 @@ export function wire(spec: WireSpec): Part {
   }
 
   return { name: spec.name ?? 'wire', mesh, bounds: meshBounds(mesh), anchors };
+}
+
+function sectionProfile(section: Section, radius: number, sides: number) {
+  switch (section) {
+    case 'square': return profile.polygon(4, radius * 1.28, Math.PI / 4);
+    case 'hex': return profile.polygon(6, radius * 1.1);
+    case 'octagon': return profile.polygon(8, radius * 1.05);
+    case 'flat': return profile.ribbon(radius * 2.6, radius * 0.85, 3);
+    case 'lens': return profile.lens(radius * 2.6, radius * 0.8, sides);
+    default: return profile.circle(radius, sides);
+  }
 }
 
 /**
@@ -112,6 +129,51 @@ export function blade(spec: BladeSpec): Part {
         axis: normalize(sub(path[0], path[1])),
         tangent: normalize(sub(path[1], path[0])),
       },
+    ],
+  };
+}
+
+export interface BandSpec {
+  name?: string;
+  radius: number;
+  width: number;
+  thickness: number;
+  /** Tilt of the band's plane, in radians. Armillaries are a set of these. */
+  segments?: number;
+}
+
+/**
+ * An armillary band: a flat ribbon closed into a ring, standing on edge.
+ *
+ * Distinct from a wire ring — the band has a face, so it catches light along its
+ * whole length rather than in a thin highlight, and a nest of them reads as an
+ * instrument rather than as loops of wire.
+ */
+export function band(spec: BandSpec): Part {
+  const segments = spec.segments ?? 128;
+  const path: Vec3[] = [];
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    path.push([Math.cos(a) * spec.radius, Math.sin(a) * spec.radius, 0]);
+  }
+  path.push(path[0]);
+
+  const mesh = sweep(path, {
+    profile: profile.ribbon(spec.width, spec.thickness, 3),
+    closed: true,
+    caps: false,
+    // seed the frame so the band's width lies along the ring axis, standing it
+    // on edge rather than laying it flat
+    up: [0, 0, 1],
+  });
+
+  return {
+    name: spec.name ?? 'band',
+    mesh,
+    bounds: meshBounds(mesh),
+    anchors: [
+      { name: 'north', position: [spec.radius, 0, 0], axis: [1, 0, 0], tangent: [0, 0, 1] },
+      { name: 'south', position: [-spec.radius, 0, 0], axis: [-1, 0, 0], tangent: [0, 0, 1] },
     ],
   };
 }

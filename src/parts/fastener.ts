@@ -160,3 +160,48 @@ export function collar(spec: CollarSpec): Part {
     ],
   };
 }
+
+export interface PodSpec {
+  name?: string;
+  length: number;
+  width: number;
+  /** Number of whorls — rings around the pod. 0 leaves it smooth. */
+  whorls?: number;
+  whorlDepth?: number;
+  segments?: number;
+}
+
+/**
+ * A seed pod: an ovoid drawn to a point at both ends, optionally whorled.
+ *
+ * Whorls, not ribs. A surface of revolution can only vary along its silhouette,
+ * so the flutes come out as rings around the pod rather than running its length —
+ * a cone or a shell rather than a melon. Cut into the silhouette rather than
+ * added on top, so the profile stays one closed loop and needs no boolean.
+ */
+export function pod(spec: PodSpec): Part {
+  const rows = 48;
+  const whorls = spec.whorls ?? 0;
+  const depth = spec.whorlDepth ?? spec.width * 0.06;
+
+  const points: Vec2[] = [];
+  for (let i = 0; i <= rows; i++) {
+    const t = i / rows;
+    const a = t * Math.PI;
+    // pointed at both ends, fullest a little below the middle
+    const swell = Math.pow(Math.sin(a), 0.78) * (1 - 0.12 * Math.cos(a));
+    const flute = whorls > 0 ? Math.cos(t * whorls * Math.PI * 2) * depth * Math.sin(a) : 0;
+    points.push([Math.max(spec.width * 0.5 * swell + flute, 0), (t - 0.5) * spec.length]);
+  }
+
+  const mesh = revolve({ points }, { segments: spec.segments ?? 32 });
+  return {
+    name: spec.name ?? 'pod',
+    mesh,
+    bounds: meshBounds(mesh),
+    anchors: [
+      { name: 'base', position: [0, 0, -spec.length / 2], axis: [0, 0, -1], tangent: [1, 0, 0] },
+      { name: 'tip', position: [0, 0, spec.length / 2], axis: [0, 0, 1], tangent: [1, 0, 0] },
+    ],
+  };
+}

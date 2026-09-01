@@ -72,6 +72,44 @@ export function ribbon(width: number, thickness: number, roundSegments = 4): Pro
       sharp.push(false);
     }
   }
+  // With the default corner radius the straight sides have zero length, so each
+  // arc ends exactly where the next begins. Left in, those duplicates are
+  // zero-length edges and a band of degenerate quads all the way along a sweep.
+  return dedupeClosed({ points, sharp });
+}
+
+/**
+ * Regular polygon, every corner hard.
+ *
+ * Rolled and drawn bar stock has flats, and the flats are the point: a square
+ * strut catches the light in three distinct planes where a round one gives a
+ * single smeared highlight. That difference is most of what separates a
+ * constructivist member from a piece of wire.
+ */
+export function polygon(sides: number, radius: number, rotate = 0): Profile {
+  const points: Vec2[] = [];
+  for (let i = 0; i < sides; i++) {
+    const a = rotate + (i / sides) * Math.PI * 2;
+    points.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+  }
+  return { points, sharp: points.map(() => true) };
+}
+
+/** Drop points that coincide with their predecessor, wrapping at the seam. */
+export function dedupeClosed(p: Profile, epsilon = 1e-7): Profile {
+  const points: Vec2[] = [];
+  const sharp: boolean[] = [];
+  for (let i = 0; i < p.points.length; i++) {
+    const previous = points[points.length - 1] ?? p.points[p.points.length - 1];
+    const [x, y] = p.points[i];
+    if (Math.hypot(x - previous[0], y - previous[1]) < epsilon) {
+      // keep the crease if either of the merged points carried one
+      if (p.sharp[i] && sharp.length) sharp[sharp.length - 1] = true;
+      continue;
+    }
+    points.push(p.points[i]);
+    sharp.push(p.sharp[i]);
+  }
   return { points, sharp };
 }
 

@@ -27,8 +27,8 @@ export interface Placement {
   scale?: Expr;
   offset?: Expr;
   flip?: boolean;
-  metal?: string;
-  finish?: string;
+  /** Raw words; a metal name may be two of them. */
+  material?: string[];
   as?: string;
   span: Span;
 }
@@ -47,9 +47,9 @@ export type Action =
   | { kind: 'repeat'; subject: Expr; symmetry: Expr; span: Span };
 
 export type Stmt =
-  | { kind: 'material'; metal: string; finish?: string; span: Span }
+  | { kind: 'material'; words: string[]; span: Span }
   | { kind: 'let'; name: string; value: Expr; span: Span }
-  | { kind: 'part'; name: string; value: Expr; metal?: string; finish?: string; span: Span }
+  | { kind: 'part'; name: string; value: Expr; material?: string[]; span: Span }
   | { kind: 'unit'; name: string; actions: Action[]; span: Span }
   | { kind: 'form'; name: string; actions: Action[]; span: Span };
 

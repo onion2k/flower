@@ -117,14 +117,20 @@ export function parse(source: string): Program {
 
   // --- material names may be several words: "rose-gold polished" ---
 
-  function parseMaterial(): { metal: string; finish?: string } {
-    const metal = expectIdent('as a metal').text.replace(/-/g, ' ');
-    let finish: string | undefined;
-    // a following keyword starts the next statement, it is not a finish name
-    if (atIdent() && !isActionKeyword(peek().text) && !isStatementKeyword(peek().text)) {
-      finish = next().text;
+  /**
+   * Collect the words of a material. Splitting metal from finish needs the metal
+   * registry — "rose gold polished" is a two-word metal — so that is resolved
+   * during evaluation rather than guessed at here.
+   */
+  function parseMaterial(): string[] {
+    const words = [expectIdent('as a metal').text];
+    while (
+      words.length < 3 && atIdent() &&
+      !isActionKeyword(peek().text) && !isStatementKeyword(peek().text)
+    ) {
+      words.push(next().text);
     }
-    return { metal, finish };
+    return words;
   }
 
   // --- placements ---
@@ -141,13 +147,7 @@ export function parse(source: string): Program {
       if (at('offset')) { next(); placement.offset = parseExpr(); continue; }
       if (at('flip')) { next(); placement.flip = true; continue; }
       if (at('as')) { next(); placement.as = expectIdent('after "as"').text; continue; }
-      if (at('in')) {
-        next();
-        const m = parseMaterial();
-        placement.metal = m.metal;
-        placement.finish = m.finish;
-        continue;
-      }
+      if (at('in')) { next(); placement.material = parseMaterial(); continue; }
       break;
     }
     placement.span = spanFrom(start);
@@ -221,8 +221,7 @@ export function parse(source: string): Program {
 
     if (at('material')) {
       next();
-      const m = parseMaterial();
-      return { kind: 'material', metal: m.metal, finish: m.finish, span: spanFrom(start) };
+      return { kind: 'material', words: parseMaterial(), span: spanFrom(start) };
     }
 
     if (at('let')) {
@@ -237,15 +236,8 @@ export function parse(source: string): Program {
       const name = expectIdent('after "part"').text;
       expect('=', 'after a part name');
       const value = parseExpr();
-      let metal: string | undefined;
-      let finish: string | undefined;
-      if (at('in')) {
-        next();
-        const m = parseMaterial();
-        metal = m.metal;
-        finish = m.finish;
-      }
-      return { kind: 'part', name, value, metal, finish, span: spanFrom(start) };
+      const material = at('in') ? (next(), parseMaterial()) : undefined;
+      return { kind: 'part', name, value, material, span: spanFrom(start) };
     }
 
     if (at('unit') || at('form')) {

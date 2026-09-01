@@ -1,7 +1,8 @@
 import { arc, bezier3, catmullRom, logSpiral } from '../geom/curve';
-import { blade, wire } from '../parts/wire';
+import { band, blade, wire } from '../parts/wire';
+import { bar, disc, gusset } from '../parts/panel';
 import { leaf } from '../parts/leaf';
-import { bead, collar, rivet } from '../parts/fastener';
+import { bead, collar, pod, rivet } from '../parts/fastener';
 import type { Part } from '../parts/types';
 
 /**
@@ -88,6 +89,33 @@ export const catalogue: Record<string, () => Part> = {
 
   rivet: () =>
     rivet({ name: 'rivet', headDiameter: 4, headHeight: 1.3, shankDiameter: 2, grip: 2.8 }),
+
+  // ---- constructivist ----
+
+  'strut · square': () =>
+    wire({
+      name: 'strut',
+      path: arc(30, -0.5, 0.5),
+      radius: 1.6,
+      section: 'square',
+      tipScale: 1,
+      sections: 48,
+    }),
+
+  bar: () => bar({ length: 34, width: 5, thickness: 1.4, bore: 2.2, intermediate: 1 }),
+
+  'disc · bolted': () =>
+    disc({ radius: 14, thickness: 1.5, bore: 6, bolts: 8, boltCircleRadius: 10, boltBore: 2.2 }),
+
+  'polygon · hex': () => disc({ radius: 13, thickness: 1.6, sides: 6, bore: 5, bolts: 6 }),
+
+  gusset: () => gusset({ radius: 9, thickness: 1.4, bore: 2.4, lighten: 5 }),
+
+  // ---- botanical and orrery ----
+
+  'pod · whorled': () => pod({ length: 20, width: 11, whorls: 7, whorlDepth: 0.55 }),
+
+  band: () => band({ radius: 22, width: 3.4, thickness: 0.9 }),
 };
 
 export const catalogueNames = Object.keys(catalogue);

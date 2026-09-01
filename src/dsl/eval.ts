@@ -150,8 +150,23 @@ export function evaluate(program: Program): Sketch {
     return value;
   };
 
-  function applyMaterial(part: Part, placement: { metal?: string; finish?: string }, span: Span) {
-    if (!placement.metal && !placement.finish) return;
+  /**
+   * Split material words into metal and finish, longest metal name first.
+   * "rose gold polished" is a two-word metal and a finish, not the reverse.
+   */
+  function resolveMaterial(words: string[], span: Span): { metal?: string; finish?: string } {
+    if (words.length >= 2 && metals[`${words[0]} ${words[1]}`]) {
+      return { metal: `${words[0]} ${words[1]}`, finish: words[2] };
+    }
+    if (words.length > 2) {
+      throw new DslError(`"${words.join(' ')}" is not a metal and a finish`, span);
+    }
+    return { metal: words[0], finish: words[1] };
+  }
+
+  function applyMaterial(part: Part, words: string[] | undefined, span: Span) {
+    if (!words || !words.length) return;
+    const placement = resolveMaterial(words, span);
     checkMaterial(placement, span);
     // Material lives on the Part, and Parts are shared, so recording it twice with
     // different values would silently repaint every other placement of the piece.
@@ -170,7 +185,7 @@ export function evaluate(program: Program): Sketch {
   function checkMaterial(m: { metal?: string; finish?: string }, span: Span) {
     if (m.metal && !metals[m.metal]) {
       throw new DslError(
-        `there is no metal called "${m.metal}" — try ${Object.keys(metals).map(hyphenate).join(', ')}`,
+        `there is no metal called "${m.metal}" — try ${Object.keys(metals).join(', ')}`,
         span,
       );
     }
@@ -201,7 +216,7 @@ export function evaluate(program: Program): Sketch {
         }
 
         const part = evalPart(action.part);
-        applyMaterial(part, action.placement, action.span);
+        applyMaterial(part, action.placement.material, action.span);
         const placement = assembly.place(part, placementMatrix(action.placement));
         if (name) placed.set(name, placement);
         continue;
@@ -226,7 +241,7 @@ export function evaluate(program: Program): Sketch {
         }
 
         const part = evalPart(action.part);
-        applyMaterial(part, action.placement, action.span);
+        applyMaterial(part, action.placement.material, action.span);
         const anchorName = action.partAnchor ?? part.anchors[0]?.name;
         if (!anchorName) {
           throw new DslError(`"${part.name}" has no anchors to fasten by`, action.span);
@@ -281,11 +296,13 @@ export function evaluate(program: Program): Sketch {
 
   for (const statement of program.statements) {
     switch (statement.kind) {
-      case 'material':
-        checkMaterial(statement, statement.span);
-        defaultMetal = statement.metal;
-        defaultFinish = statement.finish;
+      case 'material': {
+        const m = resolveMaterial(statement.words, statement.span);
+        checkMaterial(m, statement.span);
+        defaultMetal = m.metal;
+        defaultFinish = m.finish;
         break;
+      }
 
       case 'let':
         scope.set(statement.name, evalExpr(statement.value));
@@ -300,7 +317,7 @@ export function evaluate(program: Program): Sketch {
           );
         }
         value.name = statement.name;
-        applyMaterial(value, statement, statement.span);
+        applyMaterial(value, statement.material, statement.span);
         scope.set(statement.name, value);
         break;
       }
@@ -337,8 +354,6 @@ export function evaluate(program: Program): Sketch {
 }
 
 const nameOf = (expr: Expr) => (expr.kind === 'ident' ? expr.name : undefined);
-
-const hyphenate = (name: string) => name.replace(/ /g, '-');
 
 function describeValue(value: Value): string {
   if (typeof value === 'number') return 'it is a number';
