@@ -20,8 +20,11 @@
       #app { display: grid; grid-template-columns: minmax(0, 1fr) 300px;
         grid-template-rows: minmax(0, 1fr) auto; height: 100%; overflow: hidden; }
       #stage { grid-column: 1; grid-row: 1; position: relative; overflow: hidden; min-width: 0; min-height: 0; }
+      /* max-height, not height: at a short viewport a fixed height pushed the
+         stage row past the bottom of the grid, so the canvas was sized to a box
+         taller than the space it was actually drawn into */
       #editor { grid-column: 1; grid-row: 2; display: none; border-top: 1px solid var(--line);
-        background: #0e1013; height: 270px; }
+        background: #0e1013; height: min(270px, 45vh); min-height: 0; }
       #editor.open { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
       #editor textarea { width: 100%; height: 100%; resize: none; border: 0; outline: 0;
         background: transparent; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;

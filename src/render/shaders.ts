@@ -57,7 +57,10 @@ uniform vec3 uPatinaColour;
 uniform vec3 cameraPosition;
 uniform float uExposure;
 uniform float uEnvSpin;
-uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf
+uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 ao
+uniform sampler2D uAo;
+uniform vec2 uResolution;
+uniform float uAoStrength;
 
 const float PI = 3.14159265359;
 
@@ -169,18 +172,28 @@ void main() {
   vec3 prefiltered = textureLod(uSpecular, spin * r, roughness * uMaxLod).rgb;
   vec2 ab = texture(uBrdf, vec2(ndv, roughness)).rg;
 
-  vec3 specular = prefiltered * (f0 * ab.x + ab.y);
+  // Frostbite's specular occlusion: full AO on a mirror finish reads as dirt,
+  // because a polished surface still reflects the room from a shaded crevice.
+  // This falls off with roughness and grazing angle instead.
+  float ao = mix(1.0, texture(uAo, gl_FragCoord.xy / uResolution).r, uAoStrength);
+  float specAo = clamp(
+    pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao,
+    0.0, 1.0
+  );
+
+  vec3 specular = prefiltered * (f0 * ab.x + ab.y) * specAo;
 
   // Metal has no diffuse lobe, so this contributes only where patina has taken
   // hold. The roughest prefiltered mip stands in for an irradiance map — close
   // enough for a dull oxide, and it saves a whole convolution pass.
   vec3 irradiance = textureLod(uSpecular, spin * n, uMaxLod).rgb;
-  vec3 diffuse = irradiance * uPatinaColour * (1.0 - metallic);
+  vec3 diffuse = irradiance * uPatinaColour * (1.0 - metallic) * ao;
 
   vec3 colour = specular + diffuse;
   colour *= uExposure;
 
-  if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
+  if (uDebug > 5.5) colour = vec3(ao);
+  else if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
   else if (uDebug > 3.5) colour = prefiltered;
   else if (uDebug > 2.5) colour = vec3(roughness);
   else if (uDebug > 1.5) colour = vec3(vUv, 0.35);

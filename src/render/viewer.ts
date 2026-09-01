@@ -1,10 +1,16 @@
-import { Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3, Texture, Mat4 } from 'ogl';
+import {
+  Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3, Texture, Mat4, RenderTarget,
+} from 'ogl';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor } from '../parts/types';
 import type { Box3 } from '../geom/types';
 import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { PBR_FRAG, PBR_VERT, SKYBOX_FRAG, SKYBOX_VERT } from './shaders';
+import {
+  AO_FRAG, AO_VERT, BLUR_FRAG, KERNEL_SIZE, NOISE_SIZE, PREPASS_FRAG, PREPASS_VERT,
+  makeKernel, makeNoise,
+} from './ssao';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -46,6 +52,18 @@ export class Viewer {
   private anchorProgram: Program;
   private anchorMesh: Mesh | null = null;
   private raf = 0;
+
+  private prepassProgram: Program;
+  private aoProgram: Program;
+  private blurProgram: Program;
+  private aoMesh: Mesh;
+  private blurMesh: Mesh;
+  private normalDepthTarget: RenderTarget | null = null;
+  private aoTarget: RenderTarget | null = null;
+  private blurTarget: RenderTarget | null = null;
+  private aoEnabled = true;
+  /** Occlusion radius in world units; set from the framed bounds. */
+  private aoRadius = 2;
 
   private environment: Environment | null = null;
   private specularTexture: Texture;
@@ -95,6 +113,9 @@ export class Viewer {
         uExposure: { value: 1 },
         uEnvSpin: { value: 0 },
         uDebug: { value: 0 },
+        uAo: { value: null },
+        uResolution: { value: [1, 1] },
+        uAoStrength: { value: 1 },
       },
       cullFace: null,
     });
@@ -123,6 +144,66 @@ export class Viewer {
     this.skyMesh.frustumCulled = false;
     this.skyMesh.renderOrder = -1;
     this.skyMesh.setParent(this.scene);
+
+    // --- ambient occlusion: prepass, sample, blur ---
+    this.prepassProgram = new Program(gl, {
+      vertex: PREPASS_VERT,
+      fragment: PREPASS_FRAG,
+      cullFace: null,
+    });
+
+    const fullscreen = () =>
+      new Geometry(gl, {
+        position: { size: 3, data: new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]) },
+      });
+
+    const noise = new Texture(gl, {
+      image: makeNoise(),
+      width: NOISE_SIZE,
+      height: NOISE_SIZE,
+      minFilter: raw.NEAREST,
+      magFilter: raw.NEAREST,
+      wrapS: raw.REPEAT,
+      wrapT: raw.REPEAT,
+      generateMipmaps: false,
+      flipY: false,
+    });
+
+    this.aoProgram = new Program(gl, {
+      vertex: AO_VERT,
+      fragment: AO_FRAG,
+      uniforms: {
+        uNormalDepth: { value: null },
+        uNoise: { value: noise },
+        uKernel: { value: makeKernel(KERNEL_SIZE) },
+        uProjection: { value: new Mat4() },
+        uResolution: { value: [1, 1] },
+        uFocal: { value: [1, 1] },
+        uRadius: { value: this.aoRadius },
+        uBias: { value: 0.05 },
+        uIntensity: { value: 1.1 },
+      },
+      depthTest: false,
+      depthWrite: false,
+      cullFace: null,
+    });
+    this.aoMesh = new Mesh(gl, { geometry: fullscreen(), program: this.aoProgram });
+    this.aoMesh.frustumCulled = false;
+
+    this.blurProgram = new Program(gl, {
+      vertex: AO_VERT,
+      fragment: BLUR_FRAG,
+      uniforms: {
+        uAo: { value: null },
+        uNormalDepth: { value: null },
+        uTexel: { value: [1, 1] },
+      },
+      depthTest: false,
+      depthWrite: false,
+      cullFace: null,
+    });
+    this.blurMesh = new Mesh(gl, { geometry: fullscreen(), program: this.blurProgram });
+    this.blurMesh.frustumCulled = false;
 
     this.anchorProgram = new Program(gl, {
       vertex: anchorVertex,
@@ -167,6 +248,20 @@ export class Viewer {
     this.program.uniforms.uHammer.value = this.finish.hammer;
     this.program.uniforms.uPatina.value = this.finish.patina;
     this.program.uniforms.uPatinaColour.value = patinaColour(this.metal.name);
+  }
+
+  setAoEnabled(on: boolean) {
+    this.aoEnabled = on;
+    this.program.uniforms.uAoStrength.value = on ? 1 : 0;
+  }
+
+  setAoRadius(v: number) {
+    this.aoRadius = v;
+    this.aoProgram.uniforms.uRadius.value = v;
+  }
+
+  setAoIntensity(v: number) {
+    this.aoProgram.uniforms.uIntensity.value = v;
   }
 
   setExposure(v: number) {
@@ -310,14 +405,83 @@ export class Viewer {
     this.camera.far = dist + radius * 12;
     this.camera.perspective({});
     this.controls.forcePosition();
+
+    // A fixed radius cannot serve both a 6 mm rivet and a 120 mm mandala; scale it
+    // to the subject so contact shadows stay the size of the joints, not the piece.
+    this.setAoRadius(Math.max(radius * 0.05, 0.4));
   }
 
   private resize = () => {
     const gl = this.renderer.gl;
+    const raw = gl as unknown as WebGL2RenderingContext;
     const host = (gl.canvas as HTMLCanvasElement).parentElement as HTMLElement;
     this.renderer.setSize(host.clientWidth, host.clientHeight);
     this.camera.perspective({ aspect: host.clientWidth / host.clientHeight });
+
+    const width = Math.max(1, Math.floor(this.renderer.width * this.renderer.dpr));
+    const height = Math.max(1, Math.floor(this.renderer.height * this.renderer.dpr));
+
+    for (const target of [this.normalDepthTarget, this.aoTarget, this.blurTarget]) {
+      if (!target) continue;
+      gl.deleteFramebuffer(target.buffer);
+      for (const texture of target.textures) gl.deleteTexture(texture.texture);
+    }
+
+    // Normals and linear depth in one target. Depth alone would need a separate
+    // normal buffer or normals reconstructed from derivatives, which come out
+    // faceted on exactly the thin curved parts this form language is made of.
+    //
+    // Full float, not half: half gives about eleven bits of mantissa, so at a
+    // viewing distance of 265 mm consecutive depths quantise to steps of ~0.13 mm
+    // — coarser than the occlusion bias, and the surface then occludes itself in
+    // stripes that follow its own tessellation.
+    this.normalDepthTarget = new RenderTarget(gl, {
+      width, height, depth: true,
+      type: raw.FLOAT,
+      format: raw.RGBA,
+      internalFormat: raw.RGBA32F,
+      minFilter: raw.NEAREST,
+      magFilter: raw.NEAREST,
+    });
+    this.aoTarget = new RenderTarget(gl, { width, height, depth: false });
+    this.blurTarget = new RenderTarget(gl, { width, height, depth: false });
+
+    this.aoProgram.uniforms.uNormalDepth.value = this.normalDepthTarget.texture;
+    this.aoProgram.uniforms.uResolution.value = [width, height];
+    this.blurProgram.uniforms.uAo.value = this.aoTarget.texture;
+    this.blurProgram.uniforms.uNormalDepth.value = this.normalDepthTarget.texture;
+    this.blurProgram.uniforms.uTexel.value = [1 / width, 1 / height];
+    this.program.uniforms.uAo.value = this.blurTarget.texture;
+    this.program.uniforms.uResolution.value = [width, height];
   };
+
+  /** Depth and normals, then occlusion, then a depth-aware blur. */
+  private renderAmbientOcclusion() {
+    if (!this.aoEnabled || !this.normalDepthTarget || !this.aoTarget || !this.blurTarget) return;
+
+    // geometry only: the backdrop has no depth and the gizmos are not surfaces
+    this.skyMesh.visible = false;
+    const anchorsWereVisible = this.anchorMesh?.visible ?? false;
+    if (this.anchorMesh) this.anchorMesh.visible = false;
+
+    const beauty = this.meshes.map((m) => m.program);
+    for (const mesh of this.meshes) mesh.program = this.prepassProgram;
+    this.renderer.render({ scene: this.scene, camera: this.camera, target: this.normalDepthTarget });
+    for (let i = 0; i < this.meshes.length; i++) this.meshes[i].program = beauty[i];
+
+    this.skyMesh.visible = true;
+    if (this.anchorMesh) this.anchorMesh.visible = anchorsWereVisible;
+
+    const projection = this.aoProgram.uniforms.uProjection.value as Mat4;
+    projection.copy(this.camera.projectionMatrix);
+    this.aoProgram.uniforms.uFocal.value = [
+      this.camera.projectionMatrix[0],
+      this.camera.projectionMatrix[5],
+    ];
+
+    this.renderer.render({ scene: this.aoMesh, target: this.aoTarget });
+    this.renderer.render({ scene: this.blurMesh, target: this.blurTarget });
+  }
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
@@ -327,6 +491,7 @@ export class Viewer {
     const inv = this.skyProgram.uniforms.uInverseViewProjection.value as Mat4;
     inv.multiply(this.camera.projectionMatrix, this.camera.viewMatrix).inverse();
 
+    this.renderAmbientOcclusion();
     this.renderer.render({ scene: this.scene, camera: this.camera });
   };
 
