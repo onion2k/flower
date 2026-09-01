@@ -1,5 +1,5 @@
 import {
-  Renderer, Camera, Transform, Geometry, Program, Mesh, Vec3, Texture, Mat4, RenderTarget,
+  Renderer, Camera, Transform, Geometry, Program, Mesh, Vec3, Texture,
 } from 'ogl';
 import { Orbit } from './orbit';
 import type { Mesh as PartMesh } from '../mesh/types';
@@ -8,40 +8,9 @@ import type { Box3 } from '../geom/types';
 import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { PBR_FRAG, PBR_VERT } from './shaders';
-import {
-  AO_FRAG, AO_VERT, BLUR_FRAG, DEPTH_COPY_FRAG, DEPTH_DOWNSAMPLE_FRAG, DEPTH_LEVELS,
-  PREPASS_FRAG, PREPASS_VERT,
-} from './ssao';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
-const FULLSCREEN_VERT = `#version 300 es
-out vec2 vUv;
-void main() {
-  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-  vUv = p;
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}`;
-
-function compileRaw(gl: WebGL2RenderingContext, vertexSrc: string, fragmentSrc: string): WebGLProgram {
-  const make = (type: number, src: string) => {
-    const shader = gl.createShader(type)!;
-    gl.shaderSource(shader, src);
-    gl.compileShader(shader);
-    if (!gl.getShaderParameter(shader, gl.COMPILE_STATUS)) {
-      throw new Error(`depth chain shader failed: ${gl.getShaderInfoLog(shader)}`);
-    }
-    return shader;
-  };
-  const program = gl.createProgram()!;
-  gl.attachShader(program, make(gl.VERTEX_SHADER, vertexSrc));
-  gl.attachShader(program, make(gl.FRAGMENT_SHADER, fragmentSrc));
-  gl.linkProgram(program);
-  if (!gl.getProgramParameter(program, gl.LINK_STATUS)) {
-    throw new Error(`depth chain program failed: ${gl.getProgramInfoLog(program)}`);
-  }
-  return program;
-}
 
 const anchorVertex = `#version 300 es
 in vec3 position;
@@ -80,24 +49,6 @@ export class Viewer {
   private anchorMesh: Mesh | null = null;
   private raf = 0;
 
-  private prepassProgram: Program;
-  private aoProgram: Program;
-  private blurProgram: Program;
-  private aoMesh: Mesh;
-  private blurMesh: Mesh;
-  private normalDepthTarget: RenderTarget | null = null;
-  private depthChain: WebGLTexture | null = null;
-  private depthChainTexture: Texture;
-  private depthFbo: WebGLFramebuffer | null = null;
-  private depthCopyProgram: WebGLProgram | null = null;
-  private depthDownProgram: WebGLProgram | null = null;
-  private depthVao: WebGLVertexArrayObject | null = null;
-  private depthLevels = DEPTH_LEVELS;
-  private aoTarget: RenderTarget | null = null;
-  private blurTarget: RenderTarget | null = null;
-  private aoEnabled = true;
-  /** Occlusion radius in world units; set from the framed bounds. */
-  private aoRadius = 2;
 
   private environment: Environment | null = null;
   private specularTexture: Texture;
@@ -135,7 +86,6 @@ export class Viewer {
     gl.clearColor(0.043, 0.047, 0.055, 1);
 
     // Raw GL textures from the bake, wrapped so ogl still manages texture units.
-    this.depthChainTexture = wrapTexture(gl, raw.TEXTURE_2D);
     this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
     this.brdfTexture = wrapTexture(gl, raw.TEXTURE_2D);
 
@@ -155,61 +105,10 @@ export class Viewer {
         uExposure: { value: 1 },
         uEnvSpin: { value: 0 },
         uDebug: { value: 0 },
-        uAo: { value: null },
-        uResolution: { value: [1, 1] },
-        uAoStrength: { value: 1 },
       },
       cullFace: null,
     });
 
-
-    // --- ambient occlusion: prepass, sample, blur ---
-    this.prepassProgram = new Program(gl, {
-      vertex: PREPASS_VERT,
-      fragment: PREPASS_FRAG,
-      cullFace: null,
-    });
-
-    const fullscreen = () =>
-      new Geometry(gl, {
-        position: { size: 3, data: new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]) },
-      });
-
-    this.aoProgram = new Program(gl, {
-      vertex: AO_VERT,
-      fragment: AO_FRAG,
-      uniforms: {
-        uNormalDepth: { value: null },
-        uDepth: { value: this.depthChainTexture },
-        uDepthLevels: { value: DEPTH_LEVELS },
-        uProjection: { value: new Mat4() },
-        uResolution: { value: [1, 1] },
-        uFocal: { value: [1, 1] },
-        uRadius: { value: this.aoRadius },
-        uBias: { value: 0.1 },
-        uIntensity: { value: 1.8 },
-      },
-      depthTest: false,
-      depthWrite: false,
-      cullFace: null,
-    });
-    this.aoMesh = new Mesh(gl, { geometry: fullscreen(), program: this.aoProgram });
-    this.aoMesh.frustumCulled = false;
-
-    this.blurProgram = new Program(gl, {
-      vertex: AO_VERT,
-      fragment: BLUR_FRAG,
-      uniforms: {
-        uAo: { value: null },
-        uNormalDepth: { value: null },
-        uTexel: { value: [1, 1] },
-      },
-      depthTest: false,
-      depthWrite: false,
-      cullFace: null,
-    });
-    this.blurMesh = new Mesh(gl, { geometry: fullscreen(), program: this.blurProgram });
-    this.blurMesh.frustumCulled = false;
 
     this.anchorProgram = new Program(gl, {
       vertex: anchorVertex,
@@ -253,20 +152,6 @@ export class Viewer {
     this.program.uniforms.uHammer.value = this.finish.hammer;
     this.program.uniforms.uPatina.value = this.finish.patina;
     this.program.uniforms.uPatinaColour.value = patinaColour(this.metal.name);
-  }
-
-  setAoEnabled(on: boolean) {
-    this.aoEnabled = on;
-    this.program.uniforms.uAoStrength.value = on ? 1 : 0;
-  }
-
-  setAoRadius(v: number) {
-    this.aoRadius = v;
-    this.aoProgram.uniforms.uRadius.value = v;
-  }
-
-  setAoIntensity(v: number) {
-    this.aoProgram.uniforms.uIntensity.value = v;
   }
 
   setExposure(v: number) {
@@ -410,186 +295,20 @@ export class Viewer {
     this.camera.far = dist + radius * 12;
     this.camera.perspective({});
     this.controls.forcePosition();
-
-    // A fixed radius cannot serve both a 6 mm rivet and a 120 mm mandala; scale it
-    // to the subject so contact shadows stay the size of the joints, not the piece.
-    this.setAoRadius(Math.max(radius * 0.05, 0.4));
   }
 
   private resize = () => {
     const gl = this.renderer.gl;
-    const raw = gl as unknown as WebGL2RenderingContext;
     const host = (gl.canvas as HTMLCanvasElement).parentElement as HTMLElement;
     this.renderer.setSize(host.clientWidth, host.clientHeight);
     this.camera.perspective({ aspect: host.clientWidth / host.clientHeight });
-
-    const width = Math.max(1, Math.floor(this.renderer.width * this.renderer.dpr));
-    const height = Math.max(1, Math.floor(this.renderer.height * this.renderer.dpr));
-
-    for (const target of [this.normalDepthTarget, this.aoTarget, this.blurTarget]) {
-      if (!target) continue;
-      gl.deleteFramebuffer(target.buffer);
-      for (const texture of target.textures) gl.deleteTexture(texture.texture);
-    }
-
-    // Normals and linear depth in one target. Depth alone would need a separate
-    // normal buffer or normals reconstructed from derivatives, which come out
-    // faceted on exactly the thin curved parts this form language is made of.
-    //
-    // Full float, not half: half gives about eleven bits of mantissa, so at a
-    // viewing distance of 265 mm consecutive depths quantise to steps of ~0.13 mm
-    // — coarser than the occlusion bias, and the surface then occludes itself in
-    // stripes that follow its own tessellation.
-    this.normalDepthTarget = new RenderTarget(gl, {
-      width, height, depth: true,
-      type: raw.FLOAT,
-      format: raw.RGBA,
-      internalFormat: raw.RGBA32F,
-      minFilter: raw.NEAREST,
-      magFilter: raw.NEAREST,
-    });
-    // Half float, not RGBA8. Occlusion on metal spends most of its range between
-    // 0.9 and 1.0, which is about 25 distinct values at 8 bits — and the contour
-    // bands of a smooth field quantised that coarsely read as stripes. It survives
-    // every change to the sampling because it is not a sampling error at all: the
-    // field underneath was always smooth, the storage was not.
-    const half = {
-      type: raw.HALF_FLOAT,
-      format: raw.RGBA,
-      internalFormat: raw.RGBA16F,
-      depth: false,
-    };
-    this.aoTarget = new RenderTarget(gl, { width, height, ...half });
-    this.blurTarget = new RenderTarget(gl, { width, height, ...half });
-
-    this.buildDepthChainTargets(raw, width, height);
-
-    this.aoProgram.uniforms.uNormalDepth.value = this.normalDepthTarget.texture;
-    this.aoProgram.uniforms.uResolution.value = [width, height];
-    this.blurProgram.uniforms.uAo.value = this.aoTarget.texture;
-    this.blurProgram.uniforms.uNormalDepth.value = this.normalDepthTarget.texture;
-    this.blurProgram.uniforms.uTexel.value = [1 / width, 1 / height];
-    this.program.uniforms.uAo.value = this.blurTarget.texture;
-    this.program.uniforms.uResolution.value = [width, height];
   };
-
-  /**
-   * Allocate the filtered depth chain: a single-channel float texture with its
-   * own mip levels, filtered rather than point-sampled.
-   *
-   * Full float, not half, for the same reason the prepass is: at 250 mm a half
-   * float quantises depth to about 0.13 mm steps, which is coarser than the
-   * plates this occlusion is meant to separate.
-   */
-  private buildDepthChainTargets(gl: WebGL2RenderingContext, width: number, height: number) {
-    if (this.depthChain) gl.deleteTexture(this.depthChain);
-
-    const levels = Math.max(1, Math.min(DEPTH_LEVELS, Math.floor(Math.log2(Math.max(width, height))) + 1));
-    this.depthLevels = levels;
-
-    const linear = gl.getExtension('OES_texture_float_linear');
-    const filter = linear ? gl.LINEAR : gl.NEAREST;
-
-    const tex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_2D, tex);
-    gl.texStorage2D(gl.TEXTURE_2D, levels, gl.R32F, width, height);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, linear ? gl.LINEAR_MIPMAP_LINEAR : gl.NEAREST_MIPMAP_NEAREST);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, filter);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-    this.depthChain = tex;
-    adoptTexture(this.depthChainTexture, tex);
-
-    if (!this.depthFbo) this.depthFbo = gl.createFramebuffer();
-    if (!this.depthVao) this.depthVao = gl.createVertexArray();
-    if (!this.depthCopyProgram) {
-      this.depthCopyProgram = compileRaw(gl, FULLSCREEN_VERT, DEPTH_COPY_FRAG);
-      this.depthDownProgram = compileRaw(gl, FULLSCREEN_VERT, DEPTH_DOWNSAMPLE_FRAG);
-    }
-    this.aoProgram.uniforms.uDepthLevels.value = levels;
-  }
-
-  /** Fill the chain: copy the prepass depth, then subsample level by level. */
-  private buildDepthChain() {
-    const gl = this.renderer.gl as unknown as WebGL2RenderingContext;
-    if (!this.depthChain || !this.depthFbo || !this.normalDepthTarget) return;
-
-    const width = this.normalDepthTarget.width;
-    const height = this.normalDepthTarget.height;
-
-    gl.bindVertexArray(this.depthVao);
-    gl.bindFramebuffer(gl.FRAMEBUFFER, this.depthFbo);
-    gl.disable(gl.DEPTH_TEST);
-    gl.disable(gl.BLEND);
-
-    // level 0: the prepass depth, on its own so it can be filtered
-    gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.depthChain, 0);
-    gl.viewport(0, 0, width, height);
-    gl.useProgram(this.depthCopyProgram);
-    gl.activeTexture(gl.TEXTURE0);
-    gl.bindTexture(gl.TEXTURE_2D, this.normalDepthTarget.texture.texture as WebGLTexture);
-    gl.uniform1i(gl.getUniformLocation(this.depthCopyProgram!, 'uNormalDepth'), 0);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
-
-    gl.useProgram(this.depthDownProgram);
-    gl.bindTexture(gl.TEXTURE_2D, this.depthChain);
-    gl.uniform1i(gl.getUniformLocation(this.depthDownProgram!, 'uSource'), 0);
-    const levelLoc = gl.getUniformLocation(this.depthDownProgram!, 'uLevel');
-
-    for (let level = 1; level < this.depthLevels; level++) {
-      // Pin the readable range to the parent level. Sampling a texture while
-      // rendering into another of its levels is only defined if the level being
-      // written is outside the base..max range.
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, level - 1);
-      gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, level - 1);
-      gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, this.depthChain, level);
-      gl.viewport(0, 0, Math.max(1, width >> level), Math.max(1, height >> level));
-      gl.uniform1i(levelLoc, level);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
-    }
-
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_BASE_LEVEL, 0);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAX_LEVEL, this.depthLevels - 1);
-
-    gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-    gl.bindVertexArray(null);
-    invalidateRendererState(this.renderer, gl);
-  }
-
-  /** Depth and normals, then occlusion, then a depth-aware blur. */
-  private renderAmbientOcclusion() {
-    if (!this.aoEnabled || !this.normalDepthTarget || !this.aoTarget || !this.blurTarget) return;
-
-    // geometry only: the gizmos are not surfaces
-    const anchorsWereVisible = this.anchorMesh?.visible ?? false;
-    if (this.anchorMesh) this.anchorMesh.visible = false;
-
-    const beauty = this.meshes.map((m) => m.program);
-    for (const mesh of this.meshes) mesh.program = this.prepassProgram;
-    this.renderer.render({ scene: this.scene, camera: this.camera, target: this.normalDepthTarget });
-    for (let i = 0; i < this.meshes.length; i++) this.meshes[i].program = beauty[i];
-
-    if (this.anchorMesh) this.anchorMesh.visible = anchorsWereVisible;
-
-    this.buildDepthChain();
-
-    const projection = this.aoProgram.uniforms.uProjection.value as Mat4;
-    projection.copy(this.camera.projectionMatrix);
-    this.aoProgram.uniforms.uFocal.value = [
-      this.camera.projectionMatrix[0],
-      this.camera.projectionMatrix[5],
-    ];
-
-    this.renderer.render({ scene: this.aoMesh, target: this.aoTarget });
-    this.renderer.render({ scene: this.blurMesh, target: this.blurTarget });
-  }
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     this.controls.update();
 
     this.camera.updateMatrixWorld();
-    this.renderAmbientOcclusion();
     this.renderer.render({ scene: this.scene, camera: this.camera });
   };
 

@@ -30,14 +30,12 @@ const state = {
   exposure: 1,
   envSpin: 0,
   debug: 0,
-  ao: true,
-  aoIntensity: 1.8,
   showAnchors: false,
 };
 
 let framed = '';
 
-function toggle(label: string, key: 'showAnchors' | 'ao', onChange: () => void) {
+function toggle(label: string, key: 'showAnchors', onChange: () => void) {
   const wrap = document.createElement('label');
   wrap.className = 'check';
   const input = document.createElement('input');
@@ -170,17 +168,7 @@ const hdrNote = document.createElement('div');
 hdrNote.className = 'note';
 lightSet.append(hdrNote);
 
-const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf', 'occlusion'];
-
-const occlusionSet = document.createElement('fieldset');
-occlusionSet.innerHTML = '<legend>Occlusion</legend>';
-occlusionSet.append(
-  toggle('contact shadows', 'ao', () => viewer.setAoEnabled(state.ao)),
-  slider('strength', 0, 2.5, 0.05, state.aoIntensity, (v) => v.toFixed(2), (v) => {
-    state.aoIntensity = v;
-    viewer.setAoIntensity(v);
-  }),
-);
+const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf'];
 
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
@@ -192,7 +180,7 @@ viewSet.append(
   toggle('show anchors', 'showAnchors', () => build()),
 );
 
-controlsEl.append(subjectSet, materialSet, lightSet, occlusionSet, viewSet);
+controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
