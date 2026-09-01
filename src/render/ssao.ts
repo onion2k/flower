@@ -1,5 +1,3 @@
-import type { Vec3 } from '../geom/types';
-
 /**
  * Screen-space ambient occlusion.
  *
@@ -10,54 +8,9 @@ import type { Vec3 } from '../geom/types';
  * placed, which means screen space.
  */
 
-export const KERNEL_SIZE = 24;
-export const NOISE_SIZE = 4;
-
-/**
- * Hemisphere kernel, weighted toward the origin so most samples land close to the
- * shaded point. An evenly spread kernel spends its budget on distant geometry and
- * misses exactly the tight contact this is for.
- */
-export function makeKernel(count = KERNEL_SIZE): Vec3[] {
-  // An array of triples, not a flat Float32Array: ogl resolves an indexed uniform
-  // like uKernel[0] by testing Array.isArray on the value, which a typed array
-  // fails. It then warns and uploads nothing, so every sample sits exactly on the
-  // shaded point and the whole buffer comes back unoccluded.
-  const kernel: Vec3[] = [];
-  let seed = 1;
-  const rand = () => {
-    // deterministic, so a screenshot of one build matches the next
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
-  for (let i = 0; i < count; i++) {
-    let v: Vec3 = [rand() * 2 - 1, rand() * 2 - 1, rand()];
-    const length = Math.hypot(v[0], v[1], v[2]) || 1;
-    v = [v[0] / length, v[1] / length, v[2] / length];
-    const t = i / count;
-    const scale = 0.1 + 0.9 * t * t;
-    kernel.push([v[0] * scale, v[1] * scale, v[2] * scale]);
-  }
-  return kernel;
-}
-
-/** Per-pixel rotations, tiled 4x4. The blur below is sized to match this tile. */
-export function makeNoise(size = NOISE_SIZE): Uint8Array {
-  const data = new Uint8Array(size * size * 4);
-  let seed = 7;
-  const rand = () => {
-    seed = (seed * 1664525 + 1013904223) % 4294967296;
-    return seed / 4294967296;
-  };
-  for (let i = 0; i < size * size; i++) {
-    const angle = rand() * Math.PI * 2;
-    data[i * 4] = Math.round((Math.cos(angle) * 0.5 + 0.5) * 255);
-    data[i * 4 + 1] = Math.round((Math.sin(angle) * 0.5 + 0.5) * 255);
-    data[i * 4 + 2] = 0;
-    data[i * 4 + 3] = 255;
-  }
-  return data;
-}
+export const SAMPLE_COUNT = 24;
+/** Turns of the sample spiral. Coprime with the tap count keeps taps spread. */
+export const SPIRAL_TURNS = 7;
 
 export const PREPASS_VERT = `#version 300 es
 in vec3 position;
@@ -113,19 +66,40 @@ in vec2 vUv;
 out vec4 fragColor;
 
 uniform sampler2D uNormalDepth;
-uniform sampler2D uNoise;
-uniform vec3 uKernel[${KERNEL_SIZE}];
 uniform mat4 uProjection;
 uniform vec2 uResolution;
 uniform vec2 uFocal;      // projectionMatrix[0][0], [1][1]
 uniform float uRadius;
-uniform float uBias;      // fraction of the radius
+uniform float uBias;      // minimum elevation above the tangent plane
 uniform float uIntensity;
+
+const float TAU = 6.28318530718;
+const int SAMPLES = ${SAMPLE_COUNT};
+const float SPIRAL_TURNS = ${SPIRAL_TURNS}.0;
 
 /** Rebuild the view-space point from linear depth, without a position buffer. */
 vec3 viewPositionFrom(vec2 uv, float depth) {
   vec2 ndc = uv * 2.0 - 1.0;
   return vec3(ndc.x / uFocal.x, ndc.y / uFocal.y, -1.0) * depth;
+}
+
+/**
+ * Integer hash of the pixel coordinate.
+ *
+ * Deliberately not a fract()-of-float hash: by the right-hand side of a 2780px
+ * buffer, gl_FragCoord.x * 0.1031 is around 200, fract() keeps only the low bits
+ * of the mantissa, and the "random" angle collapses onto a handful of values
+ * correlated along diagonals. The rotation then fails to decorrelate neighbours
+ * in exactly the way it exists to, and the sampling error reappears as diagonal
+ * banding at the scale of the sampling radius.
+ */
+float hashPixel(vec2 fragCoord) {
+  uvec2 p = uvec2(fragCoord);
+  uint h = p.x * 73856093u ^ p.y * 19349663u;
+  h ^= h >> 13u;
+  h *= 1274126177u;
+  h ^= h >> 16u;
+  return float(h) * (1.0 / 4294967296.0);
 }
 
 void main() {
@@ -136,50 +110,79 @@ void main() {
   if (depth <= 0.0) { fragColor = vec4(1.0); return; }
 
   vec3 normal = normalize(sampled.xyz);
+  vec3 origin = viewPositionFrom(vUv, depth);
 
-  // Nudge the origin off the surface along its own normal. Without it the very
-  // first samples sit within a texel's depth of the surface they came from.
-  vec3 origin = viewPositionFrom(vUv, depth) + normal * (uRadius * 0.03);
+  // How large the occlusion radius is on screen. Below a few pixels there is
+  // nothing to resolve; above a cap it only costs bandwidth.
+  float radiusPixels = clamp(
+    uRadius * uFocal.y * uResolution.y * 0.5 / depth,
+    3.0, 96.0
+  );
 
-  // The bias has to cover the depth uncertainty inside a single texel, and that
-  // is not a constant: it is how many millimetres a pixel covers at this distance,
-  // times the surface slope. Get it wrong and a tilted plate reads as occluding
-  // itself in bands along its own depth gradient — and only when zoomed out,
-  // because a pixel then spans far more of the surface. A fixed bias cannot be
-  // right at both ends of that range.
-  float facing = max(abs(normal.z), 0.05);
-  float slope = sqrt(max(1.0 - facing * facing, 0.0)) / facing;
-  float pixelSize = depth * 2.0 / (uFocal.y * uResolution.y);
-  float bias = uRadius * uBias + pixelSize * slope * 2.0;
+  // A spiral of taps, rotated by a per-pixel angle.
+  //
+  // The previous version reused one fixed 24-point kernel with 16 rotations from
+  // a 4x4 noise tile. That leaves the estimate correlated across the whole
+  // sampling footprint, so the error is not pixel noise a small blur can remove —
+  // it is banding whose period is the projected radius itself, tens of pixels
+  // wide. Zooming in appeared to fix it only because the footprint grew past the
+  // edge of the screen. Choosing a fresh angle per pixel makes neighbouring
+  // estimates independent, which turns that banding back into high-frequency
+  // noise the blur does clear.
+  float phi = hashPixel(gl_FragCoord.xy) * TAU;
 
-  vec2 noiseScale = uResolution / ${NOISE_SIZE}.0;
-  vec3 rotation = texture(uNoise, vUv * noiseScale).xyz * 2.0 - 1.0;
-
-  // Gram-Schmidt against the noise vector: a per-pixel rotated basis turns
-  // banding from a small kernel into high-frequency noise the blur can remove
-  vec3 tangent = normalize(rotation - normal * dot(rotation, normal));
-  vec3 bitangent = cross(normal, tangent);
-  mat3 tbn = mat3(tangent, bitangent, normal);
+  // Spend no more taps than the footprint has pixels to put them in.
+  //
+  // With a fixed tap count the spacing collapses as the subject shrinks on
+  // screen: at a wide framing 24 taps across a 12-pixel radius sit half a pixel
+  // apart, so with NEAREST depth sampling they land on the same dozen texels and
+  // simply re-read them. Which texels get hit then shifts with the sub-pixel
+  // position of the fragment, and that is a deterministic pattern, not noise —
+  // which is why raising the tap count to 256 changed nothing at all. Keeping the
+  // spacing at a pixel or more makes every tap carry new information, and the
+  // per-pixel rotation turns what is left into noise the blur can clear.
+  int taps = int(clamp(radiusPixels, 6.0, float(SAMPLES)));
 
   float occlusion = 0.0;
-  for (int i = 0; i < ${KERNEL_SIZE}; i++) {
-    vec3 samplePos = origin + tbn * uKernel[i] * uRadius;
+  float radius2 = uRadius * uRadius;
 
-    vec4 clip = uProjection * vec4(samplePos, 1.0);
-    vec2 sampleUv = (clip.xy / clip.w) * 0.5 + 0.5;
+  for (int i = 0; i < SAMPLES; i++) {
+    if (i >= taps) break;
+    float alpha = (float(i) + 0.5) / float(taps);
+    float theta = alpha * SPIRAL_TURNS * TAU + phi;
+    vec2 offset = vec2(cos(theta), sin(theta)) * (alpha * radiusPixels);
+
+    vec2 sampleUv = vUv + offset / uResolution;
     if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) continue;
 
     float sceneDepth = texture(uNormalDepth, sampleUv).w;
     if (sceneDepth <= 0.0) continue;
 
-    float sampleDepth = -samplePos.z;
-    // Reject occluders far outside the radius, or a rivet in the foreground
-    // darkens the whole plate behind it instead of its own contact ring.
-    float rangeCheck = smoothstep(0.0, 1.0, uRadius / max(abs(depth - sceneDepth), 1e-5));
-    occlusion += (sceneDepth <= sampleDepth - bias ? 1.0 : 0.0) * rangeCheck;
+    // Elevation of the occluder above this point's tangent plane. A coplanar
+    // neighbour gives a vector perpendicular to the normal and contributes
+    // nothing, however coarsely it happened to be sampled — which is what makes
+    // this robust where a depth comparison against a bias is not.
+    vec3 scenePos = viewPositionFrom(sampleUv, sceneDepth);
+    vec3 v = scenePos - origin;
+    float vv = dot(v, v);
+    float elevation = dot(v, normal) * inversesqrt(max(vv, 1e-8));
+
+    float falloff = clamp(1.0 - vv / radius2, 0.0, 1.0);
+    occlusion += falloff * max(elevation - uBias, 0.0);
   }
 
-  float ao = 1.0 - (occlusion / float(${KERNEL_SIZE})) * uIntensity;
+  // Fade out once the footprint is too small to resolve.
+  //
+  // Below roughly a 26-pixel radius the occlusion signal contains detail finer
+  // than a pixel — thin plates, piercings, the gap between two overlapping
+  // petals — and sampling it on the pixel grid aliases into a fixed pattern that
+  // no amount of extra taps or jitter removes, because it is not noise. Until the
+  // depth input is properly filtered for the tap distance (a mip chain, as SAO
+  // does), the honest behaviour is to stop claiming occlusion the buffer cannot
+  // actually resolve, rather than to draw an artifact over the metal.
+  float resolvable = smoothstep(10.0, 26.0, radiusPixels);
+
+  float ao = 1.0 - (occlusion / float(taps)) * uIntensity * resolvable;
   fragColor = vec4(clamp(ao, 0.0, 1.0));
 }`;
 

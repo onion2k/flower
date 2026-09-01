@@ -31,7 +31,7 @@ const state = {
   backdrop: 0.42,
   debug: 0,
   ao: true,
-  aoIntensity: 1.1,
+  aoIntensity: 1.8,
   showAnchors: false,
 };
 

@@ -7,10 +7,7 @@ import type { Box3 } from '../geom/types';
 import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { PBR_FRAG, PBR_VERT, SKYBOX_FRAG, SKYBOX_VERT } from './shaders';
-import {
-  AO_FRAG, AO_VERT, BLUR_FRAG, KERNEL_SIZE, NOISE_SIZE, PREPASS_FRAG, PREPASS_VERT,
-  makeKernel, makeNoise,
-} from './ssao';
+import { AO_FRAG, AO_VERT, BLUR_FRAG, PREPASS_FRAG, PREPASS_VERT } from './ssao';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -157,31 +154,17 @@ export class Viewer {
         position: { size: 3, data: new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]) },
       });
 
-    const noise = new Texture(gl, {
-      image: makeNoise(),
-      width: NOISE_SIZE,
-      height: NOISE_SIZE,
-      minFilter: raw.NEAREST,
-      magFilter: raw.NEAREST,
-      wrapS: raw.REPEAT,
-      wrapT: raw.REPEAT,
-      generateMipmaps: false,
-      flipY: false,
-    });
-
     this.aoProgram = new Program(gl, {
       vertex: AO_VERT,
       fragment: AO_FRAG,
       uniforms: {
         uNormalDepth: { value: null },
-        uNoise: { value: noise },
-        uKernel: { value: makeKernel(KERNEL_SIZE) },
         uProjection: { value: new Mat4() },
         uResolution: { value: [1, 1] },
         uFocal: { value: [1, 1] },
         uRadius: { value: this.aoRadius },
-        uBias: { value: 0.05 },
-        uIntensity: { value: 1.1 },
+        uBias: { value: 0.1 },
+        uIntensity: { value: 1.8 },
       },
       depthTest: false,
       depthWrite: false,
