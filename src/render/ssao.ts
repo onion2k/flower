@@ -12,6 +12,40 @@ export const SAMPLE_COUNT = 24;
 /** Turns of the sample spiral. Coprime with the tap count keeps taps spread. */
 export const SPIRAL_TURNS = 7;
 
+/** Levels in the depth chain. Level n covers taps about 2^(n+3) pixels out. */
+export const DEPTH_LEVELS = 5;
+
+export const DEPTH_COPY_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uNormalDepth;
+void main() { fragColor = vec4(texture(uNormalDepth, vUv).w); }`;
+
+export const DEPTH_DOWNSAMPLE_FRAG = `#version 300 es
+precision highp float;
+in vec2 vUv;
+out vec4 fragColor;
+uniform sampler2D uSource;
+uniform int uLevel;
+
+/**
+ * Rotated-grid subsample, taking one of the four parent texels rather than
+ * averaging them.
+ *
+ * Averaging depth is meaningless across a silhouette: halfway between a rivet
+ * head and the plate behind it there is no surface, and an occluder invented at
+ * that depth is worse than one missed. Rotating which texel is taken per level
+ * keeps the chain representing real surfaces while still decorrelating.
+ */
+void main() {
+  ivec2 texel = ivec2(gl_FragCoord.xy);
+  ivec2 offset = ivec2(uLevel & 1, (uLevel >> 1) & 1);
+  ivec2 src = texel * 2 + offset;
+  ivec2 limit = textureSize(uSource, 0) - ivec2(1);
+  fragColor = vec4(texelFetch(uSource, min(src, limit), 0).r);
+}`;
+
 export const PREPASS_VERT = `#version 300 es
 in vec3 position;
 in vec3 normal;
@@ -65,7 +99,9 @@ precision highp float;
 in vec2 vUv;
 out vec4 fragColor;
 
-uniform sampler2D uNormalDepth;
+uniform sampler2D uNormalDepth;   // exact, point-sampled: this pixel's own surface
+uniform sampler2D uDepth;         // filtered chain, for the taps
+uniform float uDepthLevels;
 uniform mat4 uProjection;
 uniform vec2 uResolution;
 uniform vec2 uFocal;      // projectionMatrix[0][0], [1][1]
@@ -155,7 +191,18 @@ void main() {
     vec2 sampleUv = vUv + offset / uResolution;
     if (sampleUv.x < 0.0 || sampleUv.x > 1.0 || sampleUv.y < 0.0 || sampleUv.y > 1.0) continue;
 
-    float sceneDepth = texture(uNormalDepth, sampleUv).w;
+    // Read depth filtered to the tap's own footprint.
+    //
+    // Point-sampling was the source of the banding: the depth a tap returns then
+    // jumps as the disc slides sub-pixel, and that quantisation beats against the
+    // tap pattern into a fixed hatch. A filtered lookup varies continuously with
+    // position instead. The level is chosen from how far out the tap sits, so
+    // distant taps read a correspondingly coarser surface rather than one texel
+    // of a thin plate they cannot resolve.
+    float tapPixels = alpha * radiusPixels;
+    float level = clamp(log2(max(tapPixels, 1.0)) - 3.0, 0.0, uDepthLevels - 1.0);
+
+    float sceneDepth = textureLod(uDepth, sampleUv, level).r;
     if (sceneDepth <= 0.0) continue;
 
     // Elevation of the occluder above this point's tangent plane. A coplanar
