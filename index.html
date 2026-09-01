@@ -3,6 +3,7 @@
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'><circle cx='8' cy='8' r='6' fill='none' stroke='%23c9a227' stroke-width='2'/></svg>" />
     <title>artshape — meshing spike</title>
     <style>
       :root {
@@ -30,6 +31,8 @@
       .row { display: flex; justify-content: space-between; color: var(--dim); font-size: 11px; margin-bottom: 3px; }
       .row b { color: var(--text); font-weight: 500; }
       input[type=range] { width: 100%; accent-color: var(--accent); }
+      select { width: 100%; background: #0e1013; color: var(--text); border: 1px solid var(--line);
+        border-radius: 3px; padding: 5px 6px; font: inherit; }
       input[type=checkbox] { accent-color: var(--accent); margin-right: 6px; }
       .check { color: var(--dim); font-size: 11px; display: flex; align-items: center; }
       table { width: 100%; border-collapse: collapse; font-size: 11px; }
@@ -47,7 +50,7 @@
       <div id="stage"></div>
       <div id="panel">
         <h1>Meshing spike</h1>
-        <p class="sub">Dual contouring an SDF milled plate. Watching for crisp bores, sharp scallop rims and a usable mesh time.</p>
+        <p class="sub">Dual contouring SDF parts. Watching for crisp bores and edges, correct anchors, and a usable mesh time.</p>
         <div id="controls"></div>
         <fieldset>
           <legend>Result</legend>

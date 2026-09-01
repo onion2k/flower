@@ -8,12 +8,13 @@
 import { dualContour } from '../mesh/dualContour';
 import { sphere, box, torus } from '../sdf/primitives';
 import { subtract, union, translate } from '../sdf/ops';
-import { plate, defaultPlate } from './plate';
+import { catalogue } from './catalogue';
+import { plate, defaultPlate } from '../parts/plate';
 import type { SDF, Box3 } from '../sdf/types';
 
 interface Report {
   name: string;
-  resolution: number;
+  resolution: number | string;
   tris: number;
   verts: number;
   boundaryEdges: number;
@@ -30,8 +31,9 @@ function analyse(
   bounds: Box3,
   resolution: number,
   outwardFrom?: [number, number, number],
+  cellSize?: number,
 ): Report {
-  const m = dualContour(f, { bounds, resolution, ao: false });
+  const m = dualContour(f, cellSize ? { bounds, cellSize, ao: false } : { bounds, resolution, ao: false });
   const { positions, indices } = m;
 
   // weld the crease-split duplicates so edge counts reflect real topology
@@ -127,6 +129,14 @@ for (const [name, f, bounds, outward] of cases) {
 for (const res of [48, 64, 96, 128, 160]) {
   const p = plate(defaultPlate);
   rows.push(analyse('plate', p.sdf, p.bounds, res, undefined));
+}
+
+// every catalogue entry at the detail its own generator asks for
+for (const [name, make] of Object.entries(catalogue)) {
+  const part = make();
+  const r = analyse(name, part.sdf, part.bounds, 0, undefined, part.detail);
+  r.resolution = part.detail.toFixed(2);
+  rows.push(r);
 }
 
 const pad = (s: string | number, n: number) => String(s).padStart(n);

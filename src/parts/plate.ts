@@ -1,8 +1,9 @@
 import { annulus2, circle2, radialRepeat2, subtract2, translate2, box2, rotate2 } from '../sdf/sdf2';
 import { extrude } from '../sdf/ops';
-import type { SDF, Box3 } from '../sdf/types';
+import { detailFor, type Anchor, type Part } from './types';
 
 export interface PlateSpec {
+  name?: string;
   innerRadius: number;
   outerRadius: number;
   thickness: number;
@@ -36,7 +37,7 @@ export const defaultPlate: PlateSpec = {
  * rim and slotted web. Every one of those features is a hard edge that naive
  * surface nets would round off, so it is the right thing to look at first.
  */
-export function plate(spec: PlateSpec = defaultPlate): { sdf: SDF; bounds: Box3 } {
+export function plate(spec: PlateSpec = defaultPlate): Part {
   const bolts = radialRepeat2(
     translate2(circle2(spec.boltRadius), spec.boltCircle, 0),
     spec.boltCount,
@@ -71,8 +72,29 @@ export function plate(spec: PlateSpec = defaultPlate): { sdf: SDF; bounds: Box3 
   const hz = spec.thickness / 2;
   const r = spec.outerRadius + 1;
 
+  // One anchor per bolt hole on the upper face. The bore is carried along so a
+  // fastener can be sized from the hole it goes through rather than by hand.
+  const anchors: Anchor[] = [];
+  for (let i = 0; i < spec.boltCount; i++) {
+    const a = (i / spec.boltCount) * Math.PI * 2;
+    const c = Math.cos(a);
+    const s = Math.sin(a);
+    anchors.push({
+      name: `bolt${i}`,
+      position: [c * spec.boltCircle, s * spec.boltCircle, hz],
+      axis: [0, 0, 1],
+      tangent: [c, s, 0],
+      bore: spec.boltRadius * 2,
+    });
+  }
+
+  const section = Math.min(spec.thickness, spec.spokeWidth * 2, spec.boltRadius * 2);
+
   return {
+    name: spec.name ?? 'plate',
+    detail: detailFor(section),
     sdf: extrude(profile, hz, spec.fillet),
     bounds: { min: [-r, -r, -hz - 1], max: [r, r, hz + 1] },
+    anchors,
   };
 }

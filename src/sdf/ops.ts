@@ -107,3 +107,23 @@ export const radialRepeat = (f: SDF, n: number): SDF => {
 };
 
 export const mirrorX = (f: SDF): SDF => (x, y, z) => f(Math.abs(x), y, z);
+
+/**
+ * Place `f` in a rigid frame: `origin` plus the orthonormal basis (`x`,`y`,`z`).
+ * The field is evaluated in local coordinates, so anything authored axis-aligned
+ * can be dropped onto an arbitrary anchor without rewriting it.
+ */
+export const frame = (
+  f: SDF,
+  origin: readonly [number, number, number],
+  x: readonly [number, number, number],
+  y: readonly [number, number, number],
+  z: readonly [number, number, number],
+): SDF => (px, py, pz) => {
+  const dx = px - origin[0], dy = py - origin[1], dz = pz - origin[2];
+  return f(
+    dx * x[0] + dy * x[1] + dz * x[2],
+    dx * y[0] + dy * y[1] + dz * y[2],
+    dx * z[0] + dy * z[1] + dz * z[2],
+  );
+};

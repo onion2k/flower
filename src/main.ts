@@ -1,5 +1,7 @@
 import { dualContour, type MeshData } from './mesh/dualContour';
-import { plate, defaultPlate, type PlateSpec } from './spike/plate';
+import { plate, defaultPlate } from './parts/plate';
+import { catalogue, catalogueNames } from './spike/catalogue';
+import type { Part } from './parts/types';
 import { Viewer } from './render/viewer';
 
 const stage = document.getElementById('stage')!;
@@ -10,14 +12,18 @@ const budgetEl = document.getElementById('budget')!;
 const viewer = new Viewer(stage);
 
 const state = {
-  resolution: 96,
+  part: catalogueNames[0],
+  detailScale: 1,
   refineSteps: 3,
   creaseAngle: 40,
   ao: true,
   showNormals: false,
+  showAnchors: true,
   fillet: defaultPlate.fillet,
   thickness: defaultPlate.thickness,
 };
+
+let framedPart = '';
 
 /** The number the spike exists to answer: can we mesh a real part inside a frame budget? */
 const BUDGET_MS = 100;
@@ -60,27 +66,51 @@ function toggle(label: string, key: keyof typeof state, onChange?: () => void) {
   return wrap;
 }
 
+function picker(label: string, names: string[], onPick: (name: string) => void) {
+  const wrap = document.createElement('label');
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<span>${label}</span>`;
+  const select = document.createElement('select');
+  for (const n of names) {
+    const opt = document.createElement('option');
+    opt.value = n; opt.textContent = n;
+    select.append(opt);
+  }
+  select.value = state.part;
+  select.addEventListener('change', () => onPick(select.value));
+  wrap.append(row, select);
+  return wrap;
+}
+
+const partSelect = document.createElement('fieldset');
+partSelect.innerHTML = '<legend>Part</legend>';
+partSelect.append(picker('shape', catalogueNames, (name) => { state.part = name; build(); }));
+
 const geomSet = document.createElement('fieldset');
 geomSet.innerHTML = '<legend>Mesher</legend>';
 geomSet.append(
-  slider('resolution', 'resolution', 32, 192, 8, (v) => `${v}³`),
+  slider('detail', 'detailScale', 0.4, 2.5, 0.1, (v) => `${v.toFixed(1)}× part hint`),
   slider('bisection steps', 'refineSteps', 0, 6, 1),
   slider('crease angle', 'creaseAngle', 5, 90, 5, (v) => `${v}°`),
   toggle('bake occlusion', 'ao'),
 );
 
-const partSet = document.createElement('fieldset');
-partSet.innerHTML = '<legend>Part</legend>';
-partSet.append(
+const plateSet = document.createElement('fieldset');
+plateSet.innerHTML = '<legend>Plate only</legend>';
+plateSet.append(
   slider('edge break', 'fillet', 0, 0.8, 0.05, (v) => `${v.toFixed(2)} mm`),
   slider('thickness', 'thickness', 0.6, 5, 0.2, (v) => `${v.toFixed(1)} mm`),
 );
 
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
-viewSet.append(toggle('show normals', 'showNormals', () => viewer.setShowNormals(state.showNormals)));
+viewSet.append(
+  toggle('show normals', 'showNormals', () => viewer.setShowNormals(state.showNormals)),
+  toggle('show anchors', 'showAnchors', () => build()),
+);
 
-controlsEl.append(geomSet, partSet, viewSet);
+controlsEl.append(partSelect, geomSet, plateSet, viewSet);
 
 let timer = 0;
 function schedule() {
@@ -88,13 +118,21 @@ function schedule() {
   timer = window.setTimeout(build, 60);
 }
 
-function build() {
-  const spec: PlateSpec = { ...defaultPlate, fillet: state.fillet, thickness: state.thickness };
-  const { sdf, bounds } = plate(spec);
+function makePart(): Part {
+  if (state.part === 'plate') {
+    return plate({ ...defaultPlate, fillet: state.fillet, thickness: state.thickness });
+  }
+  return catalogue[state.part]();
+}
 
-  const data = dualContour(sdf, {
-    bounds,
-    resolution: state.resolution,
+function build() {
+  const part = makePart();
+  plateSet.style.display = state.part === 'plate' ? '' : 'none';
+
+  // the part names its own cell size; the slider only scales that hint
+  const data = dualContour(part.sdf, {
+    bounds: part.bounds,
+    cellSize: part.detail / state.detailScale,
     refineSteps: state.refineSteps,
     creaseAngle: state.creaseAngle,
     ao: state.ao,
@@ -102,12 +140,28 @@ function build() {
 
   viewer.setMesh(data);
   viewer.setAOStrength(state.ao ? 1 : 0);
-  report(data);
+
+  const span = Math.max(
+    part.bounds.max[0] - part.bounds.min[0],
+    part.bounds.max[1] - part.bounds.min[1],
+    part.bounds.max[2] - part.bounds.min[2],
+  );
+  viewer.setAnchors(state.showAnchors ? part.anchors : [], span * 0.08);
+
+  // only re-frame when the shape changes, so tweaking a slider does not fight the orbit
+  if (framedPart !== state.part) {
+    viewer.frameBounds(part.bounds);
+    framedPart = state.part;
+  }
+
+  report(part, data);
 }
 
-function report(data: MeshData) {
+function report(part: Part, data: MeshData) {
   const s = data.stats;
   const rows: Array<[string, string, boolean?]> = [
+    ['anchors', String(part.anchors.length)],
+    ['part detail', `${part.detail.toFixed(2)} mm`],
     ['grid', `${s.dims[0]}×${s.dims[1]}×${s.dims[2]}`],
     ['cell size', `${s.cellSize.toFixed(3)} mm`],
     ['field evals', s.fieldEvals.toLocaleString()],

@@ -3,8 +3,15 @@ import type { SDF, Box3 } from '../sdf/types';
 export interface DCOptions {
   /** World-space region to mesh. Padded by one cell internally. */
   bounds: Box3;
-  /** Cells along the longest axis. Other axes match the same cell size. */
-  resolution: number;
+  /**
+   * Edge length of one grid cell, in world units. Prefer this: detail belongs to
+   * the part's smallest feature, not to its overall size. Sizing by cells-per-axis
+   * instead gives a 6 mm rivet 0.07 mm cells and a 56 mm plate 0.6 mm ones, so the
+   * rivet costs more to mesh than the plate it fastens.
+   */
+  cellSize?: number;
+  /** Cells along the longest axis. Only used when `cellSize` is absent. */
+  resolution?: number;
   /** Bisection steps used to place each edge crossing. 0 = linear interpolation only. */
   refineSteps?: number;
   /** Angle (degrees) above which a shared vertex is split so the crease shades hard. */
@@ -207,7 +214,10 @@ export function dualContour(f: SDF, opts: DCOptions): MeshData {
   const { min, max } = opts.bounds;
   const ext = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
   const longest = Math.max(ext[0], ext[1], ext[2]);
-  const cell = longest / opts.resolution;
+  if (opts.cellSize === undefined && opts.resolution === undefined) {
+    throw new Error('dualContour needs either cellSize or resolution');
+  }
+  const cell = opts.cellSize ?? longest / opts.resolution!;
   const ox = min[0] - cell, oy = min[1] - cell, oz = min[2] - cell;
   const nx = Math.ceil(ext[0] / cell) + 2;
   const ny = Math.ceil(ext[1] / cell) + 2;
