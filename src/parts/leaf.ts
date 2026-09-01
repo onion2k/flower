@@ -1,8 +1,9 @@
 import {
-  ensureWinding, fitsInside, leafOutline, leafPiercings, palmateOutline, palmateVeins,
+  clearsOthers, ensureWinding, fitsInside, leafOutline, leafPiercings, palmateOutline, palmateVeins,
   teardropOutline, transformLoop, veinPiercings, type LeafShape,
 } from '../geom/outline';
 import { extrude } from '../mesh/extrude';
+import { chordLimit, deform, deformAnchor } from '../mesh/deform';
 import { meshBounds, type Anchor, type Part } from './types';
 import type { Vec2 } from '../geom/types';
 
@@ -28,6 +29,16 @@ export interface LeafSpec {
   spread?: number;
   /** Sideways bend of the midrib. */
   droop?: number;
+  /** Rise of each margin above the midrib, in radians — the leaf's channel. */
+  cup?: number;
+  /** 0 a smooth channel, 1 a crease along the midrib. Grasses and tulips are keeled. */
+  keel?: number;
+  /** Total turn of the midrib from base to tip. Positive lifts the tip. */
+  curl?: number;
+  /** 1 curves evenly; above 2 the base stays straight and the tip arches over. */
+  curlBias?: number;
+  /** Turns of twist about the midrib, in radians. */
+  twist?: number;
   segments?: number;
   /** Rivet hole at the base, and the anchor that goes with it. */
   bossBore?: number;
@@ -87,9 +98,44 @@ export function leaf(spec: LeafSpec): Part {
 
   // Anything that would break the margin is dropped rather than drawn through it.
   const clearance = bevel + spec.thickness * 0.45;
-  const fitted = holes.filter((hole) => fitsInside(hole, outline, clearance));
+  const fitted: Vec2[][] = [];
+  for (const hole of holes) {
+    if (fitsInside(hole, outline, clearance) && clearsOthers(hole, fitted, clearance)) {
+      fitted.push(hole);
+    }
+  }
 
-  const mesh = extrude({ outline, holes: fitted, thickness: spec.thickness, bevel });
+  // A flat leaf reads as a cut-out. Cup and curl are what make the surface carry
+  // a highlight along its length rather than flashing all at once.
+  const fields = {
+    cup: spec.cup, keel: spec.keel,
+    curl: spec.curl, curlBias: spec.curlBias,
+    twist: spec.twist,
+    length: spec.length,
+    halfWidth: (spec.lobes ? spec.length : spec.width) / 2,
+    origin: 0,
+    // the cup folds about the midrib, which droop has already bowed sideways
+    midline: spec.lobes
+      ? undefined
+      : (x: number) => Math.sin(Math.PI * Math.min(Math.max(x / spec.length, 0), 1)) * droop * spec.length,
+  };
+  // A flat cap can be a fan of long triangles; a bent one cannot, so the plate is
+  // refined while it is still planar and cheap to cut.
+  const limit = chordLimit(fields, spec.length * 0.004);
+  const mesh = extrude({
+    outline, holes: fitted, thickness: spec.thickness, bevel,
+    maxCapEdge: Number.isFinite(limit) ? limit : undefined,
+  });
+
+  if (spec.cup || spec.curl || spec.twist) {
+    deform(mesh, fields);
+    for (const anchor of anchors) {
+      const moved = deformAnchor(anchor.position, anchor.axis, fields);
+      anchor.position = moved.position;
+      anchor.axis = moved.axis;
+    }
+  }
+
   return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors };
 }
 

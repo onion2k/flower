@@ -20,16 +20,35 @@ export interface RevolveOptions {
   segments?: number;
   /** Sweep less than a full turn, in radians. */
   arc?: number;
+  /**
+   * Radius multiplier as a function of position around the axis.
+   *
+   * Without it a revolve can only vary along its silhouette, so flutes come out
+   * as rings around the form rather than running its length — the compromise
+   * `pod` was making when it called them whorls. A warp restores the missing
+   * degree of freedom: longitudinal ribs on a seed pod, lobes on a bud, a
+   * scalloped rim on a corolla. `v` is the fraction along the silhouette.
+   */
+  warp?: (angle: number, v: number, r: number, z: number) => number;
 }
 
 export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
   const segments = opts.segments ?? 32;
   const arc = opts.arc ?? Math.PI * 2;
   const rows = segments + 1;
+  const closedRing = Math.abs(arc - Math.PI * 2) < 1e-9;
   const cols = columnsOf(sil);
   const n = cols.points.length;
 
+  const warp = opts.warp;
   const mb = new MeshBuilder();
+  const at = (i: number, k: number): [number, number, number] => {
+    const a = (i / segments) * arc;
+    const [r, z] = cols.points[k];
+    const w = warp ? warp(a, cols.v[k], r, z) : 1;
+    return [Math.cos(a) * r * w, Math.sin(a) * r * w, z];
+  };
+
   for (let i = 0; i < rows; i++) {
     const u = i / segments;
     const a = u * arc;
@@ -37,7 +56,17 @@ export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
     for (let k = 0; k < n; k++) {
       const [r, z] = cols.points[k];
       const [nr, nz] = cols.normals[k];
-      mb.vertex(ca * r, sa * r, z, ca * nr, sa * nr, nz, u, cols.v[k]);
+      if (!warp) {
+        mb.vertex(ca * r, sa * r, z, ca * nr, sa * nr, nz, u, cols.v[k]);
+        continue;
+      }
+      const [x, y, zz] = at(i, k);
+      const nrm = warpedNormal(at, cols, i, k, rows, n, closedRing);
+      mb.vertex(
+        x, y, zz,
+        nrm ? nrm[0] : ca * nr, nrm ? nrm[1] : sa * nr, nrm ? nrm[2] : nz,
+        u, cols.v[k],
+      );
     }
   }
 
@@ -58,6 +87,53 @@ export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
   }
 
   return mb.build();
+}
+
+/**
+ * Normal of the warped surface, as the cross product of its two parametric
+ * tangents taken by difference on the grid that is actually emitted.
+ *
+ * Differencing rather than differentiating is what keeps the seam invisible: the
+ * column at u = 1 is a duplicate of the one at u = 0, and a numeric difference
+ * that wraps gives both of them the same answer, where an analytic one derived
+ * from the silhouette alone would not know the warp had tilted the surface.
+ *
+ * Creases survive because the difference along the silhouette is taken one-sided
+ * whenever the central one would straddle a duplicated column — a hard rim stays
+ * hard instead of being averaged into a roll.
+ */
+function warpedNormal(
+  at: (i: number, k: number) => [number, number, number],
+  cols: Columns,
+  i: number, k: number, rows: number, n: number,
+  closedRing: boolean,
+): [number, number, number] | null {
+  const segments = rows - 1;
+  const wrap = (j: number) => (closedRing ? (j + segments) % segments : Math.min(Math.max(j, 0), rows - 1));
+  const a0 = at(wrap(i - 1), k);
+  const a1 = at(wrap(i + 1), k);
+  const ta: [number, number, number] = [a1[0] - a0[0], a1[1] - a0[1], a1[2] - a0[2]];
+
+  const same = (p: number, q: number) =>
+    Math.abs(cols.points[p][0] - cols.points[q][0]) < 1e-12 &&
+    Math.abs(cols.points[p][1] - cols.points[q][1]) < 1e-12;
+
+  let lo = Math.max(k - 1, 0);
+  let hi = Math.min(k + 1, n - 1);
+  if (hi > k && same(k, hi)) hi = k;
+  if (lo < k && same(k, lo)) lo = k;
+  if (lo === hi) return null;
+  const b0 = at(i, lo);
+  const b1 = at(i, hi);
+  const tk: [number, number, number] = [b1[0] - b0[0], b1[1] - b0[1], b1[2] - b0[2]];
+
+  // wound (u then v), so the outward face normal is cross(dTheta, dSilhouette)
+  const nx = ta[1] * tk[2] - ta[2] * tk[1];
+  const ny = ta[2] * tk[0] - ta[0] * tk[2];
+  const nz = ta[0] * tk[1] - ta[1] * tk[0];
+  const l = Math.hypot(nx, ny, nz);
+  if (l < 1e-12) return null;
+  return [nx / l, ny / l, nz / l];
 }
 
 interface Columns {

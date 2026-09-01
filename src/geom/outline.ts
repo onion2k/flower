@@ -23,7 +23,9 @@ export function ensureWinding(loop: Vec2[], counterClockwise: boolean): Vec2[] {
  * differing only in where the leaf is widest and how fast it tapers. That is
  * genuinely most of what separates a willow from a lilac.
  */
-export type LeafShape = 'ovate' | 'lanceolate' | 'elliptic' | 'obovate' | 'cordate';
+export type LeafShape =
+  | 'ovate' | 'lanceolate' | 'elliptic' | 'obovate' | 'cordate'
+  | 'orbicular' | 'linear' | 'deltoid' | 'spatulate';
 
 /** Half-width as a fraction of the maximum, along the leaf from base to tip. */
 export function leafHalfWidth(shape: LeafShape, t: number): number {
@@ -33,6 +35,10 @@ export function leafHalfWidth(shape: LeafShape, t: number): number {
     case 'elliptic': return Math.pow(s, 0.95);                     // widest at the middle
     case 'obovate': return Math.pow(s, 0.8) * (0.62 + 0.55 * t);   // widest above the middle
     case 'cordate': return Math.pow(s, 0.45) * (1 - 0.3 * t);      // heart, with a basal notch
+    case 'orbicular': return Math.pow(s, 1.15);                    // nasturtium: nearly a disc
+    case 'linear': return Math.pow(s, 0.22) * (1 - 0.2 * t);       // grass: parallel-sided
+    case 'deltoid': return Math.max(1 - t, 0) * (t < 0.06 ? t / 0.06 : 1); // triangular, sharp
+    case 'spatulate': return Math.pow(s, 0.9) * (0.3 + 0.9 * t * t); // paddle on a narrow stalk
     default: return Math.pow(s, 0.75) * (1 - 0.3 * t);             // ovate
   }
 }
@@ -101,6 +107,144 @@ export function serrate(loop: Vec2[], teeth: number, depth: number): Vec2[] {
     const phase = ((i / loop.length) * teeth) % 1;
     const saw = phase < 0.5 ? phase * 2 : (1 - phase) * 2;
     return [x + outward[i][0] * saw * depth, y + outward[i][1] * saw * depth] as Vec2;
+  });
+}
+
+/**
+ * Petal silhouettes.
+ *
+ * Kept apart from the leaf families because petals are not small leaves: they
+ * narrow to a claw at the base where they attach, they are widest much further
+ * out, and most of them end bluntly rather than at a point. Using an ovate leaf
+ * for a rose petal is the single thing that most makes a flower read as clip art.
+ */
+export type PetalShape = 'round' | 'pointed' | 'spoon' | 'strap' | 'lip' | 'quill';
+
+/** Half-width as a fraction of the maximum, from the claw at 0 to the apex at 1. */
+export function petalHalfWidth(shape: PetalShape, t: number): number {
+  const u = Math.min(Math.max(t, 0), 1);
+  switch (shape) {
+    // rose, tulip: broad and obtuse, so the width has to survive almost to the apex
+    case 'round': return Math.pow(u, 0.42) * Math.sqrt(Math.max(1 - Math.pow(u, 3.6), 0));
+    case 'pointed': return Math.pow(u, 0.45) * Math.pow(1 - u, 0.62);
+    // dianthus: a long narrow claw, then the blade opens abruptly
+    case 'spoon': return (0.18 + 0.82 * smoothstep(0.26, 0.66, u)) *
+      Math.sqrt(Math.max(1 - Math.pow(u, 5), 0));
+    // daisy ray floret, freesia: nearly parallel-sided with a rounded end
+    case 'strap': return Math.pow(u, 0.22) * Math.sqrt(Math.max(1 - Math.pow(u, 8), 0));
+    // orchid labellum: flares wide and late, the lobe the whole flower reads from
+    case 'lip': return Math.pow(u, 0.35) * Math.sqrt(Math.max(1 - Math.pow(u, 7), 0)) *
+      (0.55 + 0.6 * u);
+    // chrysanthemum, spider dahlia: a thin quill that barely opens
+    default: return Math.pow(u, 0.3) * (1 - 0.55 * u) * 0.45;
+  }
+}
+
+const smoothstep = (a: number, b: number, x: number) => {
+  const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+  return t * t * (3 - 2 * t);
+};
+
+/**
+ * Margins.
+ *
+ * The edge is doing more work than the silhouette on a flower: a carnation and a
+ * pink share an outline and are told apart entirely by the fringe, and a rose
+ * petal with a serrated margin stops being a rose.
+ */
+export type PetalEdge = 'entire' | 'toothed' | 'fringed' | 'crenate' | 'notched';
+
+export interface PetalOutlineOptions {
+  shape?: PetalShape;
+  edge?: PetalEdge;
+  segments?: number;
+  /** Depth of the edge treatment, as a fraction of the width. */
+  edgeDepth?: number;
+  /** Number of teeth, scallops or fringe cuts around the margin. */
+  edgeCount?: number;
+  /** Sideways bend of the midline, as for a leaf. */
+  droop?: number;
+}
+
+export function petalOutline(
+  length: number, width: number, opts: PetalOutlineOptions = {},
+): Vec2[] {
+  const {
+    shape = 'round', edge = 'entire', segments = 64,
+    edgeDepth = 0.06, edgeCount = 0, droop = 0,
+  } = opts;
+
+  const side = (sign: number): Vec2[] => {
+    const pts: Vec2[] = [];
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments;
+      const w = (width / 2) * petalHalfWidth(shape, t);
+      const spine = Math.sin(Math.PI * t) * droop * length;
+      pts.push([t * length, spine + sign * w]);
+    }
+    return pts;
+  };
+
+  let loop: Vec2[] = [...side(1).slice(0, -1), ...side(-1).reverse().slice(0, -1)];
+  const depth = edgeDepth * width;
+
+  switch (edge) {
+    case 'toothed': loop = serrate(loop, edgeCount || 24, depth); break;
+    case 'crenate': loop = crenate(loop, edgeCount || 12, depth); break;
+    // The fringe is confined to the apex because that is where a pink is cut;
+    // running it down to the claw turns the petal into a saw blade.
+    case 'fringed': loop = fringe(loop, edgeCount || 30, depth, length); break;
+    case 'notched': loop = apicalNotch(loop, length, depth * 3); break;
+  }
+  return ensureWinding(loop, true);
+}
+
+/** Outward unit normal per vertex, from the two adjacent edges. */
+function marginNormals(loop: Vec2[]): Vec2[] {
+  const n = loop.length;
+  return loop.map((_, i) => {
+    const p = loop[(i - 1 + n) % n];
+    const q = loop[(i + 1) % n];
+    const dx = q[0] - p[0];
+    const dy = q[1] - p[1];
+    const l = Math.hypot(dx, dy) || 1;
+    return [dy / l, -dx / l] as Vec2;
+  });
+}
+
+/** Rounded scallops — the crenate margin of a geranium or a primrose. */
+export function crenate(loop: Vec2[], scallops: number, depth: number): Vec2[] {
+  const outward = marginNormals(loop);
+  return loop.map(([x, y], i) => {
+    const wave = (1 - Math.cos((i / loop.length) * scallops * Math.PI * 2)) / 2;
+    return [x + outward[i][0] * wave * depth, y + outward[i][1] * wave * depth] as Vec2;
+  });
+}
+
+/**
+ * A cut fringe at the apex, as a pink or a carnation has.
+ *
+ * Cuts in as well as out, because a fringe is slit rather than embossed, and it
+ * is windowed onto the outer part of the petal so the claw stays whole.
+ */
+export function fringe(loop: Vec2[], cuts: number, depth: number, length: number): Vec2[] {
+  const outward = marginNormals(loop);
+  return loop.map(([x, y], i) => {
+    const along = Math.min(Math.max(x / length, 0), 1);
+    const window = smoothstep(0.42, 0.9, along);
+    const phase = ((i / loop.length) * cuts) % 1;
+    const saw = (phase < 0.5 ? phase * 2 : (1 - phase) * 2) * 2 - 1;
+    const d = saw * window * depth;
+    return [x + outward[i][0] * d, y + outward[i][1] * d] as Vec2;
+  });
+}
+
+/** A single cleft at the apex — a stitchwort, a pansy, most Caryophyllaceae. */
+export function apicalNotch(loop: Vec2[], length: number, depth: number): Vec2[] {
+  const outward = marginNormals(loop);
+  return loop.map(([x, y], i) => {
+    const cut = smoothstep(length - depth * 1.6, length, x);
+    return [x - outward[i][0] * cut * depth, y - outward[i][1] * cut * depth] as Vec2;
   });
 }
 
@@ -318,6 +462,28 @@ export function fitsInside(hole: Vec2[], outline: Vec2[], clearance: number): bo
   for (const p of hole) {
     if (!pointInLoop(p, outline)) return false;
     if (distanceToLoop(p, outline) < clearance) return false;
+  }
+  return true;
+}
+
+/**
+ * Does a piercing clear the ones already accepted?
+ *
+ * `fitsInside` checks a hole against the outline, which is what breaks a margin.
+ * Holes can also run into each other — a wide leaf with several pairs of vein
+ * slots puts the innermost pair across the midrib from one another — and two
+ * overlapping loops handed to earcut are not a polygon at all, so the cap comes
+ * back torn rather than merely wrong.
+ */
+export function clearsOthers(hole: Vec2[], others: Vec2[][], clearance: number): boolean {
+  for (const other of others) {
+    for (const p of hole) {
+      if (pointInLoop(p, other)) return false;
+      if (distanceToLoop(p, other) < clearance) return false;
+    }
+    for (const p of other) {
+      if (pointInLoop(p, hole)) return false;
+    }
   }
   return true;
 }

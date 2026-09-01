@@ -1,14 +1,16 @@
 import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
-import type { LeafShape } from '../geom/outline';
-import { bead, bell, collar, pod, rivet } from '../parts/fastener';
+import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
+import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
+import { petal } from '../parts/petal';
+import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
 import type { Part } from '../parts/types';
 import {
-  along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, sphereShell,
-  type Symmetry,
+  along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
+  sphereShell, type Symmetry,
 } from '../pattern/symmetry';
 import { DslError, type Span } from './lexer';
 
@@ -199,7 +201,8 @@ const CURVES = {
 const PARTS = {
   leaf: define(
     ['length', 'width', 'thickness', 'shape', 'bevel', 'piercings', 'veins', 'teeth',
-     'toothDepth', 'lobes', 'spread', 'droop', 'boss', 'segments'],
+     'toothDepth', 'lobes', 'spread', 'droop', 'cup', 'keel', 'curl', 'curlBias', 'twist',
+     'boss', 'segments'],
     (a) => leaf({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -213,6 +216,11 @@ const PARTS = {
       lobes: a.num('lobes', -1, 0) || undefined,
       spread: a.num('spread', -1, NaN) || undefined,
       droop: a.num('droop', -1, 0.18),
+      cup: a.num('cup', -1, 0) || undefined,
+      keel: a.num('keel', -1, 0) || undefined,
+      curl: a.num('curl', -1, 0) || undefined,
+      curlBias: a.num('curlBias', -1, 1),
+      twist: a.num('twist', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 64),
     })),
@@ -266,24 +274,97 @@ const PARTS = {
       segments: a.num('segments', -1, 128),
     })),
 
-  pod: define(['length', 'width', 'whorls', 'whorlDepth', 'segments'], (a) =>
+  pod: define(['length', 'width', 'whorls', 'whorlDepth', 'ribs', 'ribDepth', 'segments'], (a) =>
     pod({
       length: a.num('length', 0),
       width: a.num('width', 1),
       whorls: a.num('whorls', -1, 0) || undefined,
       whorlDepth: a.num('whorlDepth', -1, NaN) || undefined,
+      ribs: a.num('ribs', -1, 0) || undefined,
+      ribDepth: a.num('ribDepth', -1, NaN) || undefined,
       segments: a.num('segments', -1, 32),
     })),
 
-  bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'rows', 'segments'], (a) =>
+  bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'lobes', 'lobeDepth', 'rows', 'segments'], (a) =>
     bell({
       length: a.num('length', 0),
       mouth: a.num('mouth', 1),
       throat: a.num('throat', 2),
       wall: a.num('wall', -1, NaN) || undefined,
       flare: a.num('flare', -1, 2.2),
+      lobes: a.num('lobes', -1, 0) || undefined,
+      lobeDepth: a.num('lobeDepth', -1, NaN) || undefined,
       rows: a.num('rows', -1, 24),
       segments: a.num('segments', -1, 40),
+    })),
+
+  petal: define(
+    ['length', 'width', 'thickness', 'shape', 'edge', 'edgeDepth', 'edgeCount', 'bevel',
+     'veins', 'cup', 'keel', 'curl', 'curlBias', 'twist', 'ruffle', 'ruffleWaves',
+     'droop', 'boss', 'segments'],
+    (a) => petal({
+      length: a.num('length', 0),
+      width: a.num('width', 1),
+      thickness: a.num('thickness', 2, 0.7),
+      shape: a.word('shape', -1, 'round') as PetalShape,
+      edge: a.word('edge', -1, 'entire') as PetalEdge,
+      edgeDepth: a.num('edgeDepth', -1, 0.06),
+      edgeCount: a.num('edgeCount', -1, 0) || undefined,
+      bevel: a.num('bevel', -1, NaN) || undefined,
+      veins: a.num('veins', -1, 0) || undefined,
+      cup: a.num('cup', -1, 0) || undefined,
+      keel: a.num('keel', -1, 0) || undefined,
+      curl: a.num('curl', -1, 0) || undefined,
+      curlBias: a.num('curlBias', -1, 1),
+      twist: a.num('twist', -1, 0) || undefined,
+      ruffle: a.num('ruffle', -1, 0) || undefined,
+      ruffleWaves: a.num('ruffleWaves', -1, 5),
+      droop: a.num('droop', -1, 0),
+      bossBore: a.num('boss', -1, 0) || undefined,
+      segments: a.num('segments', -1, 72),
+    })),
+
+  stem: define(['path', 'radius', 'tip', 'nodes', 'swell', 'from', 'to', 'sections', 'sides'], (a) =>
+    stem({
+      path: a.curve('path', 0),
+      radius: a.num('radius', 1),
+      tipScale: a.num('tip', -1, 0.35),
+      nodes: a.num('nodes', -1, 0) || undefined,
+      nodeSwell: a.num('swell', -1, 0.28),
+      from: a.num('from', -1, 0.12),
+      to: a.num('to', -1, 0.92),
+      sections: a.num('sections', -1, 96),
+      sides: a.num('sides', -1, 10),
+    })),
+
+  branch: define(
+    ['path', 'radius', 'tip', 'limbs', 'limbLength', 'limbAngle', 'limbSag', 'limbTaper',
+     'from', 'to', 'sections', 'sides'],
+    (a) => branch({
+      path: a.curve('path', 0),
+      radius: a.num('radius', 1),
+      tipScale: a.num('tip', -1, 0.35),
+      limbs: a.num('limbs', -1, 3),
+      limbLength: a.num('limbLength', -1, 0.42),
+      limbAngle: a.num('limbAngle', -1, 0.85),
+      limbSag: a.num('limbSag', -1, 0.18),
+      limbTaper: a.num('limbTaper', -1, 0.55),
+      from: a.num('from', -1, 0.12),
+      to: a.num('to', -1, 0.92),
+      sections: a.num('sections', -1, 96),
+      sides: a.num('sides', -1, 10),
+    })),
+
+  bud: define(['length', 'width', 'lobes', 'lobeDepth', 'point', 'swell', 'rows', 'segments'], (a) =>
+    bud({
+      length: a.num('length', 0),
+      width: a.num('width', 1),
+      lobes: a.num('lobes', -1, 5),
+      lobeDepth: a.num('lobeDepth', -1, 0.1),
+      point: a.num('point', -1, 0.22),
+      swell: a.num('swell', -1, 1),
+      rows: a.num('rows', -1, 40),
+      segments: a.num('segments', -1, 36),
     })),
 
   bar: define(['length', 'width', 'thickness', 'bore', 'intermediate', 'bevel'], (a) =>
@@ -380,6 +461,14 @@ const SYMMETRIES = {
       alternate: a.flag('alternate', -1, false),
     });
   }),
+
+  spray: define(['count', 'radius', 'lean', 'rise', 'taper', 'spin'], (a) =>
+    spray(a.num('count', 0), a.num('radius', 1), {
+      lean: a.num('lean', -1, 0.5),
+      rise: a.num('rise', -1, 0),
+      taper: a.num('taper', -1, 1),
+      spin: a.num('spin', -1, 0),
+    })),
 
   nested: define(['count', 'factor', 'spin'], (a) =>
     nested(a.num('count', 0), a.num('factor', 1), a.num('spin', 2, 0))),

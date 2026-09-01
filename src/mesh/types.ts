@@ -87,3 +87,33 @@ export function recomputeNormals(mesh: Mesh) {
     normals[v] /= l; normals[v + 1] /= l; normals[v + 2] /= l;
   }
 }
+
+/**
+ * Concatenate meshes into one.
+ *
+ * A Part is a single mesh, which is what lets the renderer instance it — so a
+ * form that is genuinely one piece of metal but takes several sweeps to describe,
+ * like a branch and its limbs, has to be joined here rather than placed as
+ * separate parts. Everything else in the vocabulary stays separate on purpose:
+ * pieces overlap and are riveted, not welded.
+ */
+export function mergeMeshes(meshes: Mesh[]): Mesh {
+  let verts = 0, tris = 0;
+  for (const m of meshes) { verts += m.positions.length / 3; tris += m.indices.length; }
+
+  const positions = new Float32Array(verts * 3);
+  const normals = new Float32Array(verts * 3);
+  const uvs = new Float32Array(verts * 2);
+  const indices = new Uint32Array(tris);
+
+  let vo = 0, io = 0;
+  for (const m of meshes) {
+    positions.set(m.positions, vo * 3);
+    normals.set(m.normals, vo * 3);
+    uvs.set(m.uvs, vo * 2);
+    for (let i = 0; i < m.indices.length; i++) indices[io + i] = m.indices[i] + vo;
+    vo += m.positions.length / 3;
+    io += m.indices.length;
+  }
+  return { positions, normals, uvs, indices };
+}

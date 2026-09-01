@@ -268,6 +268,210 @@ form digitalis {
 }
 `,
 
+
+  // ---- flowers ----
+
+  rose: `# Rosa — a spiral of cupped petals, each course flatter than the last
+material rose gold satin
+
+# Three petal sizes, not one scaled: a rose opens outward, so the outer petals
+# are not just bigger, they are cupped less and thrown back further.
+#
+# Two signs to keep straight. A negative tilt stands a petal up (positive tilts it
+# down, which is how a bract droops). Standing it up turns its face normal back
+# toward the axis, so from there a positive curl wraps the tip inward over the
+# centre and a negative one reflexes it away. A rose does both: the heart folds
+# in, the outermost course falls open.
+part heart = petal(length: 13, width: 13, thickness: 0.45, shape: round, cup: 88deg, curl: 34deg, curlBias: 1.8)
+part mid   = petal(length: 19, width: 19, thickness: 0.5, shape: round, cup: 66deg, curl: 14deg, curlBias: 2.2)
+part outer = petal(length: 26, width: 26, thickness: 0.5, shape: round, cup: 38deg, curl: -34deg, curlBias: 2.8)
+part sepal = leaf(length: 17, width: 3.6, thickness: 0.5, shape: lanceolate, teeth: 12, cup: 40deg, curl: 62deg) in bronze satin
+part hip   = bud(length: 10, width: 9.5, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.3) in bronze satin
+part stalk = stem(path: through((0,0,-9), (1.5,0,-26), (-2,0,-42), (1,0,-56)), radius: 1.7, tip: 0.65, nodes: 3)
+part foliage = leaf(length: 22, width: 11, thickness: 0.6, teeth: 22, veins: 3, cup: 26deg, curl: 30deg) in bronze satin
+
+form rose {
+  repeat heart around phyllotaxis(7, 1.1, tilt: -86deg, fade: 0.25, rise: 1.7)
+  repeat mid   around phyllotaxis(10, 1.9, start: 8, tilt: -74deg, fade: 0.5, rise: 0.9)
+  repeat outer around phyllotaxis(13, 2.5, start: 18, tilt: -52deg, fade: 0.9)
+  repeat sepal around ring(5, radius: 3.4, z: -4, tilt: 62deg)
+  place hip at (0, 0, -10)
+  place stalk
+  repeat foliage around ring(3, radius: 2, z: -34, tilt: -18deg)
+}
+`,
+
+  tulip: `# Tulipa — six petals in two whorls, deeply cupped and keeled
+material silver satin
+
+# The keel is the whole tulip: each petal folds along its midline rather than
+# curving smoothly, which is what gives the flower its six flat facets.
+part outerTepal = petal(length: 32, width: 20, thickness: 0.7, shape: round, cup: 62deg, keel: 0.45, curl: -14deg, curlBias: 2.2)
+part innerTepal = petal(length: 29, width: 17, thickness: 0.7, shape: round, cup: 74deg, keel: 0.55, curl: -8deg, curlBias: 2.2)
+part pistil = pod(length: 9, width: 4.5, ribs: 3, ribDepth: 0.18, segments: 24) in gold polished
+part stamen = wire(path: through((0,0,0), (0.4,0,5), (1.6,0,9.5)), radius: 0.5, tip: 0.5, sections: 20, sides: 8) in gold polished
+part anther = pod(length: 3.4, width: 1.2, segments: 12) in blackened steel satin
+part stalk  = stem(path: through((0,0,0), (-1,0,-20), (2,0,-40), (-1,0,-62)), radius: 2.2, tip: 0.55, nodes: 2)
+part blade  = leaf(length: 33, width: 9, thickness: 0.8, shape: linear, cup: 54deg, keel: 0.6, curl: -84deg, curlBias: 2.8)
+
+unit filament {
+  place stamen
+  fasten anther to stamen.tip
+}
+
+form tulip {
+  repeat outerTepal around ring(3, radius: 2.6, tilt: -76deg)
+  repeat innerTepal around ring(3, radius: 2.2, phase: 60deg, tilt: -82deg)
+  place pistil at (0, 0, 5) pitch 90deg
+  repeat filament around ring(6, radius: 2, z: 1, tilt: -12deg)
+  place stalk
+  repeat blade around ring(2, radius: 2.5, z: -40, tilt: -66deg)
+}
+`,
+
+  orchid: `# Phalaenopsis — bilateral, not radial: three sepals, two petals, one lip
+material platinum polished
+
+# Placed one at a time on purpose. An orchid is the one flower here that a
+# symmetry cannot express, because it is symmetric about a plane and nothing else.
+part sepal = petal(length: 26, width: 13, thickness: 0.5, shape: pointed, cup: 22deg, curl: -18deg)
+part wing  = petal(length: 30, width: 26, thickness: 0.5, shape: round, cup: 18deg, curl: -14deg, curlBias: 2)
+part lip   = petal(length: 20, width: 19, thickness: 0.6, shape: lip, edge: crenate, edgeCount: 9, cup: 54deg, curl: -46deg, curlBias: 2.4, twist: 6deg) in gold satin
+part column = bud(length: 7, width: 4.4, lobes: 3, lobeDepth: 0.09, point: 0.4) in gold polished
+part arch  = stem(path: through((0,0,-2), (-8,0,-14), (-10,0,-30), (-4,0,-44)), radius: 1.6, tip: 0.5, nodes: 2)
+part sheath = leaf(length: 15, width: 5, thickness: 0.5, shape: lanceolate, cup: 40deg, curl: 50deg)
+
+form orchid {
+  place sepal turn 90deg
+  place sepal turn 210deg
+  place sepal turn 330deg
+  place wing turn 30deg
+  place wing turn 150deg
+  place lip at (0, 0, 0.8) turn 270deg
+  place column at (0, 0, 1.6) pitch -70deg
+  place arch
+  place sheath at (-9, 0, -27) turn 200deg
+}
+`,
+
+  carnation: `# Dianthus caryophyllus — the flower is all margin
+material copper polished
+
+# A pink is told from anything else by its cut edge, so the fringe and the frill
+# are doing the work here and the silhouette barely matters.
+part frill = petal(length: 21, width: 15, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 30, edgeDepth: 0.11, cup: 40deg, curl: -26deg, curlBias: 2, ruffle: 1.2, ruffleWaves: 4)
+part inner = petal(length: 15, width: 11, thickness: 0.4, shape: spoon, edge: fringed, edgeCount: 24, edgeDepth: 0.12, cup: 62deg, curl: -14deg, ruffle: 0.8, ruffleWaves: 4)
+part calyx = bud(length: 16, width: 10, lobes: 5, lobeDepth: 0.06, point: 0.16, swell: 1.5) in bronze satin
+part stalk = stem(path: through((0,0,-16), (1,0,-32), (-2,0,-50), (1,0,-66)), radius: 1.9, tip: 0.6, nodes: 3, swell: 0.5)
+part blade = leaf(length: 34, width: 4.5, thickness: 0.5, shape: linear, cup: 46deg, keel: 0.5, curl: -58deg, curlBias: 2.4) in bronze satin
+
+form carnation {
+  repeat inner around phyllotaxis(8, 2.1, tilt: -72deg, fade: 0.8, rise: 1)
+  repeat frill around phyllotaxis(16, 3.3, start: 9, tilt: -44deg, fade: 1.3)
+  place calyx at (0, 0, -16)
+  place stalk
+  repeat blade around ring(4, radius: 1.8, z: -44, tilt: -40deg)
+}
+`,
+
+  freesia: `# Freesia — florets all facing one way up an arching spike
+material gold satin
+
+let spike = bezier((0,0,0), (18,0,16), (42,0,24), (66,0,19))
+
+# A freesia's spike is one-sided, which is exactly what "along" without
+# "alternate" gives: every floret takes its frame from the same side of the curve.
+part rachis = stem(path: spike, radius: 1.7, tip: 0.28, nodes: 0, sections: 96)
+part tube   = bell(length: 12, mouth: 10, throat: 3, wall: 0.5, flare: 2.6, lobes: 6, lobeDepth: 0.2)
+part tepal  = petal(length: 14, width: 8, thickness: 0.45, shape: strap, cup: 34deg, curl: -34deg, curlBias: 2.2)
+part knot   = bud(length: 8, width: 3.8, lobes: 3, lobeDepth: 0.1, point: 0.4) in bronze satin
+part sheath = leaf(length: 24, width: 4, thickness: 0.5, shape: lanceolate, cup: 34deg, curl: -44deg) in bronze satin
+
+# The tepals belong to the tube, so they have to turn with it. Building the
+# corolla upright and then laying the whole unit over is the only way round —
+# pitching the tube alone leaves its tepals behind, still facing the sky.
+unit corolla {
+  place tube
+  repeat tepal around ring(6, radius: 4.6, z: 11.4, tilt: -38deg)
+}
+unit floret { place corolla pitch 90deg }
+unit tip { place knot pitch 90deg }
+
+form freesia {
+  place rachis
+  repeat floret around along(spike, 5, from: 0.22, to: 0.76, taper: 0.7, tilt: -26deg)
+  repeat tip around along(spike, 3, from: 0.85, to: 1, taper: 0.5, tilt: -12deg)
+  repeat sheath around along(spike, 3, from: 0.02, to: 0.16, taper: 0.7, alternate: yes, tilt: -20deg)
+}
+`,
+
+  daisy: `# Leucanthemum — a composite: ray florets round a disc of tubular ones
+material silver polished
+
+# Two arrangements, not one. The rays are a ring because they are a single whorl;
+# the disc is phyllotaxis because it is hundreds of separate flowers packed.
+part ray   = petal(length: 26, width: 6.5, thickness: 0.4, shape: strap, edge: notched, cup: 26deg, curl: 16deg, curlBias: 1.6)
+part disc  = disc(radius: 8, thickness: 1.2, bevel: 0.4) in gold satin
+part floret = bead(radius: 0.85, point: 1, segments: 10) in gold polished
+part stalk = stem(path: through((0,0,-1), (1,0,-18), (-2,0,-36), (2,0,-52)), radius: 1.6, tip: 0.6, nodes: 3)
+part blade = leaf(length: 24, width: 7, thickness: 0.55, shape: spatulate, teeth: 16, cup: 24deg, curl: 34deg) in bronze satin
+
+form daisy {
+  repeat ray around ring(21, radius: 7.4, z: 0.4, tilt: -14deg)
+  place disc
+  repeat floret around phyllotaxis(54, 1.02, rise: 1.5, taper: 0.75)
+  place stalk
+  repeat blade around ring(3, radius: 1.6, z: -30, tilt: -22deg)
+}
+`,
+
+  bouquet: `# A set of flowers, then a bunch made from them
+material gold satin
+
+# Every flower below is an ordinary form. What makes this a bouquet is the last
+# line: a form can be repeated exactly like a part, so once a rose is defined it
+# is a single thing to arrange, however many pieces it is made of.
+part petalA = petal(length: 17, width: 16, thickness: 0.5, shape: round, cup: 52deg, curl: -26deg, curlBias: 2.6)
+part petalB = petal(length: 11, width: 11, thickness: 0.5, shape: round, cup: 84deg, curl: 30deg, curlBias: 1.8)
+part stemA  = stem(path: through((0,0,-6), (2,0,-30), (-2,0,-56), (1,0,-78)), radius: 1.7, tip: 0.6, nodes: 3)
+part hipA   = bud(length: 8, width: 8, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.3) in bronze satin
+
+part rayB   = petal(length: 20, width: 5.5, thickness: 0.4, shape: strap, edge: notched, cup: 24deg, curl: 14deg)
+part discB  = disc(radius: 6, thickness: 1.1, bevel: 0.35) in copper satin
+part stemB  = stem(path: through((0,0,-1), (-2,0,-28), (2,0,-54), (-1,0,-74)), radius: 1.4, tip: 0.6, nodes: 2)
+
+part budC   = bud(length: 13, width: 7, lobes: 5, lobeDepth: 0.12, point: 0.3) in rose gold satin
+part stemC  = stem(path: through((0,0,0), (1,0,-24), (-2,0,-50), (2,0,-70)), radius: 1.3, tip: 0.6, nodes: 2)
+part leafC  = leaf(length: 26, width: 8, thickness: 0.55, shape: lanceolate, teeth: 18, cup: 30deg, curl: 40deg) in bronze satin
+
+form aRose {
+  repeat petalB around phyllotaxis(7, 1.2, tilt: -82deg, fade: 0.4, rise: 1.4)
+  repeat petalA around phyllotaxis(11, 2.2, start: 8, tilt: -56deg, fade: 0.9)
+  place hipA at (0, 0, -7)
+  place stemA
+}
+
+form aDaisy {
+  repeat rayB around ring(16, radius: 5.6, z: 0.4, tilt: -12deg)
+  place discB
+  place stemB
+}
+
+form aSpray {
+  place budC
+  place stemC
+  repeat leafC around along(through((0,0,0), (1,0,-24), (-2,0,-50)), 4, from: 0.25, to: 0.9, taper: 0.6, alternate: yes, tilt: -24deg)
+}
+
+# spray leans +Z outward rather than +X, because these are whole flowers and a
+# flower stands up — the one place the growth-along-X convention does not apply
+form bouquet {
+  repeat aRose  around spray(3, 17, lean: 20deg, rise: 9, spin: 1.1)
+  repeat aDaisy around spray(5, 36, lean: 38deg, rise: 1, spin: 0.7)
+  repeat aSpray around spray(7, 54, lean: 56deg, rise: -10, spin: 2.4)
+}
+`,
+
   teasel: `# Dipsacus — a spined head over a whorl of upswept bracts
 material blackened steel sandblasted
 

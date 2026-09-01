@@ -168,16 +168,20 @@ export interface PodSpec {
   /** Number of whorls — rings around the pod. 0 leaves it smooth. */
   whorls?: number;
   whorlDepth?: number;
+  /** Ribs running the length of the pod, as a melon or a poppy capsule has. */
+  ribs?: number;
+  ribDepth?: number;
   segments?: number;
 }
 
 /**
- * A seed pod: an ovoid drawn to a point at both ends, optionally whorled.
+ * A seed pod: an ovoid drawn to a point at both ends.
  *
- * Whorls, not ribs. A surface of revolution can only vary along its silhouette,
- * so the flutes come out as rings around the pod rather than running its length —
- * a cone or a shell rather than a melon. Cut into the silhouette rather than
- * added on top, so the profile stays one closed loop and needs no boolean.
+ * It can be cut two ways, and they are genuinely different things. Whorls are
+ * rings around the pod, cut into the silhouette — a shell or a cone. Ribs run
+ * its length, which a silhouette cannot express at all and which needs the
+ * revolve to be warped as it turns. A melon is ribbed; a shell is whorled; the
+ * two together is a poppy capsule.
  */
 export function pod(spec: PodSpec): Part {
   const rows = 48;
@@ -194,7 +198,16 @@ export function pod(spec: PodSpec): Part {
     points.push([Math.max(spec.width * 0.5 * swell + flute, 0), (t - 0.5) * spec.length]);
   }
 
-  const mesh = revolve({ points }, { segments: spec.segments ?? 32 });
+  const ribs = spec.ribs ?? 0;
+  const ribDepth = (spec.ribDepth ?? 0.12) ;
+  const mesh = revolve({ points }, {
+    segments: spec.segments ?? 32,
+    warp: ribs > 0
+      // faded out at the ends so the ribs die into the points rather than
+      // crossing them, which is what leaves a pole looking screwed on
+      ? (a, v) => 1 + ribDepth * Math.cos(ribs * a) * Math.sin(Math.PI * v)
+      : undefined,
+  });
   return {
     name: spec.name ?? 'pod',
     mesh,
@@ -216,6 +229,9 @@ export interface BellSpec {
   wall?: number;
   /** Flare exponent: 1 is a straight cone, above 2 a trumpet. */
   flare?: number;
+  /** Lobes of the rim. A corolla is fused petals, and the lobes are where they show. */
+  lobes?: number;
+  lobeDepth?: number;
   rows?: number;
   segments?: number;
 }
@@ -250,7 +266,17 @@ export function bell(spec: BellSpec): Part {
   const points = [...outer, ...inner];
   const sharp = points.map((_, i) => i === outer.length - 1 || i === points.length - 1);
 
-  const mesh = revolve({ points, sharp, closed: true }, { segments: spec.segments ?? 40 });
+  const lobes = spec.lobes ?? 0;
+  const lobeDepth = spec.lobeDepth ?? 0.16;
+  const mesh = revolve({ points, sharp, closed: true }, {
+    segments: spec.segments ?? 40,
+    // A plain circular rim is the tell that a corolla was turned on a lathe. The
+    // lobes grow with height so the throat stays round where it joins the flower.
+    warp: lobes > 0
+      ? (a, _v, _r, z) =>
+          1 + lobeDepth * Math.cos(lobes * a) * Math.pow(Math.max(z, 0) / spec.length, 2)
+      : undefined,
+  });
   return {
     name: spec.name ?? 'bell',
     mesh,
@@ -258,6 +284,67 @@ export function bell(spec: BellSpec): Part {
     anchors: [
       { name: 'throat', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.throat },
       { name: 'mouth', position: [0, 0, spec.length], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.mouth },
+    ],
+  };
+}
+
+export interface BudSpec {
+  name?: string;
+  length: number;
+  width: number;
+  /** Sepals wrapped round the bud, seen as flutes running its length. */
+  lobes?: number;
+  lobeDepth?: number;
+  /** Length of the drawn point, as a fraction of the whole. */
+  point?: number;
+  /** Fullness. Below 1 a slim spindle, above 1 an urn about to open. */
+  swell?: number;
+  rows?: number;
+  segments?: number;
+}
+
+/**
+ * A bud: sepals wrapped over a point, before it opens.
+ *
+ * The thing that makes a bud read as a bud rather than as a bead is that the
+ * sepals wrapping it are visible as flutes running its whole length, and they
+ * twist very slightly — which is why it needed the revolve to be warped rather
+ * than being another silhouette. A bouquet without buds looks arranged; with a
+ * few it looks picked.
+ */
+export function bud(spec: BudSpec): Part {
+  const rows = spec.rows ?? 40;
+  const lobes = spec.lobes ?? 5;
+  const depth = spec.lobeDepth ?? 0.1;
+  const point = spec.point ?? 0.22;
+  const swell = spec.swell ?? 1;
+
+  const points: Vec2[] = [];
+  for (let i = 0; i <= rows; i++) {
+    const t = i / rows;
+    const a = t * Math.PI;
+    // full and round at the base, drawn out to a point at the top
+    const body = Math.pow(Math.sin(a), 0.62 / swell) * (1 - 0.35 * Math.pow(t, 2.2));
+    const tipPull = Math.pow(Math.max(t - (1 - point), 0) / point, 1.8);
+    points.push([
+      Math.max(spec.width * 0.5 * body * (1 - 0.9 * tipPull), 0),
+      t * spec.length,
+    ]);
+  }
+
+  const mesh = revolve({ points }, {
+    segments: spec.segments ?? 36,
+    warp: (angle, v) =>
+      1 + depth * Math.cos(lobes * (angle + v * 0.55)) * Math.sin(Math.PI * v),
+  });
+
+  return {
+    name: spec.name ?? 'bud',
+    mesh,
+    bounds: meshBounds(mesh),
+    anchors: [
+      { name: 'base', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0] },
+      { name: 'tip', position: [0, 0, spec.length], axis: [0, 0, 1], tangent: [1, 0, 0] },
     ],
   };
 }

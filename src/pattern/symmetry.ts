@@ -32,7 +32,14 @@ export interface RingOptions {
   phase?: number;
   /** Lift the whole ring along Z. */
   z?: number;
-  /** Tip each copy up out of the plane, in radians. */
+  /**
+   * Tip each copy out of the plane, in radians, about the local tangential axis.
+   *
+   * Positive tilts the growth direction *down*, toward -Z — a drooping tepal, a
+   * reflexed bract. Negative stands it up. Worth stating because it is the
+   * opposite of what most people write first, and getting it backwards gives a
+   * flower whose petals splay outward instead of forming a cup.
+   */
   tilt?: number;
   scale?: number;
 }
@@ -245,6 +252,55 @@ export function nested(count: number, factor: number, spin = 0): Symmetry {
   const out: Symmetry = [];
   for (let i = 0; i < count; i++) {
     out.push(multiply(rotationAbout([0, 0, 1], spin * i), uniformScale(Math.pow(factor, i))));
+  }
+  return out;
+}
+
+export interface SprayOptions {
+  /** How far the outermost copy leans away from the axis, in radians. */
+  lean?: number;
+  /** Height of the dome the heads sit on. */
+  rise?: number;
+  /** Scale of the outermost copy. */
+  taper?: number;
+  /** Turn each copy about its own axis as well, so no two present the same face. */
+  spin?: number;
+}
+
+/**
+ * A hand-tied bunch: copies gathered at one point, fanning out and doming over.
+ *
+ * The odd one out in this file, and deliberately so. Every other symmetry orients
+ * its copies by the convention that +X is the growth direction, because it places
+ * parts — a leaf, a strut, a scale. This one places whole flowers, and a flower
+ * stands up: it is built along +Z with its stem running down. So `spray` leans
+ * +Z outward rather than +X, which is the only thing that makes
+ * `repeat rose around spray(9, ...)` do what anyone would expect.
+ *
+ * The lean grows with the radius rather than being constant, which is what a
+ * bunch does when it is gripped in one hand: the middle stands straight and the
+ * outside falls away. The golden angle keeps the faces from lining up in rows.
+ */
+export function spray(count: number, radius: number, opts: SprayOptions = {}): Symmetry {
+  const { lean = 0.5, rise = 0, taper = 1, spin = 0 } = opts;
+  const golden = Math.PI * (3 - Math.sqrt(5));
+  const out: Symmetry = [];
+  const maxK = Math.sqrt(Math.max(count - 1, 1));
+
+  for (let i = 0; i < count; i++) {
+    const t = count > 1 ? i / (count - 1) : 0;
+    const k = Math.sqrt(i) / maxK;                // 0 at the centre, 1 at the rim
+    const a = i * golden;
+    const r = radius * k;
+
+    const place = translation([Math.cos(a) * r, Math.sin(a) * r, rise * (1 - k * k)]);
+    // lean about the tangential axis, which tips the copy outward rather than
+    // spinning it — the same construction ring() uses for tilt
+    const tangential: Vec3 = [-Math.sin(a), Math.cos(a), 0];
+    const fall = rotationAbout(tangential, lean * k);
+    const turn = spin ? rotationAbout([0, 0, 1], spin * i) : identity();
+    const s = 1 + (taper - 1) * t;
+    out.push(multiply(multiply(place, fall), multiply(turn, uniformScale(s))));
   }
   return out;
 }

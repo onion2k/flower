@@ -2,7 +2,9 @@ import { arc, bezier3, catmullRom, logSpiral } from '../geom/curve';
 import { band, blade, wire } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
 import { leaf } from '../parts/leaf';
-import { bead, bell, collar, pod, rivet } from '../parts/fastener';
+import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
+import { petal } from '../parts/petal';
+import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
 /**
@@ -127,6 +129,47 @@ export const catalogue: Record<string, () => Part> = {
 
   'leaf · palmate': () =>
     leaf({ length: 30, width: 30, thickness: 0.8, lobes: 5, spread: 2.7, veins: 5, teeth: 40, toothDepth: 0.45 }),
+
+  // ---- flowers ----
+
+  'petal · rose': () =>
+    petal({ length: 26, width: 22, thickness: 0.6, shape: 'round', cup: 0.75, curl: -0.5, curlBias: 2.6 }),
+
+  'petal · fringed': () =>
+    petal({
+      name: 'petal-fringed', length: 30, width: 15, thickness: 0.5, shape: 'spoon',
+      edge: 'fringed', edgeDepth: 0.1, edgeCount: 34, cup: 0.5, ruffle: 1.1, ruffleWaves: 4,
+    }),
+
+  'petal · strap': () =>
+    petal({ length: 24, width: 6, thickness: 0.45, shape: 'strap', edge: 'notched', cup: 0.32, curl: 0.3 }),
+
+  'petal · lip': () =>
+    petal({ length: 22, width: 18, thickness: 0.5, shape: 'lip', edge: 'crenate', cup: 0.6, curl: -0.7, curlBias: 2.2, twist: 0.25 }),
+
+  'leaf · keeled': () =>
+    leaf({ length: 44, width: 10, thickness: 0.7, shape: 'linear', cup: 0.55, keel: 0.7, curl: 0.5, curlBias: 2.4 }),
+
+  'leaf · orbicular': () =>
+    leaf({ length: 22, width: 22, thickness: 0.7, shape: 'orbicular', veins: 4, droop: 0.02, cup: 0.3 }),
+
+  bud: () => bud({ length: 14, width: 8, lobes: 5, lobeDepth: 0.13 }),
+
+  stem: () =>
+    stem({
+      path: catmullRom([[0, 0, 0], [1.5, 0, 14], [-1, 0, 28], [2, 0, 42]]),
+      radius: 1.5, tipScale: 0.5, nodes: 4,
+    }),
+
+  branch: () =>
+    branch({
+      path: catmullRom([[0, 0, 0], [2, 0, 16], [-1, 0, 32], [3, 0, 46]]),
+      radius: 1.8, tipScale: 0.4, limbs: 4, limbLength: 0.4,
+    }),
+
+  'pod · ribbed': () => pod({ length: 18, width: 12, ribs: 8, ribDepth: 0.13 }),
+
+  'bell · lobed': () => bell({ length: 13, mouth: 17, throat: 5, wall: 0.6, flare: 2.4, lobes: 5, lobeDepth: 0.2 }),
 };
 
 export const catalogueNames = Object.keys(catalogue);
