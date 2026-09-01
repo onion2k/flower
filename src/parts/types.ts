@@ -27,6 +27,8 @@ export interface Part {
   mesh: Mesh;
   bounds: Box3;
   anchors: Anchor[];
+  /** Optional override, so one form can mix metals the way real work does. */
+  material?: { metal?: string; finish?: string };
 }
 
 export const findAnchor = (part: Part, name: string): Anchor => {

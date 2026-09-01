@@ -1,4 +1,6 @@
 import { catalogue, catalogueNames } from './spike/catalogue';
+import { metalNames, finishNames } from './render/materials';
+import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
 import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
@@ -15,14 +17,19 @@ const viewer = new Viewer(stage);
 
 const state = {
   subject: formNames[0],
-  showNormals: false,
-  showUv: false,
+  metal: 'gold',
+  finish: 'polished',
+  environment: 'studio' as EnvPreset,
+  exposure: 1,
+  envSpin: 0,
+  backdrop: 0.42,
+  debug: 0,
   showAnchors: false,
 };
 
 let framed = '';
 
-function toggle(label: string, key: 'showNormals' | 'showUv' | 'showAnchors', onChange: () => void) {
+function toggle(label: string, key: 'showAnchors', onChange: () => void) {
   const wrap = document.createElement('label');
   wrap.className = 'check';
   const input = document.createElement('input');
@@ -33,6 +40,49 @@ function toggle(label: string, key: 'showNormals' | 'showUv' | 'showAnchors', on
     onChange();
   });
   wrap.append(input, document.createTextNode(label));
+  return wrap;
+}
+
+function picker(label: string, names: readonly string[], value: string, onPick: (v: string) => void) {
+  const wrap = document.createElement('label');
+  const row = document.createElement('div');
+  row.className = 'row';
+  row.innerHTML = `<span>${label}</span>`;
+  const sel = document.createElement('select');
+  for (const n of names) {
+    const opt = document.createElement('option');
+    opt.value = n;
+    opt.textContent = n;
+    sel.append(opt);
+  }
+  sel.value = value;
+  sel.addEventListener('change', () => onPick(sel.value));
+  wrap.append(row, sel);
+  return wrap;
+}
+
+function slider(
+  label: string, min: number, max: number, step: number, value: number,
+  fmt: (v: number) => string, onInput: (v: number) => void,
+) {
+  const wrap = document.createElement('label');
+  const row = document.createElement('div');
+  row.className = 'row';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const val = document.createElement('b');
+  val.textContent = fmt(value);
+  row.append(name, val);
+  const input = document.createElement('input');
+  input.type = 'range';
+  input.min = String(min); input.max = String(max); input.step = String(step);
+  input.value = String(value);
+  input.addEventListener('input', () => {
+    const v = parseFloat(input.value);
+    val.textContent = fmt(v);
+    onInput(v);
+  });
+  wrap.append(row, input);
   return wrap;
 }
 
@@ -57,25 +107,75 @@ select.addEventListener('change', () => {
 });
 subjectSet.append(select);
 
+const materialSet = document.createElement('fieldset');
+materialSet.innerHTML = '<legend>Material</legend>';
+materialSet.append(
+  picker('metal', metalNames, state.metal, (v) => {
+    state.metal = v;
+    viewer.setMaterial(state.metal, state.finish);
+  }),
+  picker('finish', finishNames, state.finish, (v) => {
+    state.finish = v;
+    viewer.setMaterial(state.metal, state.finish);
+  }),
+);
+
+const lightSet = document.createElement('fieldset');
+lightSet.innerHTML = '<legend>Light</legend>';
+lightSet.append(
+  picker('environment', ['studio', 'dusk', 'gallery'], state.environment, (v) => {
+    state.environment = v as EnvPreset;
+    const env = viewer.setEnvironment(state.environment);
+    hdrNote.textContent = env.highDynamicRange
+      ? ''
+      : 'float render targets unavailable — baked at 8 bits';
+  }),
+  slider('exposure', 0.15, 4, 0.05, state.exposure, (v) => `${v.toFixed(2)}×`, (v) => {
+    state.exposure = v;
+    viewer.setExposure(v);
+  }),
+  slider('rotate env', 0, 6.283, 0.02, state.envSpin, (v) => `${Math.round((v * 180) / Math.PI)}°`, (v) => {
+    state.envSpin = v;
+    viewer.setEnvSpin(v);
+  }),
+  slider('backdrop', 0, 1.5, 0.02, state.backdrop, (v) => v.toFixed(2), (v) => {
+    state.backdrop = v;
+    viewer.setBackdrop(v);
+  }),
+);
+const hdrNote = document.createElement('div');
+hdrNote.className = 'note';
+lightSet.append(hdrNote);
+
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
 viewSet.append(
-  toggle('show normals', 'showNormals', () => viewer.setShowNormals(state.showNormals)),
-  toggle('show uv', 'showUv', () => viewer.setShowUv(state.showUv)),
+  picker('debug', ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf'], 'shaded', (v) => {
+    state.debug = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf'].indexOf(v);
+    viewer.setDebug(state.debug);
+  }),
   toggle('show anchors', 'showAnchors', () => build()),
 );
 
-controlsEl.append(subjectSet, viewSet);
+controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, number[]>();
+  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string }>();
   for (const p of assembly.placements) {
-    let list = byMesh.get(p.part.mesh);
-    if (!list) { list = []; byMesh.set(p.part.mesh, list); }
-    for (let i = 0; i < 16; i++) list.push(p.matrix[i]);
+    let group = byMesh.get(p.part.mesh);
+    if (!group) {
+      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish };
+      byMesh.set(p.part.mesh, group);
+    }
+    for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
   }
-  return [...byMesh].map(([mesh, m]) => ({ mesh, matrices: new Float32Array(m) }));
+  return [...byMesh].map(([mesh, g]) => ({
+    mesh,
+    matrices: new Float32Array(g.matrices),
+    metal: g.metal,
+    finish: g.finish,
+  }));
 }
 
 function build() {
@@ -135,9 +235,8 @@ function report(assembly: Assembly, ms: number, span: number) {
     `${s.instances} placements built from ${s.uniqueTriangles.toLocaleString()} triangles of real geometry`;
 }
 
+viewer.setMaterial(state.metal, state.finish);
 build();
-viewer.setShowNormals(state.showNormals);
-viewer.setShowUv(state.showUv);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (window as any).artshape = { state, build, select, viewer, formNames, catalogueNames };

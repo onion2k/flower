@@ -1,162 +1,195 @@
-import { Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3 } from 'ogl';
+import { Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3, Texture, Mat4 } from 'ogl';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor } from '../parts/types';
 import type { Box3 } from '../geom/types';
-
-const vertex = /* glsl */ `
-  attribute vec3 position;
-  attribute vec3 normal;
-  attribute vec2 uv;
-
-  // One instance transform per placement. A form is a handful of meshes and a lot
-  // of matrices, so this is where "repeat the part" stops costing geometry.
-  attribute vec4 im0;
-  attribute vec4 im1;
-  attribute vec4 im2;
-  attribute vec4 im3;
-
-  uniform mat4 modelViewMatrix;
-  uniform mat4 projectionMatrix;
-  uniform mat3 normalMatrix;
-
-  varying vec3 vNormal;
-  varying vec3 vView;
-  varying vec2 vUv;
-
-  void main() {
-    mat4 inst = mat4(im0, im1, im2, im3);
-    vec4 local = inst * vec4(position, 1.0);
-
-    // placements are rigid with uniform scale (mirrors included), so rotating the
-    // authored normal and renormalising is exact -- no inverse transpose needed
-    vec3 n = mat3(inst) * normal;
-
-    vNormal = normalize(normalMatrix * n);
-    vec4 mv = modelViewMatrix * local;
-    vView = -mv.xyz;
-    vUv = uv;
-    gl_Position = projectionMatrix * mv;
-  }
-`;
-
-// Deliberately not PBR yet. This is a diagnostic surface: a hemispheric fill plus
-// two rims, chosen so that facet boundaries are obvious rather than flattering.
-const fragment = /* glsl */ `
-  precision highp float;
-
-  varying vec3 vNormal;
-  varying vec3 vView;
-  varying vec2 vUv;
-
-  uniform float uShowUv;
-  uniform float uShowNormals;
-
-  void main() {
-    vec3 n = normalize(vNormal);
-    vec3 v = normalize(vView);
-
-    vec3 keyDir = normalize(vec3(0.5, 0.8, 0.6));
-    vec3 rimDir = normalize(vec3(-0.7, -0.2, -0.4));
-
-    float key = max(dot(n, keyDir), 0.0);
-    float rim = pow(max(dot(n, rimDir), 0.0), 2.0);
-    float sky = 0.5 + 0.5 * n.y;
-
-    vec3 col = vec3(0.06);
-    col += vec3(1.00, 0.93, 0.82) * key * 0.75;
-    col += vec3(0.35, 0.45, 0.62) * sky * 0.35;
-    col += vec3(0.60, 0.68, 0.85) * rim * 0.45;
-
-    float spec = pow(max(dot(reflect(-keyDir, n), v), 0.0), 48.0);
-    col += vec3(1.0) * spec * 0.6;
-
-    col = mix(col, n * 0.5 + 0.5, uShowNormals);
-
-    // u along the sweep, v across it: the parameterisation a brushed finish will
-    // eventually follow, so it is worth being able to look at it directly
-    vec2 g = abs(fract(vUv * vec2(24.0, 8.0)) - 0.5);
-    float grid = smoothstep(0.46, 0.5, max(g.x, g.y));
-    col = mix(col, mix(vec3(vUv, 0.35), vec3(1.0), grid * 0.7), uShowUv);
-
-    col = pow(col, vec3(1.0 / 2.2));
-    gl_FragColor = vec4(col, 1.0);
-  }
-`;
-
-const anchorVertex = /* glsl */ `
-  attribute vec3 position;
-  attribute vec3 colour;
-  uniform mat4 modelViewMatrix;
-  uniform mat4 projectionMatrix;
-  varying vec3 vColour;
-  void main() {
-    vColour = colour;
-    gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-  }
-`;
-
-const anchorFragment = /* glsl */ `
-  precision highp float;
-  varying vec3 vColour;
-  void main() { gl_FragColor = vec4(vColour, 1.0); }
-`;
+import { bakeEnvironment, type Environment, type EnvPreset } from './env';
+import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
+import { PBR_FRAG, PBR_VERT, SKYBOX_FRAG, SKYBOX_VERT } from './shaders';
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
+const anchorVertex = `#version 300 es
+in vec3 position;
+in vec3 colour;
+uniform mat4 modelViewMatrix;
+uniform mat4 projectionMatrix;
+out vec3 vColour;
+void main() {
+  vColour = colour;
+  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+}`;
+
+const anchorFragment = `#version 300 es
+precision highp float;
+in vec3 vColour;
+out vec4 fragColor;
+void main() { fragColor = vec4(vColour, 1.0); }`;
+
+export interface InstanceGroup {
+  mesh: PartMesh;
+  matrices: Float32Array;
+  /** Per-group overrides, so a rosette can have silver leaves and gold studs. */
+  metal?: string;
+  finish?: string;
+}
 
 export class Viewer {
   readonly renderer: Renderer;
   readonly camera: Camera;
   readonly scene: Transform;
-  private controls: Orbit;
   readonly meshes: Mesh[] = [];
-  private anchorMesh: Mesh | null = null;
+
+  private controls: Orbit;
   private program: Program;
+  private skyProgram: Program;
+  private skyMesh: Mesh;
   private anchorProgram: Program;
+  private anchorMesh: Mesh | null = null;
   private raf = 0;
 
-  constructor(canvasHost: HTMLElement) {
-    this.renderer = new Renderer({ dpr: Math.min(window.devicePixelRatio, 2), antialias: true });
-    const gl = this.renderer.gl;
-    gl.clearColor(0.045, 0.048, 0.055, 1);
-    canvasHost.appendChild(gl.canvas);
+  private environment: Environment | null = null;
+  private specularTexture: Texture;
+  private backgroundTexture: Texture;
+  private brdfTexture: Texture;
 
-    this.camera = new Camera(gl, { fov: 35, near: 0.5, far: 2000 });
-    this.camera.position.set(40, 34, 62);
+  private metal: Metal = metals.gold;
+  private finish: Finish = finishes.polished;
+
+  constructor(canvasHost: HTMLElement) {
+    this.renderer = new Renderer({ dpr: Math.min(window.devicePixelRatio, 2), antialias: true, alpha: false });
+    const gl = this.renderer.gl;
+    const raw = gl as unknown as WebGL2RenderingContext;
+    canvasHost.appendChild(gl.canvas as HTMLCanvasElement);
+
+    this.camera = new Camera(gl, { fov: 32, near: 0.5, far: 4000 });
+    this.camera.position.set(60, 50, 90);
 
     this.controls = new Orbit(this.camera, {
       target: new Vec3(0, 0, 0),
       ease: 0.18,
       inertia: 0.72,
-      minDistance: 12,
-      maxDistance: 400,
+      minDistance: 6,
+      maxDistance: 1200,
     });
 
     this.scene = new Transform();
 
+    // Raw GL textures from the bake, wrapped so ogl still manages texture units.
+    this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
+    this.backgroundTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
+    this.brdfTexture = wrapTexture(gl, raw.TEXTURE_2D);
+
     this.program = new Program(gl, {
-      vertex,
-      fragment,
+      vertex: PBR_VERT,
+      fragment: PBR_FRAG,
       uniforms: {
-        uShowUv: { value: 0 },
-        uShowNormals: { value: 0 },
+        uSpecular: { value: this.specularTexture },
+        uBrdf: { value: this.brdfTexture },
+        uMaxLod: { value: 5 },
+        uF0: { value: this.metal.f0 },
+        uRoughness: { value: this.finish.roughness },
+        uAnisotropy: { value: this.finish.anisotropy },
+        uHammer: { value: this.finish.hammer },
+        uPatina: { value: this.finish.patina },
+        uPatinaColour: { value: patinaColour('gold') },
+        uExposure: { value: 1 },
+        uEnvSpin: { value: 0 },
+        uDebug: { value: 0 },
       },
       cullFace: null,
     });
+
+    this.skyProgram = new Program(gl, {
+      vertex: SKYBOX_VERT,
+      fragment: SKYBOX_FRAG,
+      uniforms: {
+        uBackground: { value: this.backgroundTexture },
+        uInverseViewProjection: { value: new Mat4() },
+        uExposure: { value: 1 },
+        uBlur: { value: 1.5 },
+        uEnvSpin: { value: 0 },
+        uBackdrop: { value: 0.42 },
+      },
+      cullFace: null,
+      depthTest: false,
+      depthWrite: false,
+    });
+    this.skyMesh = new Mesh(gl, {
+      geometry: new Geometry(gl, {
+        position: { size: 3, data: new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]) },
+      }),
+      program: this.skyProgram,
+    });
+    this.skyMesh.frustumCulled = false;
+    this.skyMesh.renderOrder = -1;
+    this.skyMesh.setParent(this.scene);
 
     this.anchorProgram = new Program(gl, {
       vertex: anchorVertex,
       fragment: anchorFragment,
       depthTest: false,
-      transparent: false,
     });
+
+    this.setEnvironment('studio');
 
     window.addEventListener('resize', this.resize);
     this.resize();
     this.loop();
   }
 
+  setEnvironment(preset: EnvPreset) {
+    const gl = this.renderer.gl as unknown as WebGL2RenderingContext;
+
+    // Bake first and release the old environment last. Freeing textures up front
+    // returns their names to the driver, the new bake is handed the same names
+    // straight back, and anything still holding the old handle then deletes the
+    // new texture it now aliases.
+    const previous = this.environment;
+    const env = bakeEnvironment(gl, preset);
+    invalidateRendererState(this.renderer, gl);
+
+    adoptTexture(this.specularTexture, env.specular);
+    adoptTexture(this.backgroundTexture, env.background);
+    adoptTexture(this.brdfTexture, env.brdf);
+    this.program.uniforms.uMaxLod.value = env.mips - 1;
+
+    this.environment = env;
+    previous?.dispose();
+    return env;
+  }
+
+  setMaterial(metalName: string, finishName: string) {
+    this.metal = metals[metalName] ?? this.metal;
+    this.finish = finishes[finishName] ?? this.finish;
+    this.program.uniforms.uF0.value = this.metal.f0;
+    this.program.uniforms.uRoughness.value = this.finish.roughness;
+    this.program.uniforms.uAnisotropy.value = this.finish.anisotropy;
+    this.program.uniforms.uHammer.value = this.finish.hammer;
+    this.program.uniforms.uPatina.value = this.finish.patina;
+    this.program.uniforms.uPatinaColour.value = patinaColour(this.metal.name);
+  }
+
+  setExposure(v: number) {
+    this.program.uniforms.uExposure.value = v;
+    this.skyProgram.uniforms.uExposure.value = v;
+  }
+
+  setEnvSpin(radians: number) {
+    this.program.uniforms.uEnvSpin.value = radians;
+    this.skyProgram.uniforms.uEnvSpin.value = radians;
+  }
+
+  setBackdrop(v: number) {
+    this.skyProgram.uniforms.uBackdrop.value = v;
+  }
+
+  /** 0 shaded, 1 normals, 2 uv, 3 roughness. */
+  setDebug(mode: number) {
+    this.program.uniforms.uDebug.value = mode;
+  }
+
   /** One draw call per distinct part mesh, however many times it is placed. */
-  setInstanced(groups: Array<{ mesh: PartMesh; matrices: Float32Array }>) {
+  setInstanced(groups: InstanceGroup[]) {
     const gl = this.renderer.gl;
     for (const m of this.meshes) {
       m.setParent(null);
@@ -187,6 +220,27 @@ export class Viewer {
         im3: { size: 4, data: col(3), instanced: 1 },
       });
       const mesh = new Mesh(gl, { geometry, program: this.program });
+
+      // Per-group material without a program per material: ogl applies uniforms
+      // during program.use(), which runs after this hook.
+      if (g.metal || g.finish) {
+        const metal = metals[g.metal ?? ''] ?? null;
+        const finish = finishes[g.finish ?? ''] ?? null;
+        mesh.onBeforeRender(() => {
+          const u = this.program.uniforms;
+          const m = metal ?? this.metal;
+          const f = finish ?? this.finish;
+          u.uF0.value = m.f0;
+          u.uRoughness.value = f.roughness;
+          u.uAnisotropy.value = f.anisotropy;
+          u.uHammer.value = f.hammer;
+          u.uPatina.value = f.patina;
+          u.uPatinaColour.value = patinaColour(m.name);
+        });
+      } else {
+        mesh.onBeforeRender(() => this.setMaterial(this.metal.name, this.finish.name));
+      }
+
       mesh.setParent(this.scene);
       this.meshes.push(mesh);
     }
@@ -196,11 +250,6 @@ export class Viewer {
     this.setInstanced([{ mesh: data, matrices: IDENTITY }]);
   }
 
-  /**
-   * Anchors are drawn as a two-armed cross: the long arm is the fastener axis, the
-   * short one the tangent. A mis-oriented anchor is invisible in the surface but
-   * obvious here, which is the only reason it is worth rendering them at all.
-   */
   setAnchors(anchors: Anchor[], scale: number) {
     const gl = this.renderer.gl;
     if (this.anchorMesh) {
@@ -216,26 +265,23 @@ export class Viewer {
       const o = i * 12;
       const axisLen = scale;
       const tanLen = scale * 0.45;
-      // axis arm, from just under the surface to out along the fastener direction
       position[o + 0] = a.position[0] - a.axis[0] * axisLen * 0.35;
       position[o + 1] = a.position[1] - a.axis[1] * axisLen * 0.35;
       position[o + 2] = a.position[2] - a.axis[2] * axisLen * 0.35;
       position[o + 3] = a.position[0] + a.axis[0] * axisLen;
       position[o + 4] = a.position[1] + a.axis[1] * axisLen;
       position[o + 5] = a.position[2] + a.axis[2] * axisLen;
-      // tangent arm
       position[o + 6] = a.position[0] - a.tangent[0] * tanLen;
       position[o + 7] = a.position[1] - a.tangent[1] * tanLen;
       position[o + 8] = a.position[2] - a.tangent[2] * tanLen;
       position[o + 9] = a.position[0] + a.tangent[0] * tanLen;
       position[o + 10] = a.position[1] + a.tangent[1] * tanLen;
       position[o + 11] = a.position[2] + a.tangent[2] * tanLen;
-
       for (let k = 0; k < 2; k++) {
-        colour[o + k * 3 + 0] = 1.0; colour[o + k * 3 + 1] = 0.72; colour[o + k * 3 + 2] = 0.15;
+        colour[o + k * 3] = 1.0; colour[o + k * 3 + 1] = 0.72; colour[o + k * 3 + 2] = 0.15;
       }
       for (let k = 2; k < 4; k++) {
-        colour[o + k * 3 + 0] = 0.25; colour[o + k * 3 + 1] = 0.7; colour[o + k * 3 + 2] = 1.0;
+        colour[o + k * 3] = 0.25; colour[o + k * 3 + 1] = 0.7; colour[o + k * 3 + 2] = 1.0;
       }
     });
 
@@ -244,10 +290,10 @@ export class Viewer {
       colour: { size: 3, data: colour },
     });
     this.anchorMesh = new Mesh(gl, { geometry, program: this.anchorProgram, mode: gl.LINES });
+    this.anchorMesh.renderOrder = 10;
     this.anchorMesh.setParent(this.scene);
   }
 
-  /** Frame the camera on a part's bounds so a 3 mm rivet and a 56 mm plate both fill the view. */
   frameBounds(b: Box3) {
     const cx = (b.min[0] + b.max[0]) / 2;
     const cy = (b.min[1] + b.max[1]) / 2;
@@ -256,36 +302,84 @@ export class Viewer {
       Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2,
       0.001,
     );
-    const dist = radius / Math.tan((this.camera.fov * Math.PI) / 360) * 1.35;
+    const dist = (radius / Math.tan((this.camera.fov * Math.PI) / 360)) * 1.3;
     this.controls.target.set(cx, cy, cz);
     const dir = new Vec3(0.42, 0.5, 0.76).normalize();
     this.camera.position.set(cx + dir.x * dist, cy + dir.y * dist, cz + dir.z * dist);
     this.camera.near = Math.max(radius * 0.01, 0.01);
-    this.camera.far = dist + radius * 8;
+    this.camera.far = dist + radius * 12;
     this.camera.perspective({});
     this.controls.forcePosition();
   }
 
-  setShowUv(v: boolean) { this.program.uniforms.uShowUv.value = v ? 1 : 0; }
-  setShowNormals(v: boolean) { this.program.uniforms.uShowNormals.value = v ? 1 : 0; }
-
   private resize = () => {
     const gl = this.renderer.gl;
-    const host = gl.canvas.parentElement as HTMLElement;
-    const w = host.clientWidth;
-    const h = host.clientHeight;
-    this.renderer.setSize(w, h);
-    this.camera.perspective({ aspect: w / h });
+    const host = (gl.canvas as HTMLCanvasElement).parentElement as HTMLElement;
+    this.renderer.setSize(host.clientWidth, host.clientHeight);
+    this.camera.perspective({ aspect: host.clientWidth / host.clientHeight });
   };
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
     this.controls.update();
+
+    this.camera.updateMatrixWorld();
+    const inv = this.skyProgram.uniforms.uInverseViewProjection.value as Mat4;
+    inv.multiply(this.camera.projectionMatrix, this.camera.viewMatrix).inverse();
+
     this.renderer.render({ scene: this.scene, camera: this.camera });
   };
 
   dispose() {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.resize);
+    this.environment?.dispose();
   }
+}
+
+/**
+ * The bake drives raw WebGL, which leaves ogl's state cache describing a world
+ * that no longer exists — it will happily skip re-binding a texture unit it
+ * believes is already correct, and then every IBL lookup samples whatever the
+ * baker left bound. Clearing the cache forces ogl to re-issue everything.
+ */
+function invalidateRendererState(renderer: Renderer, gl: WebGL2RenderingContext) {
+  const state = renderer.state as unknown as Record<string | number, unknown>;
+  state.textureUnits = [];
+  state.activeTextureUnit = -1;
+  state.framebuffer = undefined;
+  state.currentProgram = null;
+  state.boundBuffer = null;
+  state.viewport = { x: 0, y: 0, width: null, height: null };
+  state.depthMask = undefined;
+  state.depthFunc = undefined;
+  state.cullFace = undefined;
+  state.frontFace = undefined;
+  delete state[gl.DEPTH_TEST];
+  delete state[gl.BLEND];
+  delete state[gl.CULL_FACE];
+  (renderer as unknown as { currentGeometry: string | null }).currentGeometry = null;
+}
+
+/**
+ * An ogl Texture standing in for a texture created by raw GL.
+ *
+ * ogl's update() short-circuits when the image has not changed and simply binds
+ * whatever handle the object holds, so swapping the handle in is enough to keep
+ * its texture-unit bookkeeping working for textures it did not create.
+ */
+function wrapTexture(gl: ConstructorParameters<typeof Texture>[0], target: number): Texture {
+  const t = new Texture(gl, { target, generateMipmaps: false });
+  // the wrapper never owns a texture; drop the one ogl allocated for it
+  if (t.texture) (gl as unknown as WebGL2RenderingContext).deleteTexture(t.texture);
+  (t as unknown as { texture: WebGLTexture | null }).texture = null;
+  t.needsUpdate = false;
+  return t;
+}
+
+/** Point the wrapper at a baked texture. Ownership stays with the Environment. */
+function adoptTexture(wrapper: Texture, handle: WebGLTexture) {
+  wrapper.texture = handle;
+  wrapper.needsUpdate = false;
+  wrapper.store.image = wrapper.image;
 }

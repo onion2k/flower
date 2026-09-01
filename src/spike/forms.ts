@@ -17,6 +17,7 @@ import { blade, wire } from '../parts/wire';
 function rosette(): Assembly {
   const petal = leaf({ name: 'petal', length: 34, width: 15, thickness: 1.1, piercings: 3, bossBore: 2.4 });
   const stud = rivet({ headDiameter: 3.6, headHeight: 1.2, shankDiameter: 2.2, grip: 1.1 });
+  stud.material = { metal: 'rose gold', finish: 'polished' };
   const curl = wire({
     name: 'curl',
     path: logSpiral(1.1, 1.25, 3.0),
@@ -25,6 +26,7 @@ function rosette(): Assembly {
     sections: 120,
   });
   const heart = bead({ radius: 5.2, point: 5.5 });
+  heart.material = { metal: 'rose gold', finish: 'satin' };
 
   // one sector: a pierced leaf, a stud through its boss, and a curl beside it
   const unit = new Assembly('rosette-unit');
@@ -83,6 +85,9 @@ function mandala(): Assembly {
   const knot = collar({ innerRadius: 1.15, wall: 0.55, length: 3.2, segments: 16 });
   const stud = rivet({ headDiameter: 3.2, headHeight: 1.1, shankDiameter: 2, grip: 1, segments: 20 });
   const drop = bead({ radius: 2.2, point: 2.8, segments: 20 });
+  drop.material = { metal: 'gold', finish: 'polished' };
+  knot.material = { metal: 'brass', finish: 'satin' };
+  stud.material = { metal: 'brass', finish: 'polished' };
 
   const form = new Assembly('mandala');
   form.place(band);
