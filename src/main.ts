@@ -1,3 +1,4 @@
+import { analyseConnectivity } from './assembly/connectivity';
 import { catalogue, catalogueNames } from './spike/catalogue';
 import { examples, exampleNames } from './dsl/examples';
 import { compile } from './dsl/index';
@@ -271,21 +272,47 @@ function build() {
   report(assembly, ms, span);
 }
 
+/**
+ * Counting bodies is the slowest thing in the panel — seconds on a dense form —
+ * so it runs after the frame rather than in it, and a token drops the answer if
+ * the subject changed while it was working.
+ */
+let connectivityToken = 0;
+
 function report(assembly: Assembly, ms: number, span: number) {
   const s = assembly.stats();
-  const rows: Array<[string, string, boolean?]> = [
+  const rows: Array<[string, string, string?]> = [
     ['instances', s.instances.toLocaleString()],
     ['distinct parts', String(s.uniqueParts)],
-    ['draw calls', String(s.uniqueParts), true],
+    ['draw calls', String(s.uniqueParts), 'hi'],
     ['unique triangles', s.uniqueTriangles.toLocaleString()],
     ['drawn triangles', s.drawnTriangles.toLocaleString()],
     ['mirrored', String(s.mirrored)],
     ['extent', `${span.toFixed(0)} mm`],
     ['generate', `${ms.toFixed(1)} ms`],
+    // Whether the model is one solid, which is what an STL has to be. Nothing on
+    // screen distinguishes a petal welded to the receptacle from one a hair clear
+    // of it, so without this the only way to find out is to try to print it.
+    ['bodies', '…'],
   ];
-  statsEl.innerHTML = rows
-    .map(([k, v, hi]) => `<tr><td>${k}</td><td class="${hi ? 'hi' : ''}">${v}</td></tr>`)
-    .join('');
+  const draw = () => {
+    statsEl.innerHTML = rows
+      .map(([k, v, cls]) => `<tr><td>${k}</td><td class="${cls ?? ''}">${v}</td></tr>`)
+      .join('');
+  };
+  draw();
+
+  const token = ++connectivityToken;
+  setTimeout(() => {
+    if (token !== connectivityToken) return;
+    const { bodies, floating } = analyseConnectivity(assembly);
+    rows[rows.length - 1] = [
+      'bodies',
+      bodies === 1 ? '1' : `${bodies}${floating ? ` (${floating} loose)` : ''}`,
+      bodies === 1 ? 'hi' : 'warn',
+    ];
+    draw();
+  }, 0);
 
   const ratio = s.drawnTriangles / Math.max(s.uniqueTriangles, 1);
   budgetEl.innerHTML =

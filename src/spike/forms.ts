@@ -5,6 +5,7 @@ import { phyllotaxis, ring, sphereShell, radial } from '../pattern/symmetry';
 import { bead, collar, rivet } from '../parts/fastener';
 import { leaf } from '../parts/leaf';
 import { blade, wire } from '../parts/wire';
+import { disc } from '../parts/panel';
 
 /**
  * Assembled forms.
@@ -25,7 +26,7 @@ function rosette(): Assembly {
     tipScale: 0.15,
     sections: 120,
   });
-  const heart = bead({ radius: 5.2, point: 5.5 });
+  const heart = bead({ radius: 7.2, point: 5.5 });
   heart.material = { metal: 'rose gold', finish: 'satin' };
 
   // one sector: a pierced leaf, a stud through its boss, and a curl beside it
@@ -36,7 +37,7 @@ function rosette(): Assembly {
 
   const form = new Assembly('rosette');
   form.repeat(unit, ring(8, 5.5));
-  form.place(heart, translation([0, 0, 1.2]));
+  form.place(heart, translation([0, 0, 1.9]));
   return form;
 }
 
@@ -58,8 +59,13 @@ function flower(): Assembly {
     sections: 64,
   });
   const tip = bead({ radius: 1.4, point: 1.6, segments: 16 });
+  // phyllotaxis gives every petal its own radius, so there is no centre for them
+  // to meet at: the receptacle is what makes this one piece rather than sixty
+  const cup = disc({ radius: 22.5, thickness: 2.2, bevel: 0.6 });
+  cup.material = { metal: 'bronze', finish: 'satin' };
 
   const form = new Assembly('flower');
+  form.place(cup);
 
   // outer courses lie flat, inner ones stand up — the tilt is what makes it a
   // flower rather than a rosette drawn on a plate
@@ -78,7 +84,8 @@ function flower(): Assembly {
 
 function mandala(): Assembly {
   const outerLeaf = leaf({ name: 'outer-leaf', length: 26, width: 12, thickness: 1, piercings: 2, bossBore: 2.2 });
-  const innerLeaf = leaf({ name: 'inner-leaf', length: 15, width: 8, thickness: 0.9, piercings: 1 });
+  // long enough to reach the outer band: the two courses were separate pieces
+  const innerLeaf = leaf({ name: 'inner-leaf', length: 20, width: 8, thickness: 0.9, piercings: 1 });
   const curl = wire({ name: 'curl', path: logSpiral(0.9, 1.15, 3.2), radius: 0.85, tipScale: 0.16, sections: 100 });
   const band = wire({ name: 'band', path: arc(34, 0, Math.PI * 2), radius: 1.1, closed: true, sections: 144, sides: 10 });
   const inner = wire({ name: 'inner-band', path: arc(17, 0, Math.PI * 2), radius: 0.8, closed: true, sections: 112, sides: 8 });
@@ -102,12 +109,15 @@ function mandala(): Assembly {
 
   form.repeat(single(innerLeaf), ring(16, 17, { phase: Math.PI / 16 }));
   form.repeat(single(curl), ring(16, 20.5, { phase: Math.PI / 16, tilt: 0.35 }));
-  form.repeat(single(drop), ring(12, 9));
+  // the drops hung in the middle holding on to nothing; on the inner band they
+  // read the same and are part of the piece
+  form.repeat(single(drop), ring(12, 17));
   return form;
 }
 
 function orb(): Assembly {
-  const scale = leaf({ name: 'scale', length: 12, width: 7.5, thickness: 0.7, piercings: 1, bossBore: 1.6 });
+  // curled to the sphere it sits on: tangent scales stand off their neighbours
+  const scale = leaf({ name: 'scale', length: 12, width: 9, thickness: 0.7, piercings: 1, bossBore: 1.6, curl: -0.8 });
   const stud = rivet({ headDiameter: 2.4, headHeight: 0.8, shankDiameter: 1.4, grip: 0.7, segments: 16 });
   const rib = wire({
     name: 'rib',
@@ -126,7 +136,7 @@ function orb(): Assembly {
   const form = new Assembly('orb');
   // each scale lies along the surface and lifts slightly, so they overlap the way
   // a seed head or a pine cone does rather than bristling outward
-  form.repeat(unit, sphereShell(78, 15, { orient: 'flat', lean: 0.34 }));
+  form.repeat(unit, sphereShell(78, 15, { orient: 'flat', lean: 0.12 }));
   return form;
 }
 

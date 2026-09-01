@@ -11,7 +11,7 @@ material gold polished
 part petal = leaf(length: 34, width: 15, thickness: 1.1, piercings: 3, boss: 2.4)
 part stud  = rivet(head: 3.6, height: 1.2, shank: 2.2, grip: 1.1) in rose gold polished
 part curl  = wire(path: spiral(start: 1.1, turns: 1.25, growth: 3), radius: 1, tip: 0.15, sections: 120)
-part heart = bead(radius: 5.2, point: 5.5) in rose gold satin
+part heart = bead(radius: 7.2, point: 5.5) in rose gold satin
 
 unit sector {
   place petal
@@ -21,7 +21,7 @@ unit sector {
 
 form rosette {
   repeat sector around ring(8, radius: 5.5)
-  place heart at (0, 0, 1.2)
+  place heart at (0, 0, 1.9)
 }
 `,
 
@@ -31,9 +31,12 @@ material silver satin
 let stem = 26
 
 part outer = leaf(length: stem, width: 11, thickness: 0.9, piercings: 2, boss: 2)
-part inner = leaf(length: stem / 2, width: 7, thickness: 0.8, piercings: 1)
+part inner = leaf(length: 17, width: 7, thickness: 0.8, piercings: 1)
 part pin   = rivet(head: 3, height: 1, shank: 1.8, grip: 0.9) in gold polished
 part band  = wire(path: circle(radius: 30), radius: 1, closed: yes, sections: 144)
+# the inner course had nothing holding it: a second hoop gathers it, and the
+# leaves are long enough now to reach the outer band and close the loop
+part hoop  = wire(path: circle(radius: 14), radius: 0.9, closed: yes, sections: 120)
 part drop  = bead(radius: 2, point: 2.6) in gold polished
 
 unit spoke {
@@ -43,9 +46,10 @@ unit spoke {
 
 form thistle {
   place band
+  place hoop
   repeat spoke around ring(14, radius: 30)
   repeat inner around ring(14, radius: 14, phase: 13deg)
-  repeat drop around ring(7, radius: 7)
+  repeat drop around ring(7, radius: 13.5)
 }
 `,
 
@@ -55,6 +59,10 @@ material copper hammered
 part petal  = blade(path: bezier((0,0,0), (11,0,5), (23,0,11), (31,0,7)), width: 11, thickness: 0.9, twist: 0.12turns)
 part stamen = wire(path: bezier((0,0,0), (5,0,6), (7,0,12), (4,0,16)), radius: 0.65, tip: 0.45, sections: 64)
 part tip    = bead(radius: 1.4, point: 1.6, segments: 16) in gold polished
+# Phyllotaxis puts every petal's base at its own radius, so there is no centre
+# for them to meet at. A real head has a receptacle under all of them; without
+# one this is twenty-six petals and eighteen stamens sharing an address.
+part cup    = disc(radius: 22.5, thickness: 2.2, bevel: 0.6) in bronze satin
 
 unit filament {
   place stamen
@@ -62,6 +70,7 @@ unit filament {
 }
 
 form bloom {
+  place cup
   repeat petal around phyllotaxis(26, 3.9, start: 6, tilt: 1.15, fade: 2)
   repeat filament around phyllotaxis(18, 1.5, tilt: 0.5)
 }
@@ -70,7 +79,7 @@ form bloom {
   seedhead: `# A sphere, built from scales lying along the surface
 material bronze antiqued
 
-part scale = leaf(length: 12, width: 7.5, thickness: 0.7, piercings: 1, boss: 1.6)
+part scale = leaf(length: 12, width: 9, thickness: 0.7, piercings: 1, boss: 1.6, curl: -46deg)
 part stud  = rivet(head: 2.4, height: 0.8, shank: 1.4, grip: 0.7, segments: 16) in gold polished
 part rib   = wire(path: through((0,0,0), (4,0.6,0.5), (8,0.2,0.7), (11.5,-0.8,0.4)), radius: 0.42, tip: 0.25, sections: 40, sides: 8)
 
@@ -81,7 +90,7 @@ unit scute {
 }
 
 form seedhead {
-  repeat scute around shell(78, 15, orient: flat, lean: 0.34)
+  repeat scute around shell(78, 15, orient: flat, lean: 0.12)
 }
 `,
 
@@ -126,7 +135,7 @@ let side = 24.8            # R * sqrt(3): the span between two posts
 part post  = wire(path: through((0,0,0 - H/2), (0,0,0), (0,0,H/2)), radius: 1.5, section: square, tip: 1, sections: 20, sides: 4)
 part rung  = bar(length: side + 4, width: 4, thickness: 1.2, bore: 2) in blackened steel satin
 part brace = bar(length: side + 6, width: 3, thickness: 1, bore: 1.7) in brass satin
-part cap   = disc(radius: 4.4, thickness: 1.4, sides: 6, bore: 2.2) in gold polished
+part cap   = disc(radius: 13, thickness: 1.4, sides: 6, bore: 2.2) in gold polished
 
 # A rung spans two posts, so it is placed tangentially at the mid-radius rather
 # than radially — which is the one thing a ring symmetry will not do for you.
@@ -153,6 +162,11 @@ part inner = band(radius: 19, width: 2.2, thickness: 0.7) in gold polished
 part seed  = pod(length: 15, width: 9, whorls: 7, whorlDepth: 0.5) in gold polished
 part spoke = wire(path: through((0,0,0), (7,0,1), (14,0,0)), radius: 0.6, tip: 0.5, sections: 32)
 part weight = bead(radius: 1.6, point: 2)
+# Nested rings of different radii in different planes never meet, so each one
+# needs an arm out to it from the central body — which is what an armillary has.
+part armA  = wire(path: through((0,0,0), (17,0,0.6), (34,0,0)), radius: 0.85, tip: 0.7, sections: 44)
+part armB  = wire(path: through((0,0,0), (13,0,0.5), (26,0,0)), radius: 0.8, tip: 0.7, sections: 40) in copper satin
+part armC  = wire(path: through((0,0,0), (9.5,0,0.4), (19,0,0)), radius: 0.75, tip: 0.7, sections: 36) in gold polished
 
 unit ray {
   place spoke
@@ -160,11 +174,14 @@ unit ray {
 }
 
 form armillary {
-  place outer
-  place mid roll 34deg
-  place inner roll -52deg pitch 22deg
   place seed pitch 90deg
-  repeat ray around ring(8, radius: 8, tilt: 12deg)
+  place outer
+  place armA
+  place mid roll 34deg
+  place armB roll 34deg
+  place inner roll -52deg pitch 22deg
+  place armC roll -52deg pitch 22deg
+  repeat ray around ring(8, radius: 3, tilt: 12deg)
 }
 `,
 
@@ -178,13 +195,13 @@ part crown  = bead(radius: 2.4, point: 3.2) in gold polished
 
 unit floret {
   place husk pitch 90deg
-  place sepal at (0, 0, -5) turn 40deg
+  place sepal at (0, 0, -2.5) turn 40deg
 }
 
 form seedcase {
   repeat floret around phyllotaxis(32, 3.6, tilt: 1.1, fade: 1.6)
-  repeat stem around ring(9, radius: 21, tilt: -35deg)
-  place crown at (0, 0, 9)
+  repeat stem around ring(9, radius: 16, tilt: -35deg)
+  place crown at (0, 0, 4)
 }
 `,
 
@@ -199,6 +216,9 @@ part corona = bell(length: 11, mouth: 15, throat: 6, wall: 0.6, flare: 2.8) in c
 part stamen = wire(path: through((0,0,0), (0,0,5), (1,0,9)), radius: 0.4, tip: 0.7, sections: 20, sides: 8)
 part anther = pod(length: 2.6, width: 1.1, segments: 12) in bronze satin
 part stalk  = wire(path: through((0,0,0), (0,0,-14), (2,0,-27)), radius: 1.1, tip: 0.8, sections: 32)
+# the receptacle: what the tepals, the corona and the stalk are all actually
+# joined to. Without it they are six petals and a trumpet hanging in company.
+part cup    = disc(radius: 6, thickness: 2.4, bevel: 0.5) in copper satin
 
 unit filament {
   place stamen
@@ -208,6 +228,7 @@ unit filament {
 form narcissus {
   # the perianth spreads out around the corona and a little forward of it,
   # which is a negative tilt — positive would sweep the tepals down and back
+  place cup at (0, 0, 0.7)
   repeat tepal around ring(6, radius: 3.5, tilt: -0.32)
   place corona at (0, 0, 1.5)
   repeat filament around ring(6, radius: 2.2, z: 3, tilt: 0.25)
@@ -268,7 +289,7 @@ form digitalis {
   # Alternating them puts them on both sides, as a real raceme does.
   repeat corolla around along(spike, 7, from: 0.14, to: 0.84, taper: 0.5, alternate: yes, tilt: -34deg)
   repeat tip around along(spike, 4, from: 0.88, to: 1, taper: 0.45, alternate: yes, tilt: -18deg)
-  repeat foliage around ring(5, radius: 2.5, z: 1.5, tilt: 6deg)
+  repeat foliage around ring(5, radius: 1.2, z: 1.5, tilt: 6deg)
 }
 `,
 
@@ -293,15 +314,18 @@ part sepal = leaf(length: 17, width: 3.6, thickness: 0.5, shape: lanceolate, tee
 part hip   = bud(length: 10, width: 9.5, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.3) in bronze satin
 part stalk = stem(path: through((0,0,-9), (1.5,0,-26), (-2,0,-42), (1,0,-56)), radius: 1.7, tip: 0.65, nodes: 3)
 part foliage = leaf(length: 22, width: 11, thickness: 0.6, teeth: 22, veins: 3, cup: 26deg, curl: 30deg) in bronze satin
+# the receptacle every petal is actually attached to
+part cup     = disc(radius: 14, thickness: 2.6, bevel: 0.6) in bronze satin
 
 form rose {
+  place cup at (0, 0, -0.5)
   repeat heart around phyllotaxis(7, 1.1, tilt: -86deg, fade: 0.25, rise: 1.7)
   repeat mid   around phyllotaxis(10, 1.9, start: 8, tilt: -74deg, fade: 0.5, rise: 0.9)
   repeat outer around phyllotaxis(13, 2.5, start: 18, tilt: -52deg, fade: 0.9)
   repeat sepal around ring(5, radius: 3.4, z: -4, tilt: 62deg)
   place hip at (0, 0, -10)
   place stalk
-  repeat foliage around ring(3, radius: 2, z: -34, tilt: -18deg)
+  repeat foliage around ring(3, radius: 0.8, z: -34, tilt: -18deg)
 }
 `,
 
@@ -342,9 +366,9 @@ form tulip {
   # Three leaves up the stem, not two across it. A pair on one ring is a
   # propeller; alternating them and shrinking each one is what a tulip does, and
   # it is also what stops the leaves reading as a second, competing symmetry.
-  repeat blade around ring(1, radius: 2.1, z: -50, phase: 20deg, tilt: -66deg)
-  repeat blade around ring(1, radius: 1.9, z: -34, phase: 155deg, tilt: -58deg, scale: 0.76)
-  repeat blade around ring(1, radius: 1.7, z: -20, phase: 285deg, tilt: -50deg, scale: 0.54)
+  repeat blade around ring(1, radius: 0.8, z: -50, phase: 20deg, tilt: -66deg)
+  repeat blade around ring(1, radius: 0.8, z: -34, phase: 155deg, tilt: -58deg, scale: 0.76)
+  repeat blade around ring(1, radius: 0.7, z: -20, phase: 285deg, tilt: -50deg, scale: 0.54)
 }
 `,
 
@@ -357,7 +381,7 @@ part sepal = petal(length: 26, width: 13, thickness: 0.5, shape: pointed, cup: 2
 part wing  = petal(length: 30, width: 26, thickness: 0.5, shape: round, cup: 18deg, curl: -14deg, curlBias: 2)
 part lip   = petal(length: 20, width: 19, thickness: 0.6, shape: lip, edge: crenate, edgeCount: 9, cup: 54deg, curl: -46deg, curlBias: 2.4, twist: 6deg) in gold satin
 part column = bud(length: 7, width: 4.4, lobes: 3, lobeDepth: 0.09, point: 0.4) in gold polished
-part arch  = stem(path: through((0,0,-2), (-8,0,-14), (-10,0,-30), (-4,0,-44)), radius: 1.6, tip: 0.5, nodes: 2)
+part arch  = stem(path: through((0,0,0.6), (-8,0,-14), (-10,0,-30), (-4,0,-44)), radius: 1.6, tip: 0.5, nodes: 2)
 part sheath = leaf(length: 15, width: 5, thickness: 0.5, shape: lanceolate, cup: 40deg, curl: 50deg)
 
 form orchid {
@@ -383,13 +407,16 @@ part inner = petal(length: 15, width: 11, thickness: 0.4, shape: spoon, edge: fr
 part calyx = bud(length: 16, width: 10, lobes: 5, lobeDepth: 0.06, point: 0.16, swell: 1.5) in bronze satin
 part stalk = stem(path: through((0,0,-16), (1,0,-32), (-2,0,-50), (1,0,-66)), radius: 1.9, tip: 0.6, nodes: 3, swell: 0.5)
 part blade = leaf(length: 34, width: 4.5, thickness: 0.5, shape: linear, cup: 46deg, keel: 0.5, curl: -58deg, curlBias: 2.4) in bronze satin
+# the calyx is drawn to a point, so it holds nothing: the petals need a floor
+part cup   = disc(radius: 17, thickness: 2.4, bevel: 0.6) in bronze satin
 
 form carnation {
+  place cup
   repeat inner around phyllotaxis(8, 2.1, tilt: -72deg, fade: 0.8, rise: 1)
   repeat frill around phyllotaxis(16, 3.3, start: 9, tilt: -44deg, fade: 1.3)
   place calyx at (0, 0, -16)
   place stalk
-  repeat blade around ring(4, radius: 1.8, z: -44, tilt: -40deg)
+  repeat blade around ring(4, radius: 0.8, z: -44, tilt: -40deg)
 }
 `,
 
@@ -432,15 +459,15 @@ material silver polished
 part ray   = petal(length: 26, width: 6.5, thickness: 0.4, shape: strap, edge: notched, cup: 26deg, curl: 16deg, curlBias: 1.6)
 part disc  = disc(radius: 8, thickness: 1.2, bevel: 0.4) in gold satin
 part floret = bead(radius: 0.85, point: 1, segments: 10) in gold polished
-part stalk = stem(path: through((0,0,-1), (1,0,-18), (-2,0,-36), (2,0,-52)), radius: 1.6, tip: 0.6, nodes: 3)
+part stalk = stem(path: through((0,0,0.2), (0.6,0,-18), (-0.6,0,-36), (1,0,-52)), radius: 1.6, tip: 0.6, nodes: 3)
 part blade = leaf(length: 24, width: 7, thickness: 0.55, shape: spatulate, teeth: 16, cup: 24deg, curl: 34deg) in bronze satin
 
 form daisy {
   repeat ray around ring(21, radius: 7.4, z: 0.4, tilt: -14deg)
   place disc
-  repeat floret around phyllotaxis(54, 1.02, rise: 1.5, taper: 0.75)
+  repeat floret around phyllotaxis(54, 1.02, rise: 0.6, taper: 0.75)
   place stalk
-  repeat blade around ring(3, radius: 1.6, z: -30, tilt: -22deg)
+  repeat blade around ring(3, radius: 0.5, z: -30, tilt: -22deg)
 }
 `,
 
@@ -453,7 +480,7 @@ material gold satin
 part petalA = petal(length: 17, width: 16, thickness: 0.5, shape: round, cup: 52deg, curl: -26deg, curlBias: 2.6)
 part petalB = petal(length: 11, width: 11, thickness: 0.5, shape: round, cup: 84deg, curl: 30deg, curlBias: 1.8)
 part stemA  = stem(path: through((0,0,-6), (2,0,-30), (-2,0,-56), (1,0,-78)), radius: 1.7, tip: 0.6, nodes: 3)
-part hipA   = bud(length: 8, width: 8, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.3) in bronze satin
+part hipA   = bud(length: 9, width: 11, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.4) in bronze satin
 
 part rayB   = petal(length: 20, width: 5.5, thickness: 0.4, shape: strap, edge: notched, cup: 24deg, curl: 14deg)
 part discB  = disc(radius: 6, thickness: 1.1, bevel: 0.35) in copper satin
@@ -465,7 +492,7 @@ part leafC  = leaf(length: 26, width: 8, thickness: 0.55, shape: lanceolate, tee
 
 form aRose {
   repeat petalB around phyllotaxis(7, 1.2, tilt: -82deg, fade: 0.4, rise: 1.4)
-  repeat petalA around phyllotaxis(11, 2.2, start: 8, tilt: -56deg, fade: 0.9)
+  repeat petalA around phyllotaxis(11, 1.9, start: 8, tilt: -56deg, fade: 0.9)
   place hipA at (0, 0, -7)
   place stemA
 }

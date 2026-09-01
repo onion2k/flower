@@ -12,6 +12,7 @@ import { forms } from './forms';
 import { compile } from '../dsl/index';
 import { examples } from '../dsl/examples';
 import { Assembly } from '../assembly/assembly';
+import { analyseConnectivity } from '../assembly/connectivity';
 import { dot } from '../geom/vec';
 import { rotationAbout } from '../geom/transform';
 import { leaf } from '../parts/leaf';
@@ -235,15 +236,19 @@ console.log('\nDSL');
       continue;
     }
     const s2 = result.sketch!.assembly.stats();
+    // A model that is going to be printed has to be one solid. Nothing else here
+    // would notice: the renderer draws a floating petal exactly like a joined one.
+    const bodies = analyseConnectivity(result.sketch!.assembly).bodies;
     console.log(
       `  ${name.padEnd(10)} ${pad(s2.instances, 4)} placements  ${pad(s2.uniqueParts, 2)} parts  ` +
-      `${pad(s2.uniqueTriangles.toLocaleString(), 7)} unique tris  ${result.sketch!.metal}/${result.sketch!.finish}`,
+      `${pad(s2.uniqueTriangles.toLocaleString(), 7)} unique tris  ${pad(bodies, 2)} ${bodies === 1 ? 'body ' : 'bodies'}  ` +
+      `${result.sketch!.metal}/${result.sketch!.finish}` + (bodies === 1 ? '' : '   <-'),
     );
   }
 }
 
 // --- forms: instancing pays off, and no placement carries a broken matrix ---
-console.log('\nform                inst  parts  uniqueTris  drawnTris  reuse  mirror   extent      ms');
+console.log('\nform                inst  parts  uniqueTris  drawnTris  reuse  mirror  bodies   extent      ms');
 for (const [name, make] of Object.entries(forms)) {
   const t0 = performance.now();
   const f = make();
@@ -262,6 +267,7 @@ for (const [name, make] of Object.entries(forms)) {
       pad(s.drawnTriangles.toLocaleString(), 10),
       pad((s.drawnTriangles / s.uniqueTriangles).toFixed(1) + 'x', 6),
       pad(s.mirrored, 7),
+      pad(analyseConnectivity(f).bodies, 7),
       pad(span.toFixed(0) + ' mm', 9),
       pad(ms.toFixed(1), 7),
     ].join(' ') + (bad ? `   <- ${bad} non-finite matrix entries` : ''),

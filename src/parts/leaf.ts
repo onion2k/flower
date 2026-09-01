@@ -78,7 +78,12 @@ export function leaf(spec: LeafSpec): Part {
     }
   }
 
-  const anchors: Anchor[] = [];
+  // Where the leaf joins whatever carries it. First, so that fastening a leaf
+  // somewhere means fastening it by its base — the boss is for a rivet landing
+  // on the leaf, which is a different job and is always named.
+  const anchors: Anchor[] = [
+    { name: 'base', position: [0, 0, 0], axis: [-1, 0, 0], tangent: [0, 0, 1] },
+  ];
   if (spec.bossBore) {
     const r = spec.bossBore / 2;
     // a palmate leaf attaches at its polar centre, so the boss sits just inside it

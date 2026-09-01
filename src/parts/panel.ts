@@ -81,7 +81,12 @@ export function disc(spec: DiscSpec): Part {
     : circleOutline(spec.radius, 64);
 
   const holes: Vec2[][] = [];
-  const anchors: Anchor[] = [];
+  // Both faces, at the centre. A disc is usually the piece everything else is
+  // built on — a receptacle, a hub — so it needs somewhere to be built on.
+  const anchors: Anchor[] = [
+    { name: 'face', position: [0, 0, spec.thickness / 2], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.bore },
+    { name: 'back', position: [0, 0, -spec.thickness / 2], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.bore },
+  ];
 
   if (spec.bore) holes.push(ensureWinding(circleOutline(spec.bore / 2, 32), false));
 
