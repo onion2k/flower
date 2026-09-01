@@ -1,5 +1,9 @@
 import { catalogue, catalogueNames } from './spike/catalogue';
-import type { Part } from './parts/types';
+import { forms, formNames } from './spike/forms';
+import { Assembly } from './assembly/assembly';
+import { identity } from './geom/transform';
+import type { Anchor } from './parts/types';
+import type { Mesh } from './mesh/types';
 import { Viewer } from './render/viewer';
 
 const stage = document.getElementById('stage')!;
@@ -10,19 +14,13 @@ const budgetEl = document.getElementById('budget')!;
 const viewer = new Viewer(stage);
 
 const state = {
-  part: catalogueNames[0],
+  subject: formNames[0],
   showNormals: false,
   showUv: false,
-  showAnchors: true,
+  showAnchors: false,
 };
 
-/**
- * What a part should cost. Sculptures repeat a handful of parts dozens of times,
- * so the number that matters is per-part triangles, not per-frame.
- */
-const BUDGET_TRIS = 6000;
-
-let framedPart = '';
+let framed = '';
 
 function toggle(label: string, key: 'showNormals' | 'showUv' | 'showAnchors', onChange: () => void) {
   const wrap = document.createElement('label');
@@ -38,21 +36,26 @@ function toggle(label: string, key: 'showNormals' | 'showUv' | 'showAnchors', on
   return wrap;
 }
 
-const partSelect = document.createElement('fieldset');
-partSelect.innerHTML = '<legend>Part</legend>';
+const subjectSet = document.createElement('fieldset');
+subjectSet.innerHTML = '<legend>Subject</legend>';
 const select = document.createElement('select');
-for (const n of catalogueNames) {
-  const opt = document.createElement('option');
-  opt.value = n;
-  opt.textContent = n;
-  select.append(opt);
+for (const [label, names] of [['Forms', formNames], ['Parts', catalogueNames]] as const) {
+  const group = document.createElement('optgroup');
+  group.label = label;
+  for (const n of names) {
+    const opt = document.createElement('option');
+    opt.value = `${label}:${n}`;
+    opt.textContent = n;
+    group.append(opt);
+  }
+  select.append(group);
 }
-select.value = state.part;
+select.value = `Forms:${state.subject}`;
 select.addEventListener('change', () => {
-  state.part = select.value;
+  state.subject = select.value.split(':')[1];
   build();
 });
-partSelect.append(select);
+subjectSet.append(select);
 
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
@@ -62,53 +65,74 @@ viewSet.append(
   toggle('show anchors', 'showAnchors', () => build()),
 );
 
-controlsEl.append(partSelect, viewSet);
+controlsEl.append(subjectSet, viewSet);
 
-function build() {
-  const t0 = performance.now();
-  const part: Part = catalogue[state.part]();
-  const ms = performance.now() - t0;
-
-  select.value = state.part;
-  viewer.setMesh(part.mesh);
-
-  const span = Math.max(
-    part.bounds.max[0] - part.bounds.min[0],
-    part.bounds.max[1] - part.bounds.min[1],
-    part.bounds.max[2] - part.bounds.min[2],
-  );
-  viewer.setAnchors(state.showAnchors ? part.anchors : [], span * 0.09);
-
-  if (framedPart !== state.part) {
-    viewer.frameBounds(part.bounds);
-    framedPart = state.part;
+/** Group placements by the mesh they share — that grouping is the draw call list. */
+function groupByMesh(assembly: Assembly) {
+  const byMesh = new Map<Mesh, number[]>();
+  for (const p of assembly.placements) {
+    let list = byMesh.get(p.part.mesh);
+    if (!list) { list = []; byMesh.set(p.part.mesh, list); }
+    for (let i = 0; i < 16; i++) list.push(p.matrix[i]);
   }
-
-  report(part, ms);
+  return [...byMesh].map(([mesh, m]) => ({ mesh, matrices: new Float32Array(m) }));
 }
 
-function report(part: Part, ms: number) {
-  const tris = part.mesh.indices.length / 3;
-  const verts = part.mesh.positions.length / 3;
-  const b = part.bounds;
+function build() {
+  const isForm = select.value.startsWith('Forms:');
+  const t0 = performance.now();
+
+  let assembly: Assembly;
+  if (isForm) {
+    assembly = forms[state.subject]();
+  } else {
+    assembly = new Assembly(state.subject);
+    assembly.place(catalogue[state.subject](), identity());
+  }
+  const ms = performance.now() - t0;
+
+  viewer.setInstanced(groupByMesh(assembly));
+
+  const bounds = assembly.bounds();
+  const span = Math.max(
+    bounds.max[0] - bounds.min[0],
+    bounds.max[1] - bounds.min[1],
+    bounds.max[2] - bounds.min[2],
+  );
+
+  const anchors: Anchor[] = state.showAnchors
+    ? assembly.placements.flatMap((p) => p.anchors)
+    : [];
+  viewer.setAnchors(anchors, span * 0.02);
+
+  if (framed !== select.value) {
+    viewer.frameBounds(bounds);
+    framed = select.value;
+  }
+
+  report(assembly, ms, span);
+}
+
+function report(assembly: Assembly, ms: number, span: number) {
+  const s = assembly.stats();
   const rows: Array<[string, string, boolean?]> = [
-    ['anchors', String(part.anchors.length)],
-    ['vertices', verts.toLocaleString()],
-    ['triangles', tris.toLocaleString(), true],
-    [
-      'extent',
-      `${(b.max[0] - b.min[0]).toFixed(1)} × ${(b.max[1] - b.min[1]).toFixed(1)} × ${(b.max[2] - b.min[2]).toFixed(1)} mm`,
-    ],
-    ['generate', `${ms.toFixed(2)} ms`],
+    ['instances', s.instances.toLocaleString()],
+    ['distinct parts', String(s.uniqueParts)],
+    ['draw calls', String(s.uniqueParts), true],
+    ['unique triangles', s.uniqueTriangles.toLocaleString()],
+    ['drawn triangles', s.drawnTriangles.toLocaleString()],
+    ['mirrored', String(s.mirrored)],
+    ['extent', `${span.toFixed(0)} mm`],
+    ['generate', `${ms.toFixed(1)} ms`],
   ];
   statsEl.innerHTML = rows
     .map(([k, v, hi]) => `<tr><td>${k}</td><td class="${hi ? 'hi' : ''}">${v}</td></tr>`)
     .join('');
 
-  const pass = tris <= BUDGET_TRIS;
+  const ratio = s.drawnTriangles / Math.max(s.uniqueTriangles, 1);
   budgetEl.innerHTML =
-    `<b class="${pass ? 'pass' : 'fail'}">${tris.toLocaleString()} / ${BUDGET_TRIS.toLocaleString()} tris</b>` +
-    (pass ? 'cheap enough to repeat across a form' : 'too heavy to instance freely');
+    `<b class="pass">${ratio.toFixed(1)}× reuse</b>` +
+    `${s.instances} placements built from ${s.uniqueTriangles.toLocaleString()} triangles of real geometry`;
 }
 
 build();
@@ -116,4 +140,4 @@ viewer.setShowNormals(state.showNormals);
 viewer.setShowUv(state.showUv);
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(window as any).artshape = { state, build, catalogueNames };
+(window as any).artshape = { state, build, select, viewer, formNames, catalogueNames };

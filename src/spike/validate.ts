@@ -8,6 +8,12 @@
  * These assert exactly that.
  */
 import { catalogue } from './catalogue';
+import { forms } from './forms';
+import { Assembly } from '../assembly/assembly';
+import { dot } from '../geom/vec';
+import { rotationAbout } from '../geom/transform';
+import { leaf } from '../parts/leaf';
+import { rivet } from '../parts/fastener';
 import type { Mesh } from '../mesh/types';
 
 interface Report {
@@ -145,4 +151,67 @@ for (const r of rows) {
     ].join(' ') + (bad ? '   <-' : ''),
   );
 }
-console.log(`\n${rows.length - failures}/${rows.length} clean`);
+console.log(`\n${rows.length - failures}/${rows.length} parts clean`);
+
+// --- connect(): the mated anchors must actually coincide, in any orientation ---
+console.log('\nconnect() mating error');
+{
+  const L = leaf({ length: 40, width: 17, thickness: 1.2, piercings: 3, bossBore: 2.6 });
+  const R = rivet({ headDiameter: 4, headHeight: 1.3, shankDiameter: 2, grip: 2.8 });
+  const cases: Array<[string, ReturnType<typeof rotationAbout> | undefined]> = [
+    ['identity', undefined],
+    ['spun about Z', rotationAbout([0, 0, 1], 0.7)],
+    ['on edge', rotationAbout([1, 0, 0], Math.PI / 2)],
+    ['tumbled', rotationAbout([0.3, 0.5, 0.81], 1.9)],
+  ];
+  let worst = 0;
+  for (const [label, m] of cases) {
+    const a = new Assembly();
+    const lp = a.place(L, m);
+    const target = lp.anchor('boss');
+    for (const align of ['same', 'opposed'] as const) {
+      const rp = a.connect(target, R, 'seat', { align });
+      const seat = rp.anchor('seat');
+      const posErr = Math.hypot(
+        seat.position[0] - target.position[0],
+        seat.position[1] - target.position[1],
+        seat.position[2] - target.position[2],
+      );
+      const axis = dot(seat.axis, target.axis);
+      const tan = dot(seat.tangent, target.tangent);
+      const want = align === 'same' ? 1 : -1;
+      const ok = posErr < 1e-4 && Math.abs(axis - want) < 1e-5 && Math.abs(tan - 1) < 1e-5;
+      worst = Math.max(worst, posErr);
+      console.log(
+        `  ${label.padEnd(13)} ${align.padEnd(8)} pos ${posErr.toExponential(1)}  axis ${axis.toFixed(5)}  tangent ${tan.toFixed(5)}${ok ? '' : '   <-'}`,
+      );
+    }
+  }
+  console.log(`  worst position error ${worst.toExponential(1)} mm`);
+}
+
+// --- forms: instancing pays off, and no placement carries a broken matrix ---
+console.log('\nform                inst  parts  uniqueTris  drawnTris  reuse  mirror   extent      ms');
+for (const [name, make] of Object.entries(forms)) {
+  const t0 = performance.now();
+  const f = make();
+  const ms = performance.now() - t0;
+  const s = f.stats();
+  const b = f.bounds();
+  let bad = 0;
+  for (const p of f.placements) for (const v of p.matrix) if (!Number.isFinite(v)) bad++;
+  const span = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]);
+  console.log(
+    [
+      name.padEnd(16),
+      pad(s.instances, 6),
+      pad(s.uniqueParts, 5),
+      pad(s.uniqueTriangles.toLocaleString(), 11),
+      pad(s.drawnTriangles.toLocaleString(), 10),
+      pad((s.drawnTriangles / s.uniqueTriangles).toFixed(1) + 'x', 6),
+      pad(s.mirrored, 7),
+      pad(span.toFixed(0) + ' mm', 9),
+      pad(ms.toFixed(1), 7),
+    ].join(' ') + (bad ? `   <- ${bad} non-finite matrix entries` : ''),
+  );
+}

@@ -8,6 +8,13 @@ const vertex = /* glsl */ `
   attribute vec3 normal;
   attribute vec2 uv;
 
+  // One instance transform per placement. A form is a handful of meshes and a lot
+  // of matrices, so this is where "repeat the part" stops costing geometry.
+  attribute vec4 im0;
+  attribute vec4 im1;
+  attribute vec4 im2;
+  attribute vec4 im3;
+
   uniform mat4 modelViewMatrix;
   uniform mat4 projectionMatrix;
   uniform mat3 normalMatrix;
@@ -17,8 +24,15 @@ const vertex = /* glsl */ `
   varying vec2 vUv;
 
   void main() {
-    vNormal = normalize(normalMatrix * normal);
-    vec4 mv = modelViewMatrix * vec4(position, 1.0);
+    mat4 inst = mat4(im0, im1, im2, im3);
+    vec4 local = inst * vec4(position, 1.0);
+
+    // placements are rigid with uniform scale (mirrors included), so rotating the
+    // authored normal and renormalising is exact -- no inverse transpose needed
+    vec3 n = mat3(inst) * normal;
+
+    vNormal = normalize(normalMatrix * n);
+    vec4 mv = modelViewMatrix * local;
     vView = -mv.xyz;
     vUv = uv;
     gl_Position = projectionMatrix * mv;
@@ -87,12 +101,14 @@ const anchorFragment = /* glsl */ `
   void main() { gl_FragColor = vec4(vColour, 1.0); }
 `;
 
+const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+
 export class Viewer {
   readonly renderer: Renderer;
   readonly camera: Camera;
   readonly scene: Transform;
   private controls: Orbit;
-  private mesh: Mesh | null = null;
+  readonly meshes: Mesh[] = [];
   private anchorMesh: Mesh | null = null;
   private program: Program;
   private anchorProgram: Program;
@@ -139,20 +155,45 @@ export class Viewer {
     this.loop();
   }
 
-  setMesh(data: PartMesh) {
+  /** One draw call per distinct part mesh, however many times it is placed. */
+  setInstanced(groups: Array<{ mesh: PartMesh; matrices: Float32Array }>) {
     const gl = this.renderer.gl;
-    if (this.mesh) {
-      this.mesh.setParent(null);
-      this.mesh.geometry.remove();
+    for (const m of this.meshes) {
+      m.setParent(null);
+      m.geometry.remove();
     }
-    const geometry = new Geometry(gl, {
-      position: { size: 3, data: data.positions },
-      normal: { size: 3, data: data.normals },
-      uv: { size: 2, data: data.uvs },
-      index: { data: data.indices },
-    });
-    this.mesh = new Mesh(gl, { geometry, program: this.program });
-    this.mesh.setParent(this.scene);
+    this.meshes.length = 0;
+
+    for (const g of groups) {
+      const count = g.matrices.length / 16;
+      const col = (k: number) => {
+        const out = new Float32Array(count * 4);
+        for (let i = 0; i < count; i++) {
+          out[i * 4] = g.matrices[i * 16 + k * 4];
+          out[i * 4 + 1] = g.matrices[i * 16 + k * 4 + 1];
+          out[i * 4 + 2] = g.matrices[i * 16 + k * 4 + 2];
+          out[i * 4 + 3] = g.matrices[i * 16 + k * 4 + 3];
+        }
+        return out;
+      };
+      const geometry = new Geometry(gl, {
+        position: { size: 3, data: g.mesh.positions },
+        normal: { size: 3, data: g.mesh.normals },
+        uv: { size: 2, data: g.mesh.uvs },
+        index: { data: g.mesh.indices },
+        im0: { size: 4, data: col(0), instanced: 1 },
+        im1: { size: 4, data: col(1), instanced: 1 },
+        im2: { size: 4, data: col(2), instanced: 1 },
+        im3: { size: 4, data: col(3), instanced: 1 },
+      });
+      const mesh = new Mesh(gl, { geometry, program: this.program });
+      mesh.setParent(this.scene);
+      this.meshes.push(mesh);
+    }
+  }
+
+  setMesh(data: PartMesh) {
+    this.setInstanced([{ mesh: data, matrices: IDENTITY }]);
   }
 
   /**
