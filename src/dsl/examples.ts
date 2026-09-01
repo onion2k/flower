@@ -484,6 +484,130 @@ form daisy {
 }
 `,
 
+  poppy: `# Papaver rhoeas — crumpled petals round a dark ring of stamens
+material copper polished
+
+# Five metals, and each is doing a job. The stamens are blackened because a
+# poppy's ring of them is the darkest thing in the flower and reads as a hole;
+# the anthers are gold because that ring is dotted, not solid.
+part crumple = petal(length: 30, width: 30, thickness: 0.4, shape: round, edge: crenate, edgeCount: 9, edgeDepth: 0.03, cup: 38deg, curl: -14deg, curlBias: 2.2, ruffle: 1.5, ruffleWaves: 5)
+part capsule = pod(length: 11, width: 9.5, ribs: 8, ribDepth: 0.09) in silver satin
+part lid     = disc(radius: 5.2, thickness: 0.8, sides: 10, bevel: 0.25) in silver polished
+part thread  = wire(path: through((0,0,0), (0.6,0,4), (2,0,7)), radius: 0.32, tip: 0.6, sections: 20, sides: 6) in blackened steel satin
+part anther  = pod(length: 2.2, width: 0.9, segments: 10) in gold polished
+part floor   = disc(radius: 5.6, thickness: 2, bevel: 0.4) in bronze satin
+part stalk   = stem(path: through((0,0,0), (0.5,0,-22), (-0.6,0,-44), (0.5,0,-64)), radius: 1.7, tip: 0.55, nodes: 3) in bronze satin
+part foliage = leaf(length: 26, width: 8, thickness: 0.55, shape: lanceolate, teeth: 22, toothDepth: 0.9, cup: 30deg, curl: 40deg) in bronze antiqued
+
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+
+form poppy {
+  place floor
+  place stalk
+  place capsule at (0, 0, 3)
+  place lid at (0, 0, 7)
+  # shallow, or the ring of stamens it is built around never sees daylight
+  repeat crumple around ring(4, radius: 2.2, tilt: -15deg)
+  repeat stamen around phyllotaxis(28, 0.95, tilt: -14deg)
+  repeat foliage around ring(3, radius: 0.7, z: -40, tilt: -26deg)
+}
+`,
+
+  iris: `# Iris germanica — three falls hanging, three standards arching over
+material silver polished
+
+# The one flower that needs its two whorls in different metals: standards and
+# falls are the same size and the same distance out, so nothing but the tilt and
+# the colour tells them apart.
+part standard = petal(length: 28, width: 19, thickness: 0.5, shape: round, cup: 48deg, curl: 34deg, curlBias: 1.8)
+part fall     = petal(length: 34, width: 23, thickness: 0.5, shape: lip, edge: crenate, edgeCount: 11, cup: 24deg, curl: 74deg, curlBias: 2.5) in platinum satin
+part beard    = blade(path: bezier((2,0,0), (5,0,0), (9,0,-0.2), (13,0,-0.6)), width: 3.2, thickness: 1, sections: 32) in gold polished
+part ovary    = pod(length: 13, width: 6, ribs: 3, ribDepth: 0.14) in brass satin
+part floor    = disc(radius: 4.8, thickness: 2, bevel: 0.4) in brass satin
+part stalk    = stem(path: through((0,0,-6), (0.6,0,-28), (-0.8,0,-50), (0.6,0,-72)), radius: 2, tip: 0.6, nodes: 2) in bronze satin
+part sword    = leaf(length: 48, width: 12, thickness: 0.8, shape: linear, cup: 52deg, keel: 0.55, curl: -70deg, curlBias: 2.6) in bronze satin
+
+# the beard rides the fall's midline, where the curl has barely begun to bend it
+unit hanging {
+  place fall
+  place beard at (0, 0, 0.35)
+}
+
+form iris {
+  place floor
+  place ovary at (0, 0, -7)
+  place stalk
+  repeat standard around ring(3, radius: 3, tilt: -74deg)
+  repeat hanging around ring(3, radius: 3.4, phase: 60deg, tilt: 48deg)
+  repeat sword around ring(2, radius: 0.7, z: -54, tilt: -64deg)
+}
+`,
+
+  fuchsia: `# Fuchsia — the one flower here that hangs
+material rose gold satin
+
+let arch = through((0,0,26), (10,0,23), (17,0,15), (21,0,7))
+
+part branch  = stem(path: arch, radius: 1.6, tip: 0.8, nodes: 2) in bronze satin
+part tube    = bell(length: 11, mouth: 8, throat: 2.2, wall: 0.5, flare: 1.5, lobes: 4, lobeDepth: 0.1)
+part sepal   = petal(length: 17, width: 7, thickness: 0.45, shape: pointed, cup: 34deg, curl: -46deg, curlBias: 2.2)
+part skirt   = petal(length: 11, width: 9, thickness: 0.45, shape: round, cup: 62deg, curl: -14deg) in copper polished
+part thread  = wire(path: through((0,0,0), (0.8,0,6), (2.2,0,11)), radius: 0.3, tip: 0.5, sections: 22, sides: 6) in gold polished
+part anther  = pod(length: 1.8, width: 0.9, segments: 10) in blackened steel satin
+part floor   = disc(radius: 3.9, thickness: 1.4, bevel: 0.3) in bronze satin
+part foliage = leaf(length: 20, width: 10, thickness: 0.55, teeth: 18, veins: 3, cup: 24deg, curl: 32deg) in bronze satin
+
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+
+# Built the right way up and then turned over. Assembling it upside down means
+# every tilt and curl in it has to be reasoned about inverted, and the sepals,
+# the corolla and the stamens all have to agree — so they are built agreeing.
+unit head {
+  place tube
+  place floor at (0, 0, 10.2)
+  repeat sepal around ring(4, radius: 3.7, z: 10.4, tilt: 52deg)
+  repeat skirt around ring(4, radius: 2.6, z: 10.6, phase: 45deg, tilt: -12deg)
+  repeat stamen around ring(6, radius: 1.6, z: 10.6, tilt: -6deg)
+}
+
+form fuchsia {
+  place branch
+  place head at (21, 0, 8) pitch 180deg
+  repeat foliage around along(arch, 3, from: 0.12, to: 0.72, taper: 0.7, alternate: yes, tilt: -30deg)
+}
+`,
+
+  allium: `# Allium — a globe of florets, every one on its own spoke
+material silver polished
+
+# shell() with no radius is an umbel: every frame starts at the same point and
+# faces a different way. That is exactly how an allium is put together, and it
+# means the whole head hangs off one hub rather than needing anything to hold it.
+part floret  = bell(length: 5, mouth: 6, throat: 1, wall: 0.35, flare: 2.8, lobes: 6, lobeDepth: 0.34, rows: 16, segments: 30)
+part pedicel = wire(path: through((0,0,0), (11,0,0.6), (21,0,0)), radius: 0.55, tip: 1, sections: 24, sides: 6) in brass satin
+part hub     = pod(length: 6, width: 6, segments: 20) in brass satin
+part stalk   = stem(path: through((0,0,-2), (1,0,-30), (-1.5,0,-60), (1,0,-88)), radius: 2.2, tip: 0.5, nodes: 2) in bronze satin
+part spathe  = leaf(length: 16, width: 7, thickness: 0.5, shape: lanceolate, cup: 40deg, curl: 40deg) in bronze antiqued
+
+unit ray {
+  place pedicel
+  place floret at (21, 0, 0) pitch 90deg
+}
+
+form allium {
+  place hub
+  place stalk
+  repeat ray around shell(52, 0, orient: outward)
+  repeat spathe around ring(3, radius: 1.4, z: -7, tilt: 54deg)
+}
+`,
+
   bouquet: `# A set of flowers, then a bunch made from them
 material gold satin
 
