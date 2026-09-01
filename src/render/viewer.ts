@@ -1,6 +1,7 @@
 import {
-  Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3, Texture, Mat4, RenderTarget,
+  Renderer, Camera, Transform, Geometry, Program, Mesh, Vec3, Texture, Mat4, RenderTarget,
 } from 'ogl';
+import { Orbit } from './orbit';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor } from '../parts/types';
 import type { Box3 } from '../geom/types';
@@ -115,9 +116,12 @@ export class Viewer {
     canvasHost.appendChild(gl.canvas as HTMLCanvasElement);
 
     this.camera = new Camera(gl, { fov: 32, near: 0.5, far: 4000 });
-    this.camera.position.set(60, 50, 90);
+    // Z is up here, as it is everywhere else in the project: parts revolve about
+    // Z, symmetries turn about Z, and the environment is lit from +Z.
+    this.camera.position.set(90, 60, 50);
 
     this.controls = new Orbit(this.camera, {
+      element: gl.canvas as unknown as HTMLElement,
       target: new Vec3(0, 0, 0),
       ease: 0.18,
       inertia: 0.72,
@@ -626,6 +630,7 @@ export class Viewer {
   dispose() {
     cancelAnimationFrame(this.raf);
     window.removeEventListener('resize', this.resize);
+    this.controls.remove();
     this.environment?.dispose();
   }
 }

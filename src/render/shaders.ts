@@ -64,9 +64,12 @@ uniform float uAoStrength;
 
 const float PI = 3.14159265359;
 
-mat3 spinY(float a) {
+// about Z, because that is the environment's up: the studio preset reads its
+// height as d.z and hangs its key light at z = 2.6. Spinning about Y tumbled the
+// sky over the horizon instead of turning it round the scene.
+mat3 spinZ(float a) {
   float c = cos(a), s = sin(a);
-  return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+  return mat3(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
 }
 
 /**
@@ -168,7 +171,7 @@ void main() {
   vec3 r = reflect(-v, reflectN);
   float ndv = clamp(dot(n, v), 0.001, 1.0);
 
-  mat3 spin = spinY(uEnvSpin);
+  mat3 spin = spinZ(uEnvSpin);
   vec3 prefiltered = textureLod(uSpecular, spin * r, roughness * uMaxLod).rgb;
   vec2 ab = texture(uBrdf, vec2(ndv, roughness)).rg;
 
@@ -225,9 +228,12 @@ uniform float uBlur;
 uniform float uEnvSpin;
 uniform float uBackdrop;
 
-mat3 spinY(float a) {
+// about Z, because that is the environment's up: the studio preset reads its
+// height as d.z and hangs its key light at z = 2.6. Spinning about Y tumbled the
+// sky over the horizon instead of turning it round the scene.
+mat3 spinZ(float a) {
   float c = cos(a), s = sin(a);
-  return mat3(c, 0.0, -s, 0.0, 1.0, 0.0, s, 0.0, c);
+  return mat3(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
 }
 
 vec3 tonemap(vec3 x) {
@@ -237,7 +243,7 @@ vec3 tonemap(vec3 x) {
 
 void main() {
   vec3 d = normalize(vRay);
-  vec3 col = textureLod(uBackground, spinY(uEnvSpin) * d, uBlur).rgb;
+  vec3 col = textureLod(uBackground, spinZ(uEnvSpin) * d, uBlur).rgb;
   // dim the backdrop well below the reflections: the room is there to be seen
   // *in* the metal, not to compete with it
   col = tonemap(col * uExposure * uBackdrop);
