@@ -17,9 +17,10 @@
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-      #app { display: grid; grid-template-columns: 1fr 280px; height: 100%; }
-      #stage { position: relative; overflow: hidden; }
-      #stage canvas { display: block; }
+      #app { display: grid; grid-template-columns: minmax(0, 1fr) 280px; height: 100%; overflow: hidden; }
+      #stage { position: relative; overflow: hidden; min-width: 0; min-height: 0; }
+      /* absolute so the canvas cannot push the grid cell it is measured against */
+      #stage canvas { display: block; position: absolute; top: 0; left: 0; }
       #panel { border-left: 1px solid var(--line); background: var(--panel);
         padding: 16px; overflow-y: auto; }
       h1 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
@@ -49,8 +50,8 @@
     <div id="app">
       <div id="stage"></div>
       <div id="panel">
-        <h1>Meshing spike</h1>
-        <p class="sub">Dual contouring SDF parts. Watching for crisp bores and edges, correct anchors, and a usable mesh time.</p>
+        <h1>Parts</h1>
+        <p class="sub">Swept and revolved surfaces. Watching for clean tapers, hard creases where they belong, and a triangle count worth repeating.</p>
         <div id="controls"></div>
         <fieldset>
           <legend>Result</legend>

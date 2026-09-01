@@ -1,46 +1,40 @@
 /**
- * Headless checks for the mesher. Run with: npx tsx src/spike/validate.ts
+ * Headless checks for the surface generators. Run with:
+ *   npx tsx src/spike/validate.ts
  *
- * A dual contourer can look plausible in a screenshot while being topologically
- * broken, so this asserts the properties that actually matter downstream:
- * watertightness, consistent winding, and how far the surface sits from the field.
+ * Swept and revolved surfaces fail differently from contoured ones: the topology
+ * is regular by construction, so what goes wrong is orientation, seams that do not
+ * close, creases that shade smooth, and degenerate rings at poles and tapers.
+ * These assert exactly that.
  */
-import { dualContour } from '../mesh/dualContour';
-import { sphere, box, torus } from '../sdf/primitives';
-import { subtract, union, translate } from '../sdf/ops';
 import { catalogue } from './catalogue';
-import { plate, defaultPlate } from '../parts/plate';
-import type { SDF, Box3 } from '../sdf/types';
+import type { Mesh } from '../mesh/types';
 
 interface Report {
   name: string;
-  resolution: number | string;
   tris: number;
   verts: number;
   boundaryEdges: number;
   nonManifoldEdges: number;
-  flippedFaces: number | null;
-  maxOffset: number;
-  rmsOffset: number;
-  ms: number;
+  invertedNormals: number;
+  degenerate: number;
+  volume: number;
+  uvOut: number;
+  badNormals: number;
 }
 
-function analyse(
-  name: string,
-  f: SDF,
-  bounds: Box3,
-  resolution: number,
-  outwardFrom?: [number, number, number],
-  cellSize?: number,
-): Report {
-  const m = dualContour(f, cellSize ? { bounds, cellSize, ao: false } : { bounds, resolution, ao: false });
-  const { positions, indices } = m;
+function analyse(name: string, mesh: Mesh): Report {
+  const { positions, normals, uvs, indices } = mesh;
 
-  // weld the crease-split duplicates so edge counts reflect real topology
+  // Seam and crease vertices are duplicated on purpose, so topology has to be
+  // judged on welded positions or every seam reads as a hole.
+  // Quantise numerically, not via toFixed: a seam vertex lands on -2.4e-16 where
+  // its twin is +0, and "-0.0000" != "0.0000" would report every closed seam as a hole.
+  const q = (n: number) => Math.round(n * 1e4) / 1e4 + 0;
   const key = new Map<string, number>();
   const weld = new Int32Array(positions.length / 3);
   for (let v = 0; v < weld.length; v++) {
-    const k = `${positions[v * 3].toFixed(5)},${positions[v * 3 + 1].toFixed(5)},${positions[v * 3 + 2].toFixed(5)}`;
+    const k = `${q(positions[v * 3])},${q(positions[v * 3 + 1])},${q(positions[v * 3 + 2])}`;
     let id = key.get(k);
     if (id === undefined) { id = key.size; key.set(k, id); }
     weld[v] = id;
@@ -48,40 +42,40 @@ function analyse(
 
   const edges = new Map<number, number>();
   const bump = (a: number, b: number) => {
-    const lo = Math.min(a, b), hi = Math.max(a, b);
-    const id = lo * 4294967296 + hi;
+    const id = Math.min(a, b) * 4294967296 + Math.max(a, b);
     edges.set(id, (edges.get(id) ?? 0) + 1);
   };
 
-  let flipped = 0;
-  let maxOffset = 0;
-  let sumSq = 0;
+  let degenerate = 0;
+  let inverted = 0;
+  let volume = 0;
 
   for (let t = 0; t < indices.length / 3; t++) {
-    const a = weld[indices[t * 3]], b = weld[indices[t * 3 + 1]], c = weld[indices[t * 3 + 2]];
-    if (a === b || b === c || a === c) continue; // degenerate, ignore for topology
-    bump(a, b); bump(b, c); bump(c, a);
-
     const ia = indices[t * 3] * 3, ib = indices[t * 3 + 1] * 3, ic = indices[t * 3 + 2] * 3;
-    const e1 = [positions[ib] - positions[ia], positions[ib + 1] - positions[ia + 1], positions[ib + 2] - positions[ia + 2]];
-    const e2 = [positions[ic] - positions[ia], positions[ic + 1] - positions[ia + 1], positions[ic + 2] - positions[ia + 2]];
-    const n = [
-      e1[1] * e2[2] - e1[2] * e2[1],
-      e1[2] * e2[0] - e1[0] * e2[2],
-      e1[0] * e2[1] - e1[1] * e2[0],
-    ];
-    if (outwardFrom) {
-      const cx = (positions[ia] + positions[ib] + positions[ic]) / 3 - outwardFrom[0];
-      const cy = (positions[ia + 1] + positions[ib + 1] + positions[ic + 1]) / 3 - outwardFrom[1];
-      const cz = (positions[ia + 2] + positions[ib + 2] + positions[ic + 2]) / 3 - outwardFrom[2];
-      if (n[0] * cx + n[1] * cy + n[2] * cz < 0) flipped++;
-    }
-  }
+    const ax = positions[ia], ay = positions[ia + 1], az = positions[ia + 2];
+    const bx = positions[ib], by = positions[ib + 1], bz = positions[ib + 2];
+    const cx = positions[ic], cy = positions[ic + 1], cz = positions[ic + 2];
 
-  for (let v = 0; v < positions.length / 3; v++) {
-    const d = Math.abs(f(positions[v * 3], positions[v * 3 + 1], positions[v * 3 + 2]));
-    if (d > maxOffset) maxOffset = d;
-    sumSq += d * d;
+    const e1x = bx - ax, e1y = by - ay, e1z = bz - az;
+    const e2x = cx - ax, e2y = cy - ay, e2z = cz - az;
+    const nx = e1y * e2z - e1z * e2y;
+    const ny = e1z * e2x - e1x * e2z;
+    const nz = e1x * e2y - e1y * e2x;
+    const area = Math.hypot(nx, ny, nz) / 2;
+
+    volume += (ax * (by * cz - bz * cy) - ay * (bx * cz - bz * cx) + az * (bx * cy - by * cx)) / 6;
+
+    if (area < 1e-9) { degenerate++; continue; }
+
+    // the authored vertex normal should agree with the face it belongs to;
+    // disagreement means a winding or an orientation bug, not a smooth shading choice
+    const vn = normals[ia] + normals[ib] + normals[ic];
+    const vny = normals[ia + 1] + normals[ib + 1] + normals[ic + 1];
+    const vnz = normals[ia + 2] + normals[ib + 2] + normals[ic + 2];
+    if (nx * vn + ny * vny + nz * vnz < 0) inverted++;
+
+    const a = weld[indices[t * 3]], b = weld[indices[t * 3 + 1]], c = weld[indices[t * 3 + 2]];
+    if (a !== b && b !== c && a !== c) { bump(a, b); bump(b, c); bump(c, a); }
   }
 
   let boundary = 0, nonManifold = 0;
@@ -90,71 +84,65 @@ function analyse(
     else if (count > 2) nonManifold++;
   }
 
+  let uvOut = 0;
+  for (let i = 0; i < uvs.length; i++) {
+    if (!Number.isFinite(uvs[i]) || uvs[i] < -1e-4 || uvs[i] > 1 + 1e-4) uvOut++;
+  }
+
+  let badNormals = 0;
+  for (let v = 0; v < normals.length; v += 3) {
+    const l = Math.hypot(normals[v], normals[v + 1], normals[v + 2]);
+    if (!Number.isFinite(l) || Math.abs(l - 1) > 1e-3) badNormals++;
+  }
+
   return {
     name,
-    resolution,
-    tris: m.stats.triangleCount,
-    verts: m.stats.vertexCount,
+    tris: indices.length / 3,
+    verts: positions.length / 3,
     boundaryEdges: boundary,
     nonManifoldEdges: nonManifold,
-    flippedFaces: outwardFrom ? flipped : null,
-    maxOffset,
-    rmsOffset: Math.sqrt(sumSq / (positions.length / 3)),
-    ms: m.stats.totalMs,
+    invertedNormals: inverted,
+    degenerate,
+    volume,
+    uvOut,
+    badNormals,
   };
 }
 
-const cases: Array<[string, SDF, Box3, [number, number, number] | undefined]> = [
-  ['sphere r10', sphere(10), { min: [-11, -11, -11], max: [11, 11, 11] }, [0, 0, 0]],
-  ['box 8x6x4', box(8, 6, 4), { min: [-9, -7, -5], max: [9, 7, 5] }, [0, 0, 0]],
-  ['torus 10/3', torus(10, 3), { min: [-14, -14, -4], max: [14, 14, 4] }, undefined],
-  [
-    'box minus sphere',
-    subtract(box(8, 8, 8), translate(sphere(6), 4, 4, 4)),
-    { min: [-9, -9, -9], max: [9, 9, 9] },
-    undefined,
-  ],
-  [
-    'two spheres',
-    union(translate(sphere(6), -4, 0, 0), translate(sphere(6), 4, 0, 0)),
-    { min: [-11, -7, -7], max: [11, 7, 7] },
-    [0, 0, 0],
-  ],
-];
-
 const rows: Report[] = [];
-for (const [name, f, bounds, outward] of cases) {
-  rows.push(analyse(name, f, bounds, 64, outward));
-}
-for (const res of [48, 64, 96, 128, 160]) {
-  const p = plate(defaultPlate);
-  rows.push(analyse('plate', p.sdf, p.bounds, res, undefined));
-}
-
-// every catalogue entry at the detail its own generator asks for
 for (const [name, make] of Object.entries(catalogue)) {
+  const t0 = performance.now();
   const part = make();
-  const r = analyse(name, part.sdf, part.bounds, 0, undefined, part.detail);
-  r.resolution = part.detail.toFixed(2);
+  const ms = performance.now() - t0;
+  const r = analyse(name, part.mesh);
   rows.push(r);
+  (r as Report & { ms: number }).ms = ms;
 }
 
 const pad = (s: string | number, n: number) => String(s).padStart(n);
 console.log(
-  ['case'.padEnd(18), pad('res', 4), pad('tris', 8), pad('bound', 6), pad('nonmf', 6), pad('flip', 6), pad('maxOff', 8), pad('rmsOff', 8), pad('ms', 7)].join(' '),
+  ['part'.padEnd(16), pad('tris', 7), pad('verts', 7), pad('open', 6), pad('nonmf', 6),
+   pad('flip', 5), pad('degen', 6), pad('uv!', 4), pad('nrm!', 5), pad('volume', 9), pad('ms', 6)].join(' '),
 );
+
+let failures = 0;
 for (const r of rows) {
+  const bad = r.boundaryEdges || r.nonManifoldEdges || r.invertedNormals || r.uvOut || r.badNormals || r.volume <= 0;
+  if (bad) failures++;
   console.log(
     [
-      r.name.padEnd(18),
-      pad(r.resolution, 4),
-      pad(r.tris, 8),
+      r.name.padEnd(16),
+      pad(r.tris, 7),
+      pad(r.verts, 7),
       pad(r.boundaryEdges, 6),
       pad(r.nonManifoldEdges, 6),
-      pad(r.flippedFaces ?? '-', 6),
-      pad(r.maxOffset.toFixed(4), 8),
-      pad(r.rmsOffset.toFixed(4), 8),
-      pad(r.ms.toFixed(1), 7),
-    ].join(' '),
+      pad(r.invertedNormals, 5),
+      pad(r.degenerate, 6),
+      pad(r.uvOut, 4),
+      pad(r.badNormals, 5),
+      pad(r.volume.toFixed(1), 9),
+      pad(((r as Report & { ms: number }).ms).toFixed(1), 6),
+    ].join(' ') + (bad ? '   <-' : ''),
   );
 }
+console.log(`\n${rows.length - failures}/${rows.length} clean`);

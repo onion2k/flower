@@ -1,4 +1,4 @@
-import type { Vec3 } from '../sdf/types';
+import type { Vec3 } from './types';
 import { add, mul, normalize, sub } from './vec';
 
 /** A parametric space curve on [0, 1]. Wire paths are authored as these. */
@@ -68,4 +68,94 @@ export function pathTangent(pts: Vec3[], index: number): Vec3 {
   const a = pts[Math.max(i - 1, 0)];
   const b = pts[Math.min(i + 1, pts.length - 1)];
   return normalize(sub(b, a));
+}
+
+/**
+ * Catmull-Rom through the given points. The natural authoring form for a drawn
+ * line: you place the points the curve actually passes through, rather than
+ * control points it merely leans towards.
+ */
+export const catmullRom = (points: Vec3[], tension = 0.5): Curve => {
+  const n = points.length;
+  if (n < 2) throw new Error('catmullRom needs at least two points');
+  return {
+    at: (t) => {
+      const s = Math.min(Math.max(t, 0), 1) * (n - 1);
+      const i = Math.min(Math.floor(s), n - 2);
+      const f = s - i;
+      const p0 = points[Math.max(i - 1, 0)];
+      const p1 = points[i];
+      const p2 = points[i + 1];
+      const p3 = points[Math.min(i + 2, n - 1)];
+      const out: Vec3 = [0, 0, 0];
+      for (let k = 0; k < 3; k++) {
+        const m1 = tension * (p2[k] - p0[k]);
+        const m2 = tension * (p3[k] - p1[k]);
+        const f2 = f * f, f3 = f2 * f;
+        out[k] =
+          (2 * f3 - 3 * f2 + 1) * p1[k] +
+          (f3 - 2 * f2 + f) * m1 +
+          (-2 * f3 + 3 * f2) * p2[k] +
+          (f3 - f2) * m2;
+      }
+      return out;
+    },
+  };
+};
+
+/**
+ * Logarithmic spiral — the whiplash line art nouveau is built on. `growth` is the
+ * radius multiplier per full turn, so 2.4 means each turn is a bit over twice the
+ * last, which is the range that reads as a natural scroll rather than a coil.
+ */
+export const logSpiral = (
+  startRadius: number,
+  turns: number,
+  growth = 2.4,
+  rise = 0,
+): Curve => {
+  const b = Math.log(growth) / (Math.PI * 2);
+  return {
+    at: (t) => {
+      const a = t * turns * Math.PI * 2;
+      const r = startRadius * Math.exp(b * a);
+      return [Math.cos(a) * r, Math.sin(a) * r, t * rise];
+    },
+  };
+};
+
+/** Uniform arc-length resampling, so sections and tapers space evenly along a curve. */
+export function resample(curve: Curve, count: number, oversample = 16): Vec3[] {
+  const dense = Math.max(count * oversample, 64);
+  const pts: Vec3[] = new Array(dense + 1);
+  const cum = new Float64Array(dense + 1);
+  for (let i = 0; i <= dense; i++) pts[i] = curve.at(i / dense);
+  for (let i = 1; i <= dense; i++) {
+    const a = pts[i - 1], b = pts[i];
+    cum[i] = cum[i - 1] + Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  const total = cum[dense];
+
+  const out: Vec3[] = new Array(count);
+  let j = 0;
+  for (let i = 0; i < count; i++) {
+    const target = (i / (count - 1)) * total;
+    while (j < dense && cum[j + 1] < target) j++;
+    const span = cum[j + 1] - cum[j];
+    const f = span > 1e-12 ? (target - cum[j]) / span : 0;
+    const a = pts[j], b = pts[Math.min(j + 1, dense)];
+    out[i] = [a[0] + (b[0] - a[0]) * f, a[1] + (b[1] - a[1]) * f, a[2] + (b[2] - a[2]) * f];
+  }
+  return out;
+}
+
+export function curveLength(curve: Curve, samples = 512): number {
+  let total = 0;
+  let prev = curve.at(0);
+  for (let i = 1; i <= samples; i++) {
+    const p = curve.at(i / samples);
+    total += Math.hypot(p[0] - prev[0], p[1] - prev[1], p[2] - prev[2]);
+    prev = p;
+  }
+  return total;
 }

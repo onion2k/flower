@@ -1,12 +1,12 @@
 import { Renderer, Camera, Transform, Geometry, Program, Mesh, Orbit, Vec3 } from 'ogl';
-import type { MeshData } from '../mesh/dualContour';
+import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor } from '../parts/types';
-import type { Box3 } from '../sdf/types';
+import type { Box3 } from '../geom/types';
 
 const vertex = /* glsl */ `
   attribute vec3 position;
   attribute vec3 normal;
-  attribute float ao;
+  attribute vec2 uv;
 
   uniform mat4 modelViewMatrix;
   uniform mat4 projectionMatrix;
@@ -14,13 +14,13 @@ const vertex = /* glsl */ `
 
   varying vec3 vNormal;
   varying vec3 vView;
-  varying float vAO;
+  varying vec2 vUv;
 
   void main() {
     vNormal = normalize(normalMatrix * normal);
     vec4 mv = modelViewMatrix * vec4(position, 1.0);
     vView = -mv.xyz;
-    vAO = ao;
+    vUv = uv;
     gl_Position = projectionMatrix * mv;
   }
 `;
@@ -32,9 +32,9 @@ const fragment = /* glsl */ `
 
   varying vec3 vNormal;
   varying vec3 vView;
-  varying float vAO;
+  varying vec2 vUv;
 
-  uniform float uAOStrength;
+  uniform float uShowUv;
   uniform float uShowNormals;
 
   void main() {
@@ -56,10 +56,13 @@ const fragment = /* glsl */ `
     float spec = pow(max(dot(reflect(-keyDir, n), v), 0.0), 48.0);
     col += vec3(1.0) * spec * 0.6;
 
-    float ao = mix(1.0, vAO, uAOStrength);
-    col *= ao;
-
     col = mix(col, n * 0.5 + 0.5, uShowNormals);
+
+    // u along the sweep, v across it: the parameterisation a brushed finish will
+    // eventually follow, so it is worth being able to look at it directly
+    vec2 g = abs(fract(vUv * vec2(24.0, 8.0)) - 0.5);
+    float grid = smoothstep(0.46, 0.5, max(g.x, g.y));
+    col = mix(col, mix(vec3(vUv, 0.35), vec3(1.0), grid * 0.7), uShowUv);
 
     col = pow(col, vec3(1.0 / 2.2));
     gl_FragColor = vec4(col, 1.0);
@@ -118,7 +121,7 @@ export class Viewer {
       vertex,
       fragment,
       uniforms: {
-        uAOStrength: { value: 1 },
+        uShowUv: { value: 0 },
         uShowNormals: { value: 0 },
       },
       cullFace: null,
@@ -136,7 +139,7 @@ export class Viewer {
     this.loop();
   }
 
-  setMesh(data: MeshData) {
+  setMesh(data: PartMesh) {
     const gl = this.renderer.gl;
     if (this.mesh) {
       this.mesh.setParent(null);
@@ -145,7 +148,7 @@ export class Viewer {
     const geometry = new Geometry(gl, {
       position: { size: 3, data: data.positions },
       normal: { size: 3, data: data.normals },
-      ao: { size: 1, data: data.ao },
+      uv: { size: 2, data: data.uvs },
       index: { data: data.indices },
     });
     this.mesh = new Mesh(gl, { geometry, program: this.program });
@@ -222,7 +225,7 @@ export class Viewer {
     this.controls.forcePosition();
   }
 
-  setAOStrength(v: number) { this.program.uniforms.uAOStrength.value = v; }
+  setShowUv(v: boolean) { this.program.uniforms.uShowUv.value = v ? 1 : 0; }
   setShowNormals(v: boolean) { this.program.uniforms.uShowNormals.value = v ? 1 : 0; }
 
   private resize = () => {

@@ -1,153 +1,117 @@
-import { cylinder } from '../sdf/primitives';
-import { box2, translate2 } from '../sdf/sdf2';
-import { extrude, frame, smoothUnion, subtract } from '../sdf/ops';
-import { tube } from '../geom/segmentTree';
-import { add, cross, frameFrom, mul, normalize } from '../geom/vec';
-import { pathTangent, samplePath, type Curve } from '../geom/curve';
-import { boxAround, detailFor, type Anchor, type Part } from './types';
-import type { Vec3 } from '../sdf/types';
-
-export type WireEnd =
-  /** Hemispherical cap. Nothing fastens here. */
-  | { kind: 'round' }
-  /** Wire flattened into a drilled paddle — the standard place to put a rivet. */
-  | {
-      kind: 'eye';
-      outerRadius: number;
-      boreRadius: number;
-      thickness: number;
-      /** Blend radius where the paddle swells out of the round section. */
-      blend?: number;
-    };
+import { resample, type Curve } from '../geom/curve';
+import * as profile from '../geom/profile';
+import { sweep } from '../mesh/sweep';
+import { meshBounds, type Anchor, type Part } from './types';
+import { normalize, sub } from '../geom/vec';
+import type { Vec3 } from '../geom/types';
 
 export interface WireSpec {
   name?: string;
   path: Curve;
-  /** Polyline segments used to approximate the path. */
-  segments?: number;
+  /** Section radius at the base. */
   radius: number;
-  start?: WireEnd;
-  end?: WireEnd;
+  /** Fraction of the base radius left at the tip. 0.15 is a fine drawn point. */
+  tipScale?: number;
+  /** Turns of twist along the whole run. Only visible on a non-round section. */
+  twistTurns?: number;
+  /** Flatten from round at the base to a lens section at the tip. */
+  flatten?: boolean;
+  sections?: number;
+  sides?: number;
+  closed?: boolean;
+  up?: Vec3;
 }
-
-const ROUND: WireEnd = { kind: 'round' };
 
 /**
- * A drawn wire strut: a swept tube with optional flattened eyes at each end.
+ * A drawn line in metal: a section swept along a curve, thinning as it runs.
  *
- * The eye is what makes wire usable in an assembly — a bare tube end has nothing
- * to fasten through, and blending the paddle into the round section with a smooth
- * union is what reads as forged rather than glued together.
+ * The taper is the whole point. A constant-radius tube reads as plumbing; a line
+ * that starts heavy and dies away to a point is what makes a tendril look drawn
+ * rather than extruded.
  */
 export function wire(spec: WireSpec): Part {
-  const segments = spec.segments ?? 96;
-  const pts = samplePath(spec.path, segments);
-  const startEnd = spec.start ?? ROUND;
-  const endEnd = spec.end ?? ROUND;
+  const sections = spec.sections ?? 128;
+  const sides = spec.sides ?? 12;
+  const closed = spec.closed ?? false;
+  const tip = spec.tipScale ?? 0.2;
 
-  let sdf = tube(pts, spec.radius);
+  const path = resample(spec.path, sections);
+  const round = profile.circle(spec.radius, sides);
+  const flat = profile.lens(spec.radius * 2.6, spec.radius * 0.7, sides);
+
+  const mesh = sweep(path, {
+    profile: round,
+    morphTo: spec.flatten ? flat : undefined,
+    // eased so the heavy end holds its weight instead of thinning immediately
+    taper: closed ? () => 1 : (t) => 1 - (1 - tip) * Math.pow(t, 1.4),
+    twist: spec.twistTurns ? (t) => t * spec.twistTurns! * Math.PI * 2 : undefined,
+    morph: (t) => Math.pow(t, 1.6),
+    closed,
+    caps: true,
+    up: spec.up,
+  });
+
   const anchors: Anchor[] = [];
-  let reach = spec.radius;
-  let section = spec.radius * 2;
-  for (const e of [startEnd, endEnd]) if (e.kind === 'eye') section = Math.min(section, e.thickness);
-
-  const attach = (
-    end: WireEnd,
-    point: Vec3,
-    along: Vec3,
-    label: string,
-  ) => {
-    if (end.kind === 'round') {
-      // the tube's capsules already round the end; nothing to add
-      return;
-    }
-
-    // A flattened eye is the last stretch of wire beaten into a paddle and then
-    // drilled, so model it that way: a stadium-shaped boss lying in the plane that
-    // contains the wire, with the hole out at its far end.
-    //
-    // The bore has to clear the *blend*, not merely the tube tip. Punch it any
-    // closer and it breaks into the fillet at a grazing angle, which leaves a
-    // feather edge that goes non-manifold and gets worse the finer you mesh.
-    const axis = normalize(cross(along, pickUp(along)));
-    const basis = frameFrom(axis, along);
-
-    const blend = end.blend ?? spec.radius * 0.9;
-    const outer = Math.max(end.outerRadius, end.boreRadius + spec.radius * 0.9);
-    const boreOffset = end.boreRadius + blend + spec.radius * 0.5;
-
-    // stadium from the tube tip out to the bore centre, capped by `outer`
-    const paddle2d = translate2(
-      box2(boreOffset / 2 + outer, outer, outer),
-      boreOffset / 2,
-      0,
-    );
-    const paddle = frame(
-      extrude(paddle2d, end.thickness / 2, Math.min(end.thickness / 2, 0.35)),
-      point, basis.x, basis.y, basis.z,
-    );
-
-    const centre = add(point, mul(along, boreOffset));
-    const bore = frame(
-      cylinder(end.boreRadius, end.thickness * 4),
-      centre, basis.x, basis.y, basis.z,
-    );
-
-    sdf = subtract(smoothUnion(blend, sdf, paddle), bore);
-
+  if (!closed) {
     anchors.push({
-      name: label,
-      position: centre,
-      axis,
-      tangent: normalize(along),
-      bore: end.boreRadius * 2,
+      name: 'base',
+      position: path[0],
+      axis: normalize(sub(path[0], path[1])),
+      tangent: normalize(sub(path[1], path[0])),
     });
-    reach = Math.max(reach, boreOffset + outer + end.thickness);
-  };
-
-  const startTangent = mul(pathTangent(pts, 0), -1);
-  const endTangent = pathTangent(pts, pts.length - 1);
-  attach(startEnd, pts[0], startTangent, 'start');
-  attach(endEnd, pts[pts.length - 1], endTangent, 'end');
-
-  return {
-    name: spec.name ?? 'wire',
-    detail: detailFor(section),
-    sdf,
-    bounds: boxAround(pts, reach + spec.radius),
-    anchors,
-  };
-}
-
-/** Bias the eye plane toward global up, falling back when the wire runs vertically. */
-function pickUp(along: Vec3): Vec3 {
-  const up: Vec3 = Math.abs(along[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
-  return up;
-}
-
-/** A closed ring of wire — the simplest decorative element and a good mesher test. */
-export function wireRing(radius: number, thickness: number, name = 'ring'): Part {
-  const pts: Vec3[] = [];
-  const n = 128;
-  for (let i = 0; i <= n; i++) {
-    const a = (i / n) * Math.PI * 2;
-    pts.push([Math.cos(a) * radius, Math.sin(a) * radius, 0]);
+    anchors.push({
+      name: 'tip',
+      position: path[path.length - 1],
+      axis: normalize(sub(path[path.length - 1], path[path.length - 2])),
+      tangent: normalize(sub(path[path.length - 1], path[path.length - 2])),
+    });
   }
-  return {
-    name,
-    detail: detailFor(thickness * 2),
-    sdf: tube(pts, thickness),
-    bounds: boxAround(pts, thickness * 2),
-    anchors: [],
-  };
+
+  return { name: spec.name ?? 'wire', mesh, bounds: meshBounds(mesh), anchors };
 }
 
-/** Kept for callers that want a bare cap explicitly rather than by omission. */
-export const roundEnd = (): WireEnd => ({ kind: 'round' });
+/**
+ * A curved blade — a lens section swept along an arc, widening then dying at the
+ * tip. Petals and leaves that are not flat plates are this.
+ */
+export interface BladeSpec {
+  name?: string;
+  path: Curve;
+  width: number;
+  thickness: number;
+  /** Section width along the run, t in [0,1]. Defaults to a leaf-like swell. */
+  swell?: (t: number) => number;
+  twistTurns?: number;
+  sections?: number;
+  sides?: number;
+  up?: Vec3;
+}
 
-export const eyeEnd = (
-  outerRadius: number,
-  boreRadius: number,
-  thickness: number,
-  blend?: number,
-): WireEnd => ({ kind: 'eye', outerRadius, boreRadius, thickness, blend });
+export function blade(spec: BladeSpec): Part {
+  const sections = spec.sections ?? 96;
+  const sides = spec.sides ?? 16;
+  const path = resample(spec.path, sections);
+  const swell = spec.swell ?? ((t: number) => Math.pow(Math.sin(Math.PI * t), 0.7) * (1 - 0.25 * t) + 0.06);
+
+  const mesh = sweep(path, {
+    profile: profile.lens(spec.width, spec.thickness, sides),
+    taper: swell,
+    twist: spec.twistTurns ? (t) => t * spec.twistTurns! * Math.PI * 2 : undefined,
+    caps: true,
+    up: spec.up,
+  });
+
+  return {
+    name: spec.name ?? 'blade',
+    mesh,
+    bounds: meshBounds(mesh),
+    anchors: [
+      {
+        name: 'base',
+        position: path[0],
+        axis: normalize(sub(path[0], path[1])),
+        tangent: normalize(sub(path[1], path[0])),
+      },
+    ],
+  };
+}

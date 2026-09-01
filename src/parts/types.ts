@@ -1,35 +1,32 @@
-import type { SDF, Box3, Vec3 } from '../sdf/types';
+import type { Box3, Vec3 } from '../geom/types';
+import type { Mesh } from '../mesh/types';
 
 /**
  * A named place where one part fastens to another.
  *
- * Joints are declared, not discovered: solving them by intersecting meshes is a
- * rabbit hole, and an anchor gives the DSL something concrete to name. `axis`
- * points out of the material along the fastener, which is the direction a rivet
- * head sits in.
+ * Joints are declared, not discovered. `axis` points out of the material along
+ * the fastener; `tangent` orients anything that is not rotationally symmetric.
  */
 export interface Anchor {
   name: string;
   position: Vec3;
   axis: Vec3;
-  /** In-plane reference direction, perpendicular to `axis`. Orients hex heads and slots. */
   tangent: Vec3;
   /** Nominal drilled diameter, where the anchor is a hole. */
   bore?: number;
 }
 
-/** The unit every generator produces and every consumer — mesher, assembly, DSL — takes. */
+/**
+ * The unit every generator produces and every consumer takes.
+ *
+ * Deliberately says nothing about how the geometry was made, which is what let
+ * the geometry layer be replaced without touching assembly or the DSL plan.
+ */
 export interface Part {
   name: string;
-  sdf: SDF;
+  mesh: Mesh;
   bounds: Box3;
   anchors: Anchor[];
-  /**
-   * Suggested mesher cell size, derived from this part's smallest real feature.
-   * Only the generator knows that a knurl groove is 0.36 mm wide, so the part
-   * carries the number rather than the caller guessing from its bounding box.
-   */
-  detail: number;
 }
 
 export const findAnchor = (part: Part, name: string): Anchor => {
@@ -38,31 +35,15 @@ export const findAnchor = (part: Part, name: string): Anchor => {
   return a;
 };
 
-/** Grow a box by a uniform margin — bounds always need clearance for the mesher. */
-export const padBox = (b: Box3, m: number): Box3 => ({
-  min: [b.min[0] - m, b.min[1] - m, b.min[2] - m],
-  max: [b.max[0] + m, b.max[1] + m, b.max[2] + m],
-});
-
-/**
- * Cell size for a part whose narrowest cross-section is `section` wide.
- *
- * Dual contouring needs at least two cells across a thin section to keep its two
- * surfaces apart; below that they fuse and the edges go non-manifold. 3.5 leaves a
- * margin without paying for detail nobody sees. Deliberately keyed to *sections*,
- * not to fillets or chamfers: an under-resolved round just reads a little softer,
- * whereas an under-resolved web changes the topology.
- */
-export const detailFor = (section: number) => Math.max(section / 3.5, 0.02);
-
-export function boxAround(points: Vec3[], margin: number): Box3 {
+export function meshBounds(mesh: Mesh): Box3 {
   const min: Vec3 = [Infinity, Infinity, Infinity];
   const max: Vec3 = [-Infinity, -Infinity, -Infinity];
-  for (const p of points) {
-    for (let i = 0; i < 3; i++) {
-      if (p[i] < min[i]) min[i] = p[i];
-      if (p[i] > max[i]) max[i] = p[i];
+  const p = mesh.positions;
+  for (let i = 0; i < p.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      if (p[i + k] < min[k]) min[k] = p[i + k];
+      if (p[i + k] > max[k]) max[k] = p[i + k];
     }
   }
-  return padBox({ min, max }, margin);
+  return { min, max };
 }
