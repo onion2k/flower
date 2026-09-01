@@ -206,7 +206,8 @@ unit filament {
 }
 
 form narcissus {
-  # tepals swept back and down, as the perianth sits behind the corona
+  # the perianth spreads out around the corona and a little forward of it,
+  # which is a negative tilt — positive would sweep the tepals down and back
   repeat tepal around ring(6, radius: 3.5, tilt: -0.32)
   place corona at (0, 0, 1.5)
   repeat filament around ring(6, radius: 2.2, z: 3, tilt: 0.25)
@@ -262,9 +263,12 @@ unit tip { place bud pitch 90deg }
 
 form digitalis {
   place stalk
-  repeat corolla around along(spike, 11, from: 0.16, to: 0.82, taper: 0.5, tilt: -34deg)
-  repeat tip around along(spike, 5, from: 0.86, to: 1, taper: 0.45, tilt: -20deg)
-  repeat foliage around ring(5, radius: 2.5, z: 1.5, tilt: 68deg)
+  # Spaced by the width of a flower, not by how many will fit: eleven bells with
+  # an eight-millimetre mouth over thirty millimetres of spike is a solid column.
+  # Alternating them puts them on both sides, as a real raceme does.
+  repeat corolla around along(spike, 7, from: 0.14, to: 0.84, taper: 0.5, alternate: yes, tilt: -34deg)
+  repeat tip around along(spike, 4, from: 0.88, to: 1, taper: 0.45, alternate: yes, tilt: -18deg)
+  repeat foliage around ring(5, radius: 2.5, z: 1.5, tilt: 6deg)
 }
 `,
 
@@ -498,7 +502,8 @@ part stalk = wire(path: through((0,0,0), (0,0,-16), (1,0,-32)), radius: 1.5, tip
 form teasel {
   place head
   repeat spine around shell(96, 7.2, orient: outward)
-  repeat bract around ring(9, radius: 4, z: -11, tilt: 62deg)
+  # upswept, so the tilt is negative: a positive one points a part down the way
+  repeat bract around ring(9, radius: 4, z: -11, tilt: -58deg)
   place stalk at (0, 0, -12)
 }
 `,
