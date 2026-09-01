@@ -247,6 +247,39 @@ console.log('\nDSL');
   }
 }
 
+// --- use: the failure modes matter more than the happy path ---
+// An import can go wrong in ways a single sketch cannot, and all of them are
+// silent if the error is bad: a missing name, a circle, a name already taken.
+console.log('\nuse');
+{
+  const cases: Array<[string, string, ((r: ReturnType<typeof compile>) => boolean)]> = [
+    ['missing sketch', 'use nosuchflower\nform x { place nosuchflower }',
+      (r) => !!r.error?.message.includes('no sketch called')],
+    ['name already taken', 'use rose\nform rose { place rose }',
+      (r) => !!r.error?.message.includes('already defined here')],
+    ['a circle between two sketches', 'use ring1\nform x { place ring1 }',
+      (r) => !!r.error?.message.includes('circle')],
+    ['error inside the import is located', 'use broken\nform x { place broken }',
+      (r) => !!r.error?.message.includes('in the sketch "broken", line 2')],
+  ];
+  const library: Record<string, string> = {
+    broken: '# a sketch with a fault on its second line\npart p = leaf(length: 1)\nform b { place p }',
+    ring1: 'use ring2\nform ring1 { place ring2 }',
+    ring2: 'use ring1\nform ring2 { place ring1 }',
+  };
+  const resolve = (name: string) => library[name] ?? examples[name];
+
+  for (const [label, source, ok] of cases) {
+    const r = compile(source, { resolve });
+    console.log(`  ${label.padEnd(34)} ${ok(r) ? 'ok' : 'WRONG'}  ${r.error?.message ?? 'compiled'}`);
+  }
+
+  // and the happy path: an imported flower keeps the metals it was drawn in
+  const used = compile('use rose\nform b { place rose }').sketch!;
+  const metals = new Set(used.assembly.placements.map((p) => p.part.material?.metal ?? '(default)'));
+  console.log(`  imported rose carries ${metals.size} metals: ${[...metals].sort().join(', ')}`);
+}
+
 // --- forms: instancing pays off, and no placement carries a broken matrix ---
 console.log('\nform                inst  parts  uniqueTris  drawnTris  reuse  mirror  bodies   extent      ms');
 for (const [name, make] of Object.entries(forms)) {

@@ -47,6 +47,7 @@ export type Action =
   | { kind: 'repeat'; subject: Expr; symmetry: Expr; span: Span };
 
 export type Stmt =
+  | { kind: 'use'; names: string[]; span: Span }
   | { kind: 'material'; words: string[]; span: Span }
   | { kind: 'let'; name: string; value: Expr; span: Span }
   | { kind: 'part'; name: string; value: Expr; material?: string[]; span: Span }

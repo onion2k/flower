@@ -608,50 +608,24 @@ form allium {
 }
 `,
 
-  bouquet: `# A set of flowers, then a bunch made from them
-material gold satin
+  bouquet: `# A bunch, tied — made of flowers defined elsewhere
+material brass satin
 
-# Every flower below is an ordinary form. What makes this a bouquet is the last
-# line: a form can be repeated exactly like a part, so once a rose is defined it
-# is a single thing to arrange, however many pieces it is made of.
-part petalA = petal(length: 17, width: 16, thickness: 0.5, shape: round, cup: 52deg, curl: -26deg, curlBias: 2.6)
-part petalB = petal(length: 11, width: 11, thickness: 0.5, shape: round, cup: 84deg, curl: 30deg, curlBias: 1.8)
-part stemA  = stem(path: through((0,0,-6), (2,0,-30), (-2,0,-56), (1,0,-78)), radius: 1.7, tip: 0.6, nodes: 3)
-part hipA   = bud(length: 9, width: 11, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.4) in bronze satin
+# "use" brings in another sketch as one form, under its own name. Only the form
+# it finally builds comes across: not its parts, not its units, not its working.
+# A rose keeps its rose gold, because a flower that changed metal on being picked
+# up would not be much of a reusable flower.
+use rose, daisy, poppy
 
-part rayB   = petal(length: 20, width: 5.5, thickness: 0.4, shape: strap, edge: notched, cup: 24deg, curl: 14deg)
-part discB  = disc(radius: 6, thickness: 1.1, bevel: 0.35) in copper satin
-part stemB  = stem(path: through((0,0,-1), (-2,0,-28), (2,0,-54), (-1,0,-74)), radius: 1.4, tip: 0.6, nodes: 2)
+part binding = collar(inner: 11, wall: 1.6, length: 12)
 
-part budC   = bud(length: 13, width: 7, lobes: 5, lobeDepth: 0.12, point: 0.3) in rose gold satin
-part stemC  = stem(path: through((0,0,0), (1,0,-24), (-2,0,-50), (2,0,-70)), radius: 1.3, tip: 0.6, nodes: 2)
-part leafC  = leaf(length: 26, width: 8, thickness: 0.55, shape: lanceolate, teeth: 18, cup: 30deg, curl: 40deg) in bronze satin
-
-form aRose {
-  repeat petalB around phyllotaxis(7, 1.2, tilt: -82deg, fade: 0.4, rise: 1.4)
-  repeat petalA around phyllotaxis(11, 1.9, start: 8, tilt: -56deg, fade: 0.9)
-  place hipA at (0, 0, -7)
-  place stemA
-}
-
-form aDaisy {
-  repeat rayB around ring(16, radius: 5.6, z: 0.4, tilt: -12deg)
-  place discB
-  place stemB
-}
-
-form aSpray {
-  place budC
-  place stemC
-  repeat leafC around along(through((0,0,0), (1,0,-24), (-2,0,-50)), 4, from: 0.25, to: 0.9, taper: 0.6, alternate: yes, tilt: -24deg)
-}
-
-# spray leans +Z outward rather than +X, because these are whole flowers and a
-# flower stands up — the one place the growth-along-X convention does not apply
+# spray leans +Z outward, and these are whole plants standing on their stems, so
+# leaning the flower out swings its stem in — which is what gathers the bunch.
 form bouquet {
-  repeat aRose  around spray(3, 17, lean: 20deg, rise: 9, spin: 1.1)
-  repeat aDaisy around spray(5, 36, lean: 38deg, rise: 1, spin: 0.7)
-  repeat aSpray around spray(7, 54, lean: 56deg, rise: -10, spin: 2.4)
+  place binding at (0, 0, -44)
+  repeat rose  around spray(3, 16, lean: 11deg, rise: 11, spin: 1.1)
+  repeat daisy around spray(5, 34, lean: 25deg, rise: 3, spin: 0.7)
+  repeat poppy around spray(4, 52, lean: 37deg, rise: -8, spin: 2.4)
 }
 `,
 

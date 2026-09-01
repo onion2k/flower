@@ -1,11 +1,12 @@
 import { Assembly } from '../assembly/assembly';
-import { evaluate, type Sketch } from './eval';
+import { evaluate, type CompileOptions, type Sketch } from './eval';
+import { examples } from './examples';
 import { DslError, formatError } from './lexer';
 import { parse } from './parser';
 
 export { DslError, formatError } from './lexer';
 export { BUILTIN_NAMES, PART_NAMES } from './builtins';
-export type { Sketch } from './eval';
+export type { CompileOptions, Sketch } from './eval';
 
 export interface CompileResult {
   sketch?: Sketch;
@@ -18,9 +19,10 @@ export interface CompileResult {
  * Errors are values rather than exceptions, because the editor recompiles on
  * every keystroke and a half-typed sketch is the normal state, not a failure.
  */
-export function compile(source: string): CompileResult {
+export function compile(source: string, options: CompileOptions = {}): CompileResult {
   try {
-    return { sketch: evaluate(parse(source)) };
+    const resolve = options.resolve ?? ((name: string) => examples[name]);
+    return { sketch: evaluate(parse(source), { resolve }) };
   } catch (error) {
     if (error instanceof DslError) {
       return {

@@ -4,8 +4,27 @@ import type { Vec3 } from '../geom/types';
 import { finishes, metals } from '../render/materials';
 import type { Part } from '../parts/types';
 import type { Action, Expr, Placement, Program } from './ast';
+import { parse } from './parser';
 import { Args, BUILTINS, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
 import { DslError, type Span } from './lexer';
+
+export interface CompileOptions {
+  /**
+   * Where `use` looks for another sketch's source.
+   *
+   * Passed in rather than reached for, so the language does not have to know
+   * that the library it is importing from happens to be the example set.
+   */
+  resolve?: (name: string) => string | undefined;
+}
+
+interface Context {
+  resolve?: (name: string) => string | undefined;
+  /** Names part-way through being imported, so a circle is caught rather than hung on. */
+  importing: Set<string>;
+  /** One evaluation per sketch per compile, however many times it is used. */
+  cache: Map<string, Sketch>;
+}
 
 export interface Sketch {
   assembly: Assembly;
@@ -22,12 +41,79 @@ export interface Sketch {
  * placement of it, which is what keeps a sketch instanced: `repeat sector around
  * ring(16)` produces sixteen matrices, not sixteen meshes.
  */
-export function evaluate(program: Program): Sketch {
+export function evaluate(program: Program, options: CompileOptions = {}): Sketch {
+  return evaluateIn(program, {
+    resolve: options.resolve,
+    importing: new Set(),
+    cache: new Map(),
+  });
+}
+
+/**
+ * Bring in another sketch as a single form.
+ *
+ * Only its result comes across — the form it finally builds, bound to the name
+ * it was imported under. Not its parts, not its units, not its intermediate
+ * forms. A sketch's insides are its own business, and importing them would make
+ * every name in every sketch a name in every other one.
+ */
+function importSketch(name: string, span: Span, ctx: Context): Assembly {
+  const cached = ctx.cache.get(name);
+  if (cached) return cached.assembly;
+
+  if (ctx.importing.has(name)) {
+    throw new DslError(`"${name}" is already being used — sketches cannot use each other in a circle`, span);
+  }
+  const source = ctx.resolve?.(name);
+  if (source === undefined) {
+    throw new DslError(`there is no sketch called "${name}" to use`, span);
+  }
+
+  ctx.importing.add(name);
+  let sketch: Sketch;
+  try {
+    // the inner error carries a span into source the writer cannot see, so it is
+    // reported against the "use" line with its own location quoted
+    sketch = evaluateIn(parse(source), ctx);
+  } catch (error) {
+    if (error instanceof DslError) {
+      throw new DslError(`in the sketch "${name}", line ${error.span.line}: ${error.message}`, span);
+    }
+    throw error;
+  } finally {
+    ctx.importing.delete(name);
+  }
+
+  // An imported flower keeps its own metals. Anything it left to its own default
+  // is stamped with that default here, because the moment it lands the default
+  // means whatever the importing sketch says instead — and a rose imported into
+  // a gold bouquet should still be rose gold.
+  const seen = new Set<Part>();
+  for (const placement of sketch.assembly.placements) {
+    if (seen.has(placement.part)) continue;
+    seen.add(placement.part);
+    if (!placement.part.material) {
+      placement.part.material = { metal: sketch.metal, finish: sketch.finish };
+    }
+  }
+
+  ctx.cache.set(name, sketch);
+  return sketch.assembly;
+}
+
+function evaluateIn(program: Program, ctx: Context): Sketch {
   const scope = new Map<string, Value>();
   const units = new Map<string, Assembly>();
   const forms = new Map<string, Assembly>();
   const partCache = new Map<Expr, Part>();
   const partMaterials = new Map<Part, { metal?: string; finish?: string }>();
+
+  /**
+   * Names taken by `use`. Checking the other direction matters as much: the
+   * import happens first, so without this a later "form rose" would quietly
+   * replace an imported one and the sketch would look almost right.
+   */
+  const imported = new Set<string>();
 
   let defaultMetal: string | undefined;
   let defaultFinish: string | undefined;
@@ -296,10 +382,34 @@ export function evaluate(program: Program): Sketch {
     }
   }
 
+  /** Refuse to redefine a name that `use` has already brought in. */
+  function claim(name: string, span: Span) {
+    if (imported.has(name)) {
+      throw new DslError(
+        `"${name}" is already defined here by "use", so it cannot be declared again`,
+        span,
+      );
+    }
+  }
+
   // --- statements ---
 
   for (const statement of program.statements) {
     switch (statement.kind) {
+      case 'use': {
+        for (const name of statement.names) {
+          if (forms.has(name) || units.has(name) || scope.has(name)) {
+            throw new DslError(
+              `"${name}" is already defined here, so it cannot be used from elsewhere`,
+              statement.span,
+            );
+          }
+          forms.set(name, importSketch(name, statement.span, ctx));
+          imported.add(name);
+        }
+        break;
+      }
+
       case 'material': {
         const m = resolveMaterial(statement.words, statement.span);
         checkMaterial(m, statement.span);
@@ -309,10 +419,12 @@ export function evaluate(program: Program): Sketch {
       }
 
       case 'let':
+        claim(statement.name, statement.span);
         scope.set(statement.name, evalExpr(statement.value));
         break;
 
       case 'part': {
+        claim(statement.name, statement.span);
         const value = evalExpr(statement.value);
         if (!isPart(value)) {
           throw new DslError(
@@ -327,6 +439,7 @@ export function evaluate(program: Program): Sketch {
       }
 
       case 'unit': {
+        claim(statement.name, statement.span);
         const assembly = new Assembly(statement.name);
         runActions(assembly, statement.actions);
         units.set(statement.name, assembly);
@@ -334,6 +447,7 @@ export function evaluate(program: Program): Sketch {
       }
 
       case 'form': {
+        claim(statement.name, statement.span);
         const assembly = new Assembly(statement.name);
         runActions(assembly, statement.actions);
         forms.set(statement.name, assembly);
