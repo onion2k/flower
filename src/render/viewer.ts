@@ -7,7 +7,7 @@ import type { Anchor } from '../parts/types';
 import type { Box3 } from '../geom/types';
 import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
-import { PBR_FRAG, PBR_VERT, SKYBOX_FRAG, SKYBOX_VERT } from './shaders';
+import { PBR_FRAG, PBR_VERT } from './shaders';
 import {
   AO_FRAG, AO_VERT, BLUR_FRAG, DEPTH_COPY_FRAG, DEPTH_DOWNSAMPLE_FRAG, DEPTH_LEVELS,
   PREPASS_FRAG, PREPASS_VERT,
@@ -76,8 +76,6 @@ export class Viewer {
 
   private controls: Orbit;
   private program: Program;
-  private skyProgram: Program;
-  private skyMesh: Mesh;
   private anchorProgram: Program;
   private anchorMesh: Mesh | null = null;
   private raf = 0;
@@ -103,7 +101,6 @@ export class Viewer {
 
   private environment: Environment | null = null;
   private specularTexture: Texture;
-  private backgroundTexture: Texture;
   private brdfTexture: Texture;
 
   private metal: Metal = metals.gold;
@@ -131,10 +128,15 @@ export class Viewer {
 
     this.scene = new Transform();
 
+    // Flat ground, matching the page. The environment is still baked and still
+    // lights the metal — it is only no longer drawn behind it. A room painted
+    // across the background competes with the piece instead of appearing in it,
+    // which is what it is for.
+    gl.clearColor(0.043, 0.047, 0.055, 1);
+
     // Raw GL textures from the bake, wrapped so ogl still manages texture units.
     this.depthChainTexture = wrapTexture(gl, raw.TEXTURE_2D);
     this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
-    this.backgroundTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
     this.brdfTexture = wrapTexture(gl, raw.TEXTURE_2D);
 
     this.program = new Program(gl, {
@@ -160,30 +162,6 @@ export class Viewer {
       cullFace: null,
     });
 
-    this.skyProgram = new Program(gl, {
-      vertex: SKYBOX_VERT,
-      fragment: SKYBOX_FRAG,
-      uniforms: {
-        uBackground: { value: this.backgroundTexture },
-        uInverseViewProjection: { value: new Mat4() },
-        uExposure: { value: 1 },
-        uBlur: { value: 1.5 },
-        uEnvSpin: { value: 0 },
-        uBackdrop: { value: 0.42 },
-      },
-      cullFace: null,
-      depthTest: false,
-      depthWrite: false,
-    });
-    this.skyMesh = new Mesh(gl, {
-      geometry: new Geometry(gl, {
-        position: { size: 3, data: new Float32Array([-1, -1, 0, 3, -1, 0, -1, 3, 0]) },
-      }),
-      program: this.skyProgram,
-    });
-    this.skyMesh.frustumCulled = false;
-    this.skyMesh.renderOrder = -1;
-    this.skyMesh.setParent(this.scene);
 
     // --- ambient occlusion: prepass, sample, blur ---
     this.prepassProgram = new Program(gl, {
@@ -258,7 +236,6 @@ export class Viewer {
     invalidateRendererState(this.renderer, gl);
 
     adoptTexture(this.specularTexture, env.specular);
-    adoptTexture(this.backgroundTexture, env.background);
     adoptTexture(this.brdfTexture, env.brdf);
     this.program.uniforms.uMaxLod.value = env.mips - 1;
 
@@ -294,16 +271,10 @@ export class Viewer {
 
   setExposure(v: number) {
     this.program.uniforms.uExposure.value = v;
-    this.skyProgram.uniforms.uExposure.value = v;
   }
 
   setEnvSpin(radians: number) {
     this.program.uniforms.uEnvSpin.value = radians;
-    this.skyProgram.uniforms.uEnvSpin.value = radians;
-  }
-
-  setBackdrop(v: number) {
-    this.skyProgram.uniforms.uBackdrop.value = v;
   }
 
   /** 0 shaded, 1 normals, 2 uv, 3 roughness. */
@@ -589,8 +560,7 @@ export class Viewer {
   private renderAmbientOcclusion() {
     if (!this.aoEnabled || !this.normalDepthTarget || !this.aoTarget || !this.blurTarget) return;
 
-    // geometry only: the backdrop has no depth and the gizmos are not surfaces
-    this.skyMesh.visible = false;
+    // geometry only: the gizmos are not surfaces
     const anchorsWereVisible = this.anchorMesh?.visible ?? false;
     if (this.anchorMesh) this.anchorMesh.visible = false;
 
@@ -599,7 +569,6 @@ export class Viewer {
     this.renderer.render({ scene: this.scene, camera: this.camera, target: this.normalDepthTarget });
     for (let i = 0; i < this.meshes.length; i++) this.meshes[i].program = beauty[i];
 
-    this.skyMesh.visible = true;
     if (this.anchorMesh) this.anchorMesh.visible = anchorsWereVisible;
 
     this.buildDepthChain();
@@ -620,9 +589,6 @@ export class Viewer {
     this.controls.update();
 
     this.camera.updateMatrixWorld();
-    const inv = this.skyProgram.uniforms.uInverseViewProjection.value as Mat4;
-    inv.multiply(this.camera.projectionMatrix, this.camera.viewMatrix).inverse();
-
     this.renderAmbientOcclusion();
     this.renderer.render({ scene: this.scene, camera: this.camera });
   };

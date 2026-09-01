@@ -29,7 +29,6 @@ const state = {
   environment: 'studio' as EnvPreset,
   exposure: 1,
   envSpin: 0,
-  backdrop: 0.42,
   debug: 0,
   ao: true,
   aoIntensity: 1.8,
@@ -165,10 +164,6 @@ lightSet.append(
   slider('rotate env', 0, 6.283, 0.02, state.envSpin, (v) => `${Math.round((v * 180) / Math.PI)}°`, (v) => {
     state.envSpin = v;
     viewer.setEnvSpin(v);
-  }),
-  slider('backdrop', 0, 1.5, 0.02, state.backdrop, (v) => v.toFixed(2), (v) => {
-    state.backdrop = v;
-    viewer.setBackdrop(v);
   }),
 );
 const hdrNote = document.createElement('div');
