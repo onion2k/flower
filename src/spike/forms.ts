@@ -2,10 +2,9 @@ import { Assembly } from '../assembly/assembly';
 import { bezier3, catmullRom, logSpiral, arc } from '../geom/curve';
 import { multiply, rotationAbout, translation, uniformScale, identity } from '../geom/transform';
 import { phyllotaxis, ring, sphereShell, radial } from '../pattern/symmetry';
-import { bead, collar, rivet } from '../parts/fastener';
+import { bead, collar, pod, rivet } from '../parts/fastener';
 import { leaf } from '../parts/leaf';
 import { blade, wire } from '../parts/wire';
-import { disc } from '../parts/panel';
 
 /**
  * Assembled forms.
@@ -59,9 +58,10 @@ function flower(): Assembly {
     sections: 64,
   });
   const tip = bead({ radius: 1.4, point: 1.6, segments: 16 });
-  // phyllotaxis gives every petal its own radius, so there is no centre for them
-  // to meet at: the receptacle is what makes this one piece rather than sixty
-  const cup = disc({ radius: 22.5, thickness: 2.2, bevel: 0.6 });
+  // Phyllotaxis gives every petal its own radius, so there is no centre for them
+  // to meet at and the head needs a receptacle. A flat plate does the job and
+  // looks like one; a ribbed lens reads as the disc of a real composite.
+  const cup = pod({ length: 8, width: 45, ribs: 26, ribDepth: 0.05 });
   cup.material = { metal: 'bronze', finish: 'satin' };
 
   const form = new Assembly('flower');

@@ -60,9 +60,10 @@ part petal  = blade(path: bezier((0,0,0), (11,0,5), (23,0,11), (31,0,7)), width:
 part stamen = wire(path: bezier((0,0,0), (5,0,6), (7,0,12), (4,0,16)), radius: 0.65, tip: 0.45, sections: 64)
 part tip    = bead(radius: 1.4, point: 1.6, segments: 16) in gold polished
 # Phyllotaxis puts every petal's base at its own radius, so there is no centre
-# for them to meet at. A real head has a receptacle under all of them; without
-# one this is twenty-six petals and eighteen stamens sharing an address.
-part cup    = disc(radius: 22.5, thickness: 2.2, bevel: 0.6) in bronze satin
+# for them to meet at and the head needs a receptacle under all of them. A flat
+# plate does the job and looks like one: this is a lens, ribbed like the disc of
+# a real composite, and the bases sit in its rim rather than on its face.
+part cup    = pod(length: 8, width: 45, ribs: 26, ribDepth: 0.05) in bronze satin
 
 unit filament {
   place stamen
@@ -311,20 +312,23 @@ part heart = petal(length: 13, width: 13, thickness: 0.45, shape: round, cup: 88
 part mid   = petal(length: 19, width: 19, thickness: 0.5, shape: round, cup: 66deg, curl: 14deg, curlBias: 2.2)
 part outer = petal(length: 26, width: 26, thickness: 0.5, shape: round, cup: 38deg, curl: -34deg, curlBias: 2.8)
 part sepal = leaf(length: 17, width: 3.6, thickness: 0.5, shape: lanceolate, teeth: 12, cup: 40deg, curl: 62deg) in bronze satin
-part hip   = bud(length: 10, width: 9.5, lobes: 5, lobeDepth: 0.07, point: 0.34, swell: 1.3) in bronze satin
-part stalk = stem(path: through((0,0,-9), (1.5,0,-26), (-2,0,-42), (1,0,-56)), radius: 1.7, tip: 0.65, nodes: 3)
+# A hip is an urn, and an urn holds things: the petals gather in its mouth
+# rather than being spread over a plate wider than the flower.
+part hip   = bell(length: 11, mouth: 11, throat: 4, wall: 0.8, flare: 1.7, lobes: 5, lobeDepth: 0.14) in bronze satin
+part stalk = stem(path: through((0,0,0), (1.5,0,-24), (-2,0,-42), (1,0,-56)), radius: 1.7, tip: 0.65, nodes: 3)
 part foliage = leaf(length: 22, width: 11, thickness: 0.6, teeth: 22, veins: 3, cup: 26deg, curl: 30deg) in bronze satin
-# the receptacle every petal is actually attached to
-part cup     = disc(radius: 14, thickness: 2.6, bevel: 0.6) in bronze satin
+# the receptacle, sunk in the mouth of the hip where nothing sees it
+part floor   = disc(radius: 5, thickness: 2.4, bevel: 0.4) in bronze satin
 
 form rose {
-  place cup at (0, 0, -0.5)
-  repeat heart around phyllotaxis(7, 1.1, tilt: -86deg, fade: 0.25, rise: 1.7)
-  repeat mid   around phyllotaxis(10, 1.9, start: 8, tilt: -74deg, fade: 0.5, rise: 0.9)
-  repeat outer around phyllotaxis(13, 2.5, start: 18, tilt: -52deg, fade: 0.9)
-  repeat sepal around ring(5, radius: 3.4, z: -4, tilt: 62deg)
-  place hip at (0, 0, -10)
+  place hip at (0, 0, -11)
+  place floor
   place stalk
+  # every claw inside the hip's mouth, which is where a rose keeps them
+  repeat heart around phyllotaxis(7, 1.05, tilt: -86deg, fade: 0.25, rise: 1.2)
+  repeat mid   around phyllotaxis(10, 1.1, start: 8, tilt: -74deg, fade: 0.5, rise: 0.6)
+  repeat outer around phyllotaxis(13, 0.85, start: 18, tilt: -52deg, fade: 0.9)
+  repeat sepal around ring(5, radius: 3.4, z: -4, tilt: 62deg)
   repeat foliage around ring(3, radius: 0.8, z: -34, tilt: -18deg)
 }
 `,
