@@ -1,4 +1,5 @@
 import { Assembly, type Placement as Placed } from '../assembly/assembly';
+import { solderFillet, type FilletCache } from '../assembly/fillet';
 import { identity, multiply, rotationAbout, translation, uniformScale, type Mat4 } from '../geom/transform';
 import type { Vec3 } from '../geom/types';
 import { finishes, metals } from '../render/materials';
@@ -291,6 +292,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
 
   function runActions(assembly: Assembly, actions: Action[]) {
     const placed = new Map<string, Placed>();
+    const fillets: FilletCache = new Map();
 
     for (const action of actions) {
       if (action.kind === 'place') {
@@ -350,6 +352,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
           offset: action.placement.offset ? num(action.placement.offset) : 0,
           scale: action.placement.scale ? num(action.placement.scale) : 1,
         });
+        solderFillet(assembly, owner, anchor, placement, anchorName, fillets);
         const name = action.placement.as ?? nameOf(action.part);
         if (name) placed.set(name, placement);
         continue;
