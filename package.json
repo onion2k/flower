@@ -11,10 +11,10 @@
   },
   "dependencies": {
     "@types/earcut": "^3.0.0",
-    "earcut": "^3.2.3",
-    "ogl": "^1.0.11"
+    "earcut": "^3.2.3"
   },
   "devDependencies": {
+    "@webgpu/types": "^0.1.72",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"

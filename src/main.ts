@@ -20,7 +20,14 @@ const editor = document.getElementById('editor')!;
 const sourceEl = document.getElementById('source') as HTMLTextAreaElement;
 const diagnosticEl = document.getElementById('diagnostic')!;
 
-const viewer = new Viewer(stage);
+let viewer: Viewer;
+try {
+  viewer = await Viewer.create(stage);
+} catch (err) {
+  diagnosticEl.textContent = `renderer unavailable: ${(err as Error).message}`;
+  diagnosticEl.classList.add('bad');
+  throw err;
+}
 
 const state = {
   subject: formNames[0],
