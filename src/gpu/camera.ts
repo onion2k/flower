@@ -1,21 +1,46 @@
-import { Vec3, type Camera } from 'ogl';
+/**
+ * A perspective camera and an orbit control, both with +Z up.
+ *
+ * Everything in this project agrees that Z is up: parts revolve about Z,
+ * symmetries turn about Z, the environment hangs its key light at +Z. The
+ * camera agrees too, and its projection maps depth to WebGPU's [0, 1].
+ */
+
+import type { Vec3 } from '../geom/types';
+
+export type Mat4 = Float32Array;
+
+export class Camera {
+  position: Vec3 = [90, 60, 50];
+  target: Vec3 = [0, 0, 0];
+  fov = 32;   // vertical, degrees
+  aspect = 1;
+  near = 0.5;
+  far = 4000;
+
+  readonly view: Mat4 = new Float32Array(16);
+  readonly projection: Mat4 = new Float32Array(16);
+  readonly viewProjection: Mat4 = new Float32Array(16);
+
+  update() {
+    lookAt(this.view, this.position, this.target, [0, 0, 1]);
+    perspective(this.projection, (this.fov * Math.PI) / 180, this.aspect, this.near, this.far);
+    multiply(this.viewProjection, this.projection, this.view);
+  }
+
+  /** Camera right and up axes in world space, from the view matrix's rows. */
+  get right(): Vec3 { return [this.view[0], this.view[4], this.view[8]]; }
+  get up(): Vec3 { return [this.view[1], this.view[5], this.view[9]]; }
+}
+
+const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
 
 export interface OrbitOptions {
-  /**
-   * Element the pointer is tracked on.
-   *
-   * The canvas, not the document: dragging over the sketch editor or the panel
-   * should move a caret or a slider, not the camera.
-   */
   element: HTMLElement;
-  target?: Vec3;
-  /** Fraction of the remaining distance covered per frame. */
   ease?: number;
-  /** How much of the previous frame's drag carries over. */
   inertia?: number;
   minDistance?: number;
   maxDistance?: number;
-  /** Polar limits measured from +Z, so 0 is straight down from overhead. */
   minPolar?: number;
   maxPolar?: number;
   rotateSpeed?: number;
@@ -23,26 +48,12 @@ export interface OrbitOptions {
   panSpeed?: number;
 }
 
-const clamp = (v: number, lo: number, hi: number) => (v < lo ? lo : v > hi ? hi : v);
-
 /**
- * An orbit control whose up axis is +Z.
- *
- * ogl's own Orbit is fixed to +Y — its polar angle is measured from `offset.y`
- * and it azimuths around the XZ plane — and there is no way in from outside,
- * because the spherical state lives in a closure. That mattered more than it
- * looks: everything else in this project already agrees that Z is up. Parts are
- * modelled with Z as the axis of revolution, symmetries rotate about Z, and the
- * environment is lit from +Z — `studio` reads its height as `d.z`, and its key
- * light hangs at z = 2.6. Only the camera disagreed, so every sculpture was
- * being framed lying on its side, which is why a flower on a stem came out
- * running across the screen rather than standing on it.
- *
- * Small enough to own outright, and owning it removes the one place where the
- * renderer had two contradictory ideas of which way was up.
+ * Spherical about +Z: polar down from the zenith, azimuth round the XY plane.
+ * Drag turns the subject, so the camera goes the other way; wheel dollies;
+ * right button, middle button or shift pans in the screen plane.
  */
 export class Orbit {
-  target: Vec3;
   enabled = true;
   minDistance: number;
   maxDistance: number;
@@ -57,7 +68,6 @@ export class Orbit {
   private zoomSpeed: number;
   private panSpeed: number;
 
-  /** Where the camera is now, and where it is easing to. */
   private radius = 1;
   private azimuth = 0;
   private polar = Math.PI / 3;
@@ -66,7 +76,7 @@ export class Orbit {
   private toPolar = Math.PI / 3;
 
   private spinDelta = { azimuth: 0, polar: 0 };
-  private panDelta = new Vec3();
+  private panDelta: Vec3 = [0, 0, 0];
   private dolly = 1;
 
   private pointer: number | null = null;
@@ -77,22 +87,16 @@ export class Orbit {
   constructor(camera: Camera, opts: OrbitOptions) {
     this.camera = camera;
     this.element = opts.element;
-    this.target = opts.target ?? new Vec3();
     this.ease = opts.ease ?? 0.18;
     this.inertia = opts.inertia ?? 0.72;
     this.minDistance = opts.minDistance ?? 0.1;
     this.maxDistance = opts.maxDistance ?? Infinity;
-    // never quite reach a pole: the view matrix is degenerate where the forward
-    // direction and the up axis are parallel, and the picture rolls as it passes
+    // never quite reach a pole: the view is degenerate where forward and up align
     this.minPolar = opts.minPolar ?? 0.05;
     this.maxPolar = opts.maxPolar ?? Math.PI - 0.05;
     this.rotateSpeed = opts.rotateSpeed ?? 1;
     this.zoomSpeed = opts.zoomSpeed ?? 1;
     this.panSpeed = opts.panSpeed ?? 1;
-
-    // The camera's own up has to move too, or lookAt keeps rolling the picture
-    // back onto a Y-up horizon however the orbit is parameterised.
-    this.camera.up.set(0, 0, 1);
     this.readFromCamera();
 
     this.element.addEventListener('pointerdown', this.onPointerDown);
@@ -100,23 +104,33 @@ export class Orbit {
     this.element.addEventListener('contextmenu', this.onContextMenu);
   }
 
+  /** True while the camera is still easing toward where the user sent it. */
+  get moving(): boolean {
+    return Math.abs(this.spinDelta.azimuth) > 1e-6 || Math.abs(this.spinDelta.polar) > 1e-6
+      || Math.abs(this.dolly - 1) > 1e-9
+      || Math.hypot(this.panDelta[0], this.panDelta[1], this.panDelta[2]) > 1e-6
+      || Math.abs(this.toAzimuth - this.azimuth) > 1e-5
+      || Math.abs(this.toPolar - this.polar) > 1e-5
+      || Math.abs(this.toRadius - this.radius) > this.radius * 1e-5;
+  }
+
   /** Adopt whatever position the camera has been moved to, without easing. */
   forcePosition() {
     this.readFromCamera();
     this.spinDelta.azimuth = 0;
     this.spinDelta.polar = 0;
-    this.panDelta.set(0, 0, 0);
+    this.panDelta = [0, 0, 0];
     this.dolly = 1;
     this.apply();
   }
 
   update() {
     if (!this.enabled) return;
-
     this.toAzimuth += this.spinDelta.azimuth;
     this.toPolar = clamp(this.toPolar + this.spinDelta.polar, this.minPolar, this.maxPolar);
     this.toRadius = clamp(this.toRadius * this.dolly, this.minDistance, this.maxDistance);
-    this.target.add(this.panDelta);
+    const t = this.camera.target;
+    this.camera.target = [t[0] + this.panDelta[0], t[1] + this.panDelta[1], t[2] + this.panDelta[2]];
 
     this.azimuth += (this.toAzimuth - this.azimuth) * this.ease;
     this.polar += (this.toPolar - this.polar) * this.ease;
@@ -125,7 +139,7 @@ export class Orbit {
 
     this.spinDelta.azimuth *= this.inertia;
     this.spinDelta.polar *= this.inertia;
-    this.panDelta.multiply(this.inertia);
+    this.panDelta = [this.panDelta[0] * this.inertia, this.panDelta[1] * this.inertia, this.panDelta[2] * this.inertia];
     this.dolly = 1;
   }
 
@@ -137,21 +151,20 @@ export class Orbit {
     window.removeEventListener('pointerup', this.onPointerUp);
   }
 
-  /** Spherical about +Z: polar down from the zenith, azimuth round the XY plane. */
   private apply() {
     const sin = Math.sin(this.polar);
-    this.camera.position.set(
-      this.target.x + this.radius * sin * Math.cos(this.azimuth),
-      this.target.y + this.radius * sin * Math.sin(this.azimuth),
-      this.target.z + this.radius * Math.cos(this.polar),
-    );
-    this.camera.lookAt(this.target);
+    const t = this.camera.target;
+    this.camera.position = [
+      t[0] + this.radius * sin * Math.cos(this.azimuth),
+      t[1] + this.radius * sin * Math.sin(this.azimuth),
+      t[2] + this.radius * Math.cos(this.polar),
+    ];
+    this.camera.update();
   }
 
   private readFromCamera() {
-    const dx = this.camera.position.x - this.target.x;
-    const dy = this.camera.position.y - this.target.y;
-    const dz = this.camera.position.z - this.target.z;
+    const p = this.camera.position, t = this.camera.target;
+    const dx = p[0] - t[0], dy = p[1] - t[1], dz = p[2] - t[2];
     const r = Math.max(Math.hypot(dx, dy, dz), 1e-6);
     this.radius = this.toRadius = clamp(r, this.minDistance, this.maxDistance);
     this.azimuth = this.toAzimuth = Math.atan2(dy, dx);
@@ -181,23 +194,17 @@ export class Orbit {
     const height = this.element.clientHeight || 1;
 
     if (this.panning) {
-      // pan in the plane of the screen, using the camera's own right and up axes
-      const m = this.camera.matrix;
-      const reach = this.radius * Math.tan(((this.camera.fov ?? 45) / 2) * (Math.PI / 180));
+      const reach = this.radius * Math.tan(((this.camera.fov / 2) * Math.PI) / 180);
       const across = (2 * dx * reach * this.panSpeed) / height;
       const along = (2 * dy * reach * this.panSpeed) / height;
-      this.panDelta.set(
-        -m[0] * across + m[4] * along,
-        -m[1] * across + m[5] * along,
-        -m[2] * across + m[6] * along,
-      );
+      const r = this.camera.right, u = this.camera.up;
+      this.panDelta = [
+        -r[0] * across + u[0] * along,
+        -r[1] * across + u[1] * along,
+        -r[2] * across + u[2] * along,
+      ];
       return;
     }
-
-    // Both negative, and both for the same reason: the drag moves the subject,
-    // so the camera goes the other way. Drag right and the subject turns right
-    // as the camera swings left; drag down and its top tips toward you as the
-    // camera climbs. Same convention as every other orbit control.
     this.spinDelta.azimuth -= (2 * Math.PI * dx * this.rotateSpeed) / height;
     this.spinDelta.polar -= (2 * Math.PI * dy * this.rotateSpeed) / height;
   };
@@ -216,4 +223,44 @@ export class Orbit {
     const step = Math.pow(0.95, this.zoomSpeed);
     this.dolly *= e.deltaY < 0 ? step : e.deltaY > 0 ? 1 / step : 1;
   };
+}
+
+// ---- matrices, column-major ----
+
+export function lookAt(out: Mat4, eye: Vec3, target: Vec3, up: Vec3) {
+  let zx = eye[0] - target[0], zy = eye[1] - target[1], zz = eye[2] - target[2];
+  let l = Math.hypot(zx, zy, zz) || 1; zx /= l; zy /= l; zz /= l;
+  let xx = up[1] * zz - up[2] * zy, xy = up[2] * zx - up[0] * zz, xz = up[0] * zy - up[1] * zx;
+  l = Math.hypot(xx, xy, xz) || 1; xx /= l; xy /= l; xz /= l;
+  const yx = zy * xz - zz * xy, yy = zz * xx - zx * xz, yz = zx * xy - zy * xx;
+  out[0] = xx; out[1] = yx; out[2] = zx; out[3] = 0;
+  out[4] = xy; out[5] = yy; out[6] = zy; out[7] = 0;
+  out[8] = xz; out[9] = yz; out[10] = zz; out[11] = 0;
+  out[12] = -(xx * eye[0] + xy * eye[1] + xz * eye[2]);
+  out[13] = -(yx * eye[0] + yy * eye[1] + yz * eye[2]);
+  out[14] = -(zx * eye[0] + zy * eye[1] + zz * eye[2]);
+  out[15] = 1;
+}
+
+/** Perspective with depth mapped to [0, 1], as WebGPU clips it. */
+export function perspective(out: Mat4, fovY: number, aspect: number, near: number, far: number) {
+  const f = 1 / Math.tan(fovY / 2);
+  out.fill(0);
+  out[0] = f / aspect;
+  out[5] = f;
+  out[10] = far / (near - far);
+  out[11] = -1;
+  out[14] = (near * far) / (near - far);
+}
+
+export function multiply(out: Mat4, a: Mat4, b: Mat4) {
+  const r = new Float32Array(16);
+  for (let c = 0; c < 4; c++) {
+    for (let rw = 0; rw < 4; rw++) {
+      let s = 0;
+      for (let k = 0; k < 4; k++) s += a[k * 4 + rw] * b[c * 4 + k];
+      r[c * 4 + rw] = s;
+    }
+  }
+  out.set(r);
 }

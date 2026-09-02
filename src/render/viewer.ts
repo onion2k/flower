@@ -1,18 +1,59 @@
-import {
-  Renderer, Camera, Transform, Geometry, Program, Mesh, Vec3, Texture,
-} from 'ogl';
-import { Orbit } from './orbit';
+/**
+ * The viewer: a canvas, a camera, and one scene pass through the post chain.
+ *
+ * Owns every GPU resource the scene needs and nothing else: parts arrive as
+ * meshes with instance matrices and leave as vertex buffers; the environment and
+ * occlusion bakes hand back textures and buffers that are bound here. The
+ * public surface is what main.ts drives — subject, material, light, view — and
+ * it is deliberately the same surface the WebGL build had.
+ */
+
+import { createContext, bufferFrom, emptyBuffer, shader, type GpuContext } from '../gpu/context';
+import { Camera, Orbit } from '../gpu/camera';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor } from '../parts/types';
-import type { Box3 } from '../geom/types';
-import { bakeEnvironment, type Environment, type EnvPreset } from './env';
-import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
-import { GROUND_FRAG, GROUND_VERT, PBR_FRAG, PBR_VERT } from './shaders';
-import { bakeOcclusion, type Occlusion } from './occlusion';
+import type { Box3, Vec3 } from '../geom/types';
 import { computeWear } from '../mesh/wear';
+import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
+import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
+import { bakeOcclusion, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap } from './post';
+import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
+import { buildScene, type SceneInstance } from './bvh';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
+const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
+const MATERIAL_STRIDE = 256;
+/** Bytes of each material record that the shader reads. */
+const MATERIAL_SIZE = 96;
+const FRAME_SIZE = 96;
+
+export type Quality = 'draft' | 'final';
+
+export interface InstanceGroup {
+  mesh: PartMesh;
+  matrices: Float32Array;
+  /** Per-group overrides, so a rosette can have silver leaves and gold studs. */
+  metal?: string;
+  finish?: string;
+  /** Enamel colour on the vertices the mesh marks as enamelled. */
+  enamel?: string;
+}
+
+interface GpuGroup {
+  source: InstanceGroup;
+  position: GPUBuffer;
+  normal: GPUBuffer;
+  uv: GPUBuffer;
+  wear: GPUBuffer;
+  /** 0 or 1 per vertex: where the enamel is. Zeros on a plain part. */
+  enamel: GPUBuffer;
+  instance: GPUBuffer;
+  index: GPUBuffer;
+  indexCount: number;
+  instanceCount: number;
+  vertexCount: number;
+}
 
 /** Wear belongs to the mesh, so it is computed once however often the mesh is placed. */
 const wearCache = new WeakMap<PartMesh, Float32Array>();
@@ -25,334 +66,422 @@ function wearOf(mesh: PartMesh) {
   return w;
 }
 
-const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-
-
-const anchorVertex = `#version 300 es
-in vec3 position;
-in vec3 colour;
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
-out vec3 vColour;
-void main() {
-  vColour = colour;
-  gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
-}`;
-
-const anchorFragment = `#version 300 es
-precision highp float;
-in vec3 vColour;
-out vec4 fragColor;
-void main() { fragColor = vec4(vColour, 1.0); }`;
-
-export interface InstanceGroup {
-  mesh: PartMesh;
-  matrices: Float32Array;
-  /** Per-group overrides, so a rosette can have silver leaves and gold studs. */
-  metal?: string;
-  finish?: string;
-}
-
 export class Viewer {
-  readonly renderer: Renderer;
-  readonly camera: Camera;
-  readonly scene: Transform;
-  readonly meshes: Mesh[] = [];
+  readonly camera = new Camera();
+  bloom = 0.018;
 
+  private ctx: GpuContext;
+  private host: HTMLElement;
   private controls: Orbit;
-  private program: Program;
-  private anchorProgram: Program;
-  private anchorMesh: Mesh | null = null;
+  private post: PostChain;
+  private observer: ResizeObserver;
   private raf = 0;
+  private background: [number, number, number];
 
+  private frameLayout: GPUBindGroupLayout;
+  private materialLayout: GPUBindGroupLayout;
+  private groundLayout: GPUBindGroupLayout;
+  private prepassPipeline: GPURenderPipeline;
+  private pbrPipeline: GPURenderPipeline;
+  private groundPipeline: GPURenderPipeline;
+  private anchorPipeline: GPURenderPipeline;
+  private sampler: GPUSampler;
+
+  private frameBuffer: GPUBuffer;
+  private frameBind: GPUBindGroup | null = null;
+  private dummyLookup: GPUBuffer;
 
   private environment: Environment | null = null;
-  private specularTexture: Texture;
-  private brdfTexture: Texture;
-
-  private occlusion: Occlusion | null = null;
-  /** The last scene given, kept so the bake can be redone when the light moves. */
-  private groups: InstanceGroup[] = [];
-  private occlusionTexture: Texture;
-  private shadowTexture: Texture;
-  private groundProgram: Program;
-  private groundMesh: Mesh | null = null;
-
-  /** HDR output with bloom; null where the context cannot render to float. */
-  private post: PostChain | null = null;
+  private envSamples: EnvSamples | null = null;
+  private envSpin = 0;
+  private exposure = 1;
   private debugMode = 0;
-  /** Bloom strength: a halo on the brightest reflections, not a glow on the piece. */
-  bloom = 0.018;
 
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
 
-  constructor(canvasHost: HTMLElement) {
-    this.renderer = new Renderer({ dpr: Math.min(window.devicePixelRatio, 2), antialias: true, alpha: false });
-    const gl = this.renderer.gl;
-    const raw = gl as unknown as WebGL2RenderingContext;
-    canvasHost.appendChild(gl.canvas as HTMLCanvasElement);
+  private groups: GpuGroup[] = [];
+  private materialBuffer: GPUBuffer | null = null;
+  private materialBind: GPUBindGroup | null = null;
 
-    this.camera = new Camera(gl, { fov: 32, near: 0.5, far: 4000 });
-    // Z is up here, as it is everywhere else in the project: parts revolve about
-    // Z, symmetries turn about Z, and the environment is lit from +Z.
-    this.camera.position.set(90, 60, 50);
+  private traceLayout: GPUBindGroupLayout;
+  private traceBind: GPUBindGroup | null = null;
+  private traceBuffers: GPUBuffer[] = [];
+  private traceParams: GPUBuffer;
+  private reflections = false;
+  /** The reflection scene is built only when something will trace against it. */
+  private traceStale = true;
+  private traceInstances = 0;
+  private traceEps = 0.01;
+  /** Reflection bounces this frame: two at rest, one while the camera moves. */
+  private bounces = 2;
+  /** An occlusion bake asked for since the last frame; coalesced so a dragged slider bakes once a frame, not once an event. */
+  private bakeQueued = false;
+
+  /** A frame is drawn only when something has changed: the scene, a setting, or the camera. */
+  private dirty = true;
+  /** Frames actually drawn, for measuring. */
+  frameCount = 0;
+  /**
+   * Adaptive resolution. While the camera moves, frames are timed; if they
+   * cannot keep 30 a second the internal scale steps down, and steps back up
+   * when there is headroom. The user's render-scale slider is the ceiling.
+   */
+  private autoScale = 1;
+  private lastFrameAt = 0;
+  private frameMs = 16;
+  /** When the scale last stepped: each step reallocates the render targets, so steps are rationed. */
+  private lastScaleStep = 0;
+  /** Ask for a frame on the next tick. */
+  requestRender() { this.dirty = true; }
+  private renderScale = 1;
+
+  private occlusion: Occlusion | null = null;
+  private groundBuffer: GPUBuffer;
+  private groundBind: GPUBindGroup | null = null;
+  private discPosition: GPUBuffer;
+  private discIndex: GPUBuffer;
+  private discCount: number;
+
+  private anchorPosition: GPUBuffer | null = null;
+  private anchorColour: GPUBuffer | null = null;
+  private anchorCount = 0;
+
+  static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<Viewer> {
+    const canvas = document.createElement('canvas');
+    canvas.style.width = '100%';
+    canvas.style.height = '100%';
+    canvas.style.display = 'block';
+    const ctx = await createContext(canvas, onLost);
+    return new Viewer(ctx, host);
+  }
+
+  private constructor(ctx: GpuContext, host: HTMLElement) {
+    this.ctx = ctx;
+    this.host = host;
+    host.appendChild(ctx.canvas);
+    const { device } = ctx;
 
     this.controls = new Orbit(this.camera, {
-      element: gl.canvas as unknown as HTMLElement,
-      target: new Vec3(0, 0, 0),
-      ease: 0.18,
-      inertia: 0.72,
-      minDistance: 6,
-      maxDistance: 1200,
+      element: ctx.canvas, ease: 0.18, inertia: 0.72, minDistance: 6, maxDistance: 1200,
+    });
+    this.post = new PostChain(ctx);
+    // the scene is linear HDR until the composite, so clear to what tonemaps to the page colour
+    this.background = inverseTonemap(BACKGROUND);
+
+    this.sampler = device.createSampler({
+      magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
+      addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge', addressModeW: 'clamp-to-edge',
     });
 
-    this.scene = new Transform();
-
-    // Flat ground, matching the page. The environment is still baked and still
-    // lights the metal — it is only no longer drawn behind it. A room painted
-    // across the background competes with the piece instead of appearing in it,
-    // which is what it is for.
-    // With the post chain, the scene is linear HDR until the composite pass, so
-    // the clear colour is whatever tonemaps to the page colour.
-    this.post = PostChain.create(raw);
-    const background = this.post ? inverseTonemap(BACKGROUND) : BACKGROUND;
-    gl.clearColor(background[0], background[1], background[2], 1);
-
-    // Raw GL textures from the bakes, wrapped so ogl still manages texture units.
-    this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
-    this.brdfTexture = wrapTexture(gl, raw.TEXTURE_2D);
-    this.occlusionTexture = wrapTexture(gl, raw.TEXTURE_2D);
-    this.shadowTexture = wrapTexture(gl, raw.TEXTURE_2D);
-
-    this.program = new Program(gl, {
-      vertex: PBR_VERT,
-      fragment: PBR_FRAG,
-      uniforms: {
-        uSpecular: { value: this.specularTexture },
-        uBrdf: { value: this.brdfTexture },
-        uMaxLod: { value: 5 },
-        uF0: { value: this.metal.f0 },
-        uRoughness: { value: this.finish.roughness },
-        uAnisotropy: { value: this.finish.anisotropy },
-        uHammer: { value: this.finish.hammer },
-        uPatina: { value: this.finish.patina },
-        uPatinaColour: { value: patinaColour('gold') },
-        uWear: { value: 1 },
-        uExposure: { value: 1 },
-        uEnvSpin: { value: 0 },
-        uDebug: { value: 0 },
-        uOcclusion: { value: this.occlusionTexture },
-        uOcclusionBase: { value: 0 },
-        uVertexCount: { value: 1 },
-        uOcclusionOn: { value: 0 },
-        uLinearOut: { value: this.post ? 1 : 0 },
-      },
-      cullFace: null,
+    // --- layouts shared by the scene pipelines ---
+    const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+    this.frameLayout = device.createBindGroupLayout({
+      label: 'frame',
+      entries: [
+        { binding: 0, visibility: both, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: both, texture: { viewDimension: 'cube' } },
+        { binding: 2, visibility: both, texture: {} },
+        { binding: 3, visibility: both, sampler: {} },
+        { binding: 4, visibility: both, buffer: { type: 'read-only-storage' } },
+      ],
+    });
+    this.materialLayout = device.createBindGroupLayout({
+      label: 'material',
+      entries: [{ binding: 0, visibility: both, buffer: { type: 'uniform', hasDynamicOffset: true } }],
+    });
+    this.groundLayout = device.createBindGroupLayout({
+      label: 'ground',
+      entries: [
+        { binding: 0, visibility: both, buffer: { type: 'uniform' } },
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      ],
     });
 
-    this.groundProgram = new Program(gl, {
-      vertex: GROUND_VERT,
-      fragment: GROUND_FRAG,
-      uniforms: {
-        uShadow: { value: this.shadowTexture },
-        uSpecular: { value: this.specularTexture },
-        uMaxLod: { value: 5 },
-        uExposure: { value: 1 },
-        uEnvSpin: { value: 0 },
-        uBackground: { value: background },
-        uLinearOut: { value: this.post ? 1 : 0 },
-        // a dark matte table: enough to pool a little light, not enough to compete
-        uAlbedo: { value: [0.04, 0.04, 0.043] },
-        uCentre: { value: [0, 0, 0] },
-        uRadius: { value: 1 },
-        uDebug: { value: 0 },
+    const ro = (binding: number): GPUBindGroupLayoutEntry =>
+      ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } });
+    this.traceLayout = device.createBindGroupLayout({
+      label: 'trace',
+      entries: [ro(0), ro(1), ro(2), ro(3), ro(4), { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, ro(6)],
+    });
+    this.traceParams = device.createBuffer({ label: 'trace params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+    const target: GPUColorTargetState = { format: this.post.colourFormat };
+    const multisample = { count: this.post.sampleCount };
+    const depth = (write: boolean): GPUDepthStencilState => ({
+      format: this.post.depthFormat, depthWriteEnabled: write, depthCompare: write ? 'less' : 'always',
+    });
+
+    const instanceLayout: GPUVertexBufferLayout = {
+      arrayStride: 64, stepMode: 'instance',
+      attributes: [4, 5, 6, 7].map((loc, k) => ({ shaderLocation: loc, offset: k * 16, format: 'float32x4' as GPUVertexFormat })),
+    };
+    const prepass = shader(device, PREPASS_WGSL, 'prepass');
+    this.prepassPipeline = device.createRenderPipeline({
+      label: 'prepass',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
+      vertex: {
+        module: prepass, entryPoint: 'vsMain',
+        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, instanceLayout],
       },
+      fragment: { module: prepass, entryPoint: 'fsMain', targets: [{ format: this.post.colourFormat, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depth(true),
+      multisample,
+    });
+
+    const pbr = shader(device, PBR_WGSL, 'pbr');
+    this.pbrPipeline = device.createRenderPipeline({
+      label: 'pbr',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout, this.traceLayout] }),
+      vertex: {
+        module: pbr, entryPoint: 'vsMain',
+        buffers: [
+          { arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
+          { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
+          { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] },
+          { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32' }] },
+          instanceLayout,
+          { arrayStride: 4, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32' }] },
+        ],
+      },
+      fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      // the prepass has written depth; only the visible surface passes here
+      depthStencil: { format: this.post.depthFormat, depthWriteEnabled: false, depthCompare: 'less-equal' },
+      multisample,
+    });
+
+    const ground = shader(device, GROUND_WGSL, 'ground');
+    this.groundPipeline = device.createRenderPipeline({
+      label: 'ground',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.groundLayout] }),
+      vertex: {
+        module: ground, entryPoint: 'vsMain',
+        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }],
+      },
+      fragment: { module: ground, entryPoint: 'fsMain', targets: [target] },
       // seen from underneath, the table should not hide the piece
-      cullFace: raw.BACK,
+      primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
+      depthStencil: depth(true),
+      multisample,
     });
 
-
-    this.anchorProgram = new Program(gl, {
-      vertex: anchorVertex,
-      fragment: anchorFragment,
-      depthTest: false,
+    const anchor = shader(device, ANCHOR_WGSL, 'anchors');
+    this.anchorPipeline = device.createRenderPipeline({
+      label: 'anchors',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
+      vertex: {
+        module: anchor, entryPoint: 'vsMain',
+        buffers: [
+          { arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] },
+          { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
+        ],
+      },
+      fragment: { module: anchor, entryPoint: 'fsMain', targets: [target] },
+      primitive: { topology: 'line-list' },
+      depthStencil: depth(false),
+      multisample,
     });
+
+    this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.dummyLookup = emptyBuffer(device, 8, GPUBufferUsage.STORAGE, 'no occlusion');
+    this.groundBuffer = device.createBuffer({ label: 'ground', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
+    const disc = unitDisc(96);
+    this.discPosition = bufferFrom(device, disc.positions, GPUBufferUsage.VERTEX, 'disc');
+    this.discIndex = bufferFrom(device, disc.indices, GPUBufferUsage.INDEX, 'disc index');
+    this.discCount = disc.indices.length;
 
     this.setEnvironment('studio');
 
-    window.addEventListener('resize', this.resize);
+    // the host, not the window: a pane that is laid out after load, or shown
+    // after being hidden, changes size without a window resize event
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(host);
     this.resize();
     this.loop();
   }
 
   setEnvironment(preset: EnvPreset) {
-    const gl = this.renderer.gl as unknown as WebGL2RenderingContext;
-
-    // Bake first and release the old environment last. Freeing textures up front
-    // returns their names to the driver, the new bake is handed the same names
-    // straight back, and anything still holding the old handle then deletes the
-    // new texture it now aliases.
     const previous = this.environment;
-    const env = bakeEnvironment(gl, preset);
-    invalidateRendererState(this.renderer, gl);
-
-    adoptTexture(this.specularTexture, env.specular);
-    adoptTexture(this.brdfTexture, env.brdf);
-    this.program.uniforms.uMaxLod.value = env.mips - 1;
-    this.groundProgram.uniforms.uMaxLod.value = env.mips - 1;
-
+    const env = bakeEnvironment(this.ctx, preset);
     this.environment = env;
+    this.envSamples = null;
+    this.rebuildFrameBind();
     previous?.dispose();
+    this.dirty = true;
 
-    // shadows follow the light
-    if (this.groups.length) this.bakeOcclusion(this.groups);
+    // shadows follow the light, once its radiance has been read back
+    env.samples.then((samples) => {
+      if (this.environment !== env) return;
+      this.envSamples = samples;
+      if (this.groups.length) this.bakeOcclusion();
+      this.dirty = true;
+    });
     return env;
   }
 
   setMaterial(metalName: string, finishName: string) {
     this.metal = metals[metalName] ?? this.metal;
     this.finish = finishes[finishName] ?? this.finish;
-    this.program.uniforms.uF0.value = this.metal.f0;
-    this.program.uniforms.uRoughness.value = this.finish.roughness;
-    this.program.uniforms.uAnisotropy.value = this.finish.anisotropy;
-    this.program.uniforms.uHammer.value = this.finish.hammer;
-    this.program.uniforms.uPatina.value = this.finish.patina;
-    this.program.uniforms.uPatinaColour.value = patinaColour(this.metal.name);
+    this.writeMaterials();
   }
 
-  setBloom(v: number) {
-    this.bloom = v;
-  }
+  setBloom(v: number) { this.bloom = v; this.dirty = true; }
+  setExposure(v: number) { this.exposure = v; this.dirty = true; }
 
-  setExposure(v: number) {
-    this.program.uniforms.uExposure.value = v;
-    this.groundProgram.uniforms.uExposure.value = v;
+  /** Fraction of device resolution to render at, below the pixel budget. */
+  setRenderScale(v: number) {
+    this.renderScale = Math.min(Math.max(v, 0.25), 1);
+    this.resize();
   }
 
   setEnvSpin(radians: number) {
-    this.program.uniforms.uEnvSpin.value = radians;
-    this.groundProgram.uniforms.uEnvSpin.value = radians;
-    if (this.groups.length) this.bakeOcclusion(this.groups);
+    this.envSpin = radians;
+    if (this.groups.length && this.envSamples) this.bakeQueued = true;
+    this.dirty = true;
   }
 
   /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
-  setDebug(mode: number) {
-    this.debugMode = mode;
-    this.program.uniforms.uDebug.value = mode;
-    this.groundProgram.uniforms.uDebug.value = mode;
-  }
+  setDebug(mode: number) { this.debugMode = mode; this.dirty = true; }
 
-  /** One draw call per distinct part mesh, however many times it is placed. */
-  setInstanced(groups: InstanceGroup[]) {
-    const gl = this.renderer.gl;
-    for (const m of this.meshes) {
-      m.setParent(null);
-      m.geometry.remove();
-    }
-    this.meshes.length = 0;
-
-    this.groups = groups;
-    this.bakeOcclusion(groups);
-
-    groups.forEach((g, k) => {
-      const count = g.matrices.length / 16;
-      const col = (k: number) => {
-        const out = new Float32Array(count * 4);
-        for (let i = 0; i < count; i++) {
-          out[i * 4] = g.matrices[i * 16 + k * 4];
-          out[i * 4 + 1] = g.matrices[i * 16 + k * 4 + 1];
-          out[i * 4 + 2] = g.matrices[i * 16 + k * 4 + 2];
-          out[i * 4 + 3] = g.matrices[i * 16 + k * 4 + 3];
-        }
-        return out;
-      };
-      const geometry = new Geometry(gl, {
-        position: { size: 3, data: g.mesh.positions },
-        normal: { size: 3, data: g.mesh.normals },
-        uv: { size: 2, data: g.mesh.uvs },
-        wear: { size: 1, data: wearOf(g.mesh) },
-        index: { data: g.mesh.indices },
-        im0: { size: 4, data: col(0), instanced: 1 },
-        im1: { size: 4, data: col(1), instanced: 1 },
-        im2: { size: 4, data: col(2), instanced: 1 },
-        im3: { size: 4, data: col(3), instanced: 1 },
-      });
-      const mesh = new Mesh(gl, { geometry, program: this.program });
-
-      // Per-group material and occlusion slice without a program per group: ogl
-      // applies uniforms during program.use(), which runs after this hook.
-      const metal = metals[g.metal ?? ''] ?? null;
-      const finish = finishes[g.finish ?? ''] ?? null;
-      const base = this.occlusion?.bases[k] ?? 0;
-      const vertexCount = g.mesh.positions.length / 3;
-      mesh.onBeforeRender(() => {
-        const u = this.program.uniforms;
-        const m = metal ?? this.metal;
-        const f = finish ?? this.finish;
-        u.uF0.value = m.f0;
-        u.uRoughness.value = f.roughness;
-        u.uAnisotropy.value = f.anisotropy;
-        u.uHammer.value = f.hammer;
-        u.uPatina.value = f.patina;
-        u.uPatinaColour.value = patinaColour(m.name);
-        u.uOcclusionBase.value = base;
-        u.uVertexCount.value = vertexCount;
-      });
-
-      mesh.setParent(this.scene);
-      this.meshes.push(mesh);
-    });
+  /** Trace reflected rays against the other parts, or reflect only the room. */
+  setReflections(on: boolean) {
+    this.reflections = on;
+    if (on && this.traceStale && this.groups.length) this.buildTrace();
+    this.writeTraceParams();
+    this.dirty = true;
   }
 
   /**
-   * Visibility for every placed vertex, and a shadow for the table under them.
-   * Runs on the GPU in a few tens of milliseconds, so it simply happens whenever
-   * the scene does.
+   * Draft is for working: a lighter shadow bake and fewer pixels, so an edit
+   * shows in a fraction of a second on a dense form. Final is for looking.
    */
-  private bakeOcclusion(groups: InstanceGroup[]) {
-    const gl = this.renderer.gl;
-    const raw = gl as unknown as WebGL2RenderingContext;
+  setQuality(q: Quality) {
+    if (q === this.quality) return;
+    this.quality = q;
+    this.resize();
+    if (this.groups.length && this.envSamples) this.bakeQueued = true;
+    this.dirty = true;
+  }
+  private quality: Quality = 'draft';
 
-    const previous = this.occlusion;
-    const env = this.environment;
-    let occ: Occlusion | null = null;
-    try {
-      // Directions are drawn from the background cube at a 64-pixel mip: the
-      // distribution only has to know where the light is, not its exact edges.
-      const lod = Math.max(0, Math.round(Math.log2(env ? env.size / 64 : 1)));
-      occ = bakeOcclusion(raw, groups, {
-        env: env && env.highDynamicRange
-          ? { cube: env.background, size: env.size, lod, spin: this.program.uniforms.uEnvSpin.value as number }
-          : undefined,
-      });
-    } catch (err) {
-      console.error('occlusion bake failed; rendering unoccluded', err);
+  /** One draw per distinct part mesh, however many times it is placed. */
+  setInstanced(groups: InstanceGroup[]) {
+    const { device } = this.ctx;
+    for (const g of this.groups) {
+      for (const b of [g.position, g.normal, g.uv, g.wear, g.enamel, g.instance, g.index]) b.destroy();
     }
-    invalidateRendererState(this.renderer, raw);
-    this.occlusion = occ;
-    previous?.dispose();
+    const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
+    this.groups = groups.map((g) => ({
+      source: g,
+      position: bufferFrom(device, g.mesh.positions, shared, 'positions'),
+      normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
+      uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
+      wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
+      enamel: bufferFrom(device, g.mesh.enamel ?? new Float32Array(g.mesh.positions.length / 3), GPUBufferUsage.VERTEX, 'enamel'),
+      instance: bufferFrom(device, g.matrices, shared, 'instances'),
+      index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
+      indexCount: g.mesh.indices.length,
+      instanceCount: g.matrices.length / 16,
+      vertexCount: g.mesh.positions.length / 3,
+    }));
 
-    if (this.groundMesh) {
-      this.groundMesh.setParent(null);
-      this.groundMesh.geometry.remove();
-      this.groundMesh = null;
+    this.materialBuffer?.destroy();
+    this.materialBuffer = device.createBuffer({
+      label: 'materials', size: Math.max(1, this.groups.length) * MATERIAL_STRIDE,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+    });
+    this.materialBind = device.createBindGroup({
+      layout: this.materialLayout,
+      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } }],
+    });
+
+    // the reflection scene costs a hierarchy build and five uploads; without
+    // reflections the shader needs only a bind group that resolves
+    if (this.reflections) this.buildTrace();
+    else this.buildTrace(true);
+    if (this.envSamples) this.bakeOcclusion();
+    else this.clearOcclusion();
+    this.writeMaterials();
+    this.dirty = true;
+  }
+
+  /** Occlusion entries are laid out group by group, placement by placement. */
+  private occlusionBases(): number[] {
+    const bases: number[] = [];
+    let total = 0;
+    for (const g of this.groups) {
+      bases.push(total);
+      total += g.vertexCount * g.instanceCount;
     }
+    return bases;
+  }
 
-    if (!occ) {
-      this.program.uniforms.uOcclusionOn.value = 0;
-      return;
-    }
+  /**
+   * The scene as the reflection tracer sees it: hierarchies per mesh, a list
+   * of placements. `empty` binds a scene with nothing in it, for when nothing
+   * traces; the real one is built the moment reflections are switched on.
+   */
+  private buildTrace(empty = false) {
+    const { device } = this.ctx;
+    for (const b of this.traceBuffers) b.destroy();
+    this.traceBuffers = [];
+    this.traceStale = empty;
 
-    adoptTexture(this.occlusionTexture, occ.lookup);
-    adoptTexture(this.shadowTexture, occ.ground);
-    this.program.uniforms.uOcclusionOn.value = 1;
+    const bases = this.occlusionBases();
+    const instances: SceneInstance[] = [];
+    let radius = 0;
+    if (!empty) this.groups.forEach((g, k) => {
+      for (let i = 0; i < g.instanceCount; i++) {
+        instances.push({
+          mesh: g.source.mesh,
+          matrix: g.source.matrices.subarray(i * 16, i * 16 + 16),
+          group: k,
+          occlusionBase: bases[k] + i * g.vertexCount,
+        });
+      }
+      const b = g.source.mesh;
+      for (let i = 0; i < b.positions.length; i += 3) {
+        radius = Math.max(radius, Math.abs(b.positions[i]), Math.abs(b.positions[i + 1]), Math.abs(b.positions[i + 2]));
+      }
+    });
+    const scene = buildScene(instances);
+    this.traceInstances = scene.instanceCount;
+    // a ray starts a hair off its surface: enough to clear the triangle it
+    // left, small against the thinnest sheet in the piece
+    this.traceEps = Math.max(1e-3, radius * 4e-4);
 
-    this.groundProgram.uniforms.uCentre.value = occ.groundCentre;
-    this.groundProgram.uniforms.uRadius.value = occ.groundRadius;
-    this.groundMesh = new Mesh(gl, { geometry: unitDisc(gl, 96), program: this.groundProgram });
-    this.groundMesh.renderOrder = -1;
-    this.groundMesh.setParent(this.scene);
+    const storage = GPUBufferUsage.STORAGE;
+    const nodes = bufferFrom(device, new Uint8Array(scene.nodes), storage, 'bvh nodes');
+    const tris = bufferFrom(device, scene.tris, storage, 'bvh triangles');
+    const triIdx = bufferFrom(device, scene.triIdx, storage, 'bvh indices');
+    const inst = bufferFrom(device, new Uint8Array(scene.instances), storage, 'bvh instances');
+    const tlas = bufferFrom(device, new Uint8Array(scene.tlas), storage, 'bvh tlas');
+    this.traceBuffers = [nodes, tris, triIdx, inst, tlas];
+    this.traceBind = device.createBindGroup({
+      label: 'trace',
+      layout: this.traceLayout,
+      entries: [
+        { binding: 0, resource: { buffer: nodes } },
+        { binding: 1, resource: { buffer: tris } },
+        { binding: 2, resource: { buffer: triIdx } },
+        { binding: 3, resource: { buffer: inst } },
+        { binding: 4, resource: { buffer: this.materialBuffer! } },
+        { binding: 5, resource: { buffer: this.traceParams } },
+        { binding: 6, resource: { buffer: tlas } },
+      ],
+    });
+    this.writeTraceParams();
+  }
+
+  private writeTraceParams() {
+    const data = new ArrayBuffer(16);
+    new Uint32Array(data).set([this.traceInstances, this.reflections ? 1 : 0], 0);
+    new Float32Array(data).set([this.traceEps], 2);
+    new Uint32Array(data).set([this.bounces], 3);
+    this.ctx.device.queue.writeBuffer(this.traceParams, 0, data);
   }
 
   setMesh(data: PartMesh) {
@@ -360,12 +489,12 @@ export class Viewer {
   }
 
   setAnchors(anchors: Anchor[], scale: number) {
-    const gl = this.renderer.gl;
-    if (this.anchorMesh) {
-      this.anchorMesh.setParent(null);
-      this.anchorMesh.geometry.remove();
-      this.anchorMesh = null;
-    }
+    const { device } = this.ctx;
+    this.anchorPosition?.destroy();
+    this.anchorColour?.destroy();
+    this.anchorPosition = this.anchorColour = null;
+    this.anchorCount = 0;
+    this.dirty = true;
     if (!anchors.length) return;
 
     const position = new Float32Array(anchors.length * 12);
@@ -374,33 +503,17 @@ export class Viewer {
       const o = i * 12;
       const axisLen = scale;
       const tanLen = scale * 0.45;
-      position[o + 0] = a.position[0] - a.axis[0] * axisLen * 0.35;
-      position[o + 1] = a.position[1] - a.axis[1] * axisLen * 0.35;
-      position[o + 2] = a.position[2] - a.axis[2] * axisLen * 0.35;
-      position[o + 3] = a.position[0] + a.axis[0] * axisLen;
-      position[o + 4] = a.position[1] + a.axis[1] * axisLen;
-      position[o + 5] = a.position[2] + a.axis[2] * axisLen;
-      position[o + 6] = a.position[0] - a.tangent[0] * tanLen;
-      position[o + 7] = a.position[1] - a.tangent[1] * tanLen;
-      position[o + 8] = a.position[2] - a.tangent[2] * tanLen;
-      position[o + 9] = a.position[0] + a.tangent[0] * tanLen;
-      position[o + 10] = a.position[1] + a.tangent[1] * tanLen;
-      position[o + 11] = a.position[2] + a.tangent[2] * tanLen;
-      for (let k = 0; k < 2; k++) {
-        colour[o + k * 3] = 1.0; colour[o + k * 3 + 1] = 0.72; colour[o + k * 3 + 2] = 0.15;
-      }
-      for (let k = 2; k < 4; k++) {
-        colour[o + k * 3] = 0.25; colour[o + k * 3 + 1] = 0.7; colour[o + k * 3 + 2] = 1.0;
-      }
+      position.set([
+        a.position[0] - a.axis[0] * axisLen * 0.35, a.position[1] - a.axis[1] * axisLen * 0.35, a.position[2] - a.axis[2] * axisLen * 0.35,
+        a.position[0] + a.axis[0] * axisLen, a.position[1] + a.axis[1] * axisLen, a.position[2] + a.axis[2] * axisLen,
+        a.position[0] - a.tangent[0] * tanLen, a.position[1] - a.tangent[1] * tanLen, a.position[2] - a.tangent[2] * tanLen,
+        a.position[0] + a.tangent[0] * tanLen, a.position[1] + a.tangent[1] * tanLen, a.position[2] + a.tangent[2] * tanLen,
+      ], o);
+      colour.set([1, 0.72, 0.15, 1, 0.72, 0.15, 0.25, 0.7, 1, 0.25, 0.7, 1], o);
     });
-
-    const geometry = new Geometry(gl, {
-      position: { size: 3, data: position },
-      colour: { size: 3, data: colour },
-    });
-    this.anchorMesh = new Mesh(gl, { geometry, program: this.anchorProgram, mode: gl.LINES });
-    this.anchorMesh.renderOrder = 10;
-    this.anchorMesh.setParent(this.scene);
+    this.anchorPosition = bufferFrom(device, position, GPUBufferUsage.VERTEX, 'anchor lines');
+    this.anchorColour = bufferFrom(device, colour, GPUBufferUsage.VERTEX, 'anchor colours');
+    this.anchorCount = anchors.length * 4;
   }
 
   frameBounds(b: Box3) {
@@ -412,117 +525,270 @@ export class Viewer {
       0.001,
     );
     const dist = (radius / Math.tan((this.camera.fov * Math.PI) / 360)) * 1.3;
-    this.controls.target.set(cx, cy, cz);
+    this.camera.target = [cx, cy, cz];
 
-    // Look down on a flat form and across a tall one. A fixed direction views a
-    // mandala nicely and a flower stem end-on, and most plants are stems.
+    // look down on a flat form and across a tall one
     const spanXY = Math.max(b.max[0] - b.min[0], b.max[1] - b.min[1]);
     const spanZ = b.max[2] - b.min[2];
     const upright = spanZ / (spanXY + spanZ + 1e-6);
-    const dir = new Vec3(0.42 + 0.2 * upright, 0.5 + 0.28 * upright, 0.9 - 0.8 * upright).normalize();
-    this.camera.position.set(cx + dir.x * dist, cy + dir.y * dist, cz + dir.z * dist);
+    const dir: Vec3 = [0.42 + 0.2 * upright, 0.5 + 0.28 * upright, 0.9 - 0.8 * upright];
+    const l = Math.hypot(dir[0], dir[1], dir[2]);
+    this.camera.position = [cx + (dir[0] / l) * dist, cy + (dir[1] / l) * dist, cz + (dir[2] / l) * dist];
     this.camera.near = Math.max(radius * 0.01, 0.01);
     this.camera.far = dist + radius * 12;
-    this.camera.perspective({});
     this.controls.forcePosition();
+    this.dirty = true;
   }
 
+  dispose() {
+    cancelAnimationFrame(this.raf);
+    this.observer.disconnect();
+    this.controls.remove();
+    this.environment?.dispose();
+    this.occlusion?.dispose();
+    this.post.dispose();
+  }
+
+  // ---- internals ----
+
+  /**
+   * Pixels the scene pass is allowed. Every one is shaded four times for the
+   * multisampling and carried in float, so this is the single biggest lever on
+   * frame time; 3.2 million is a little under a retina laptop screen.
+   */
+  static readonly PIXEL_BUDGET = 3_200_000;
+  /** Draft keeps to a laptop screen's worth of pixels at 1x. */
+  static readonly DRAFT_PIXEL_BUDGET = 1_800_000;
+
   private resize = () => {
-    const gl = this.renderer.gl;
-    const host = (gl.canvas as HTMLCanvasElement).parentElement as HTMLElement;
-    this.renderer.setSize(host.clientWidth, host.clientHeight);
-    this.camera.perspective({ aspect: host.clientWidth / host.clientHeight });
-    this.post?.resize(host.clientWidth * this.renderer.dpr, host.clientHeight * this.renderer.dpr);
+    // Render at device resolution up to a budget, then scale down. A retina
+    // canvas the size of a laptop screen sits just inside it; a tall pane or a
+    // large monitor comes down to the same cost rather than crawling.
+    const cw = Math.max(1, this.host.clientWidth), ch = Math.max(1, this.host.clientHeight);
+    const budget = this.quality === 'final' ? Viewer.PIXEL_BUDGET : Viewer.DRAFT_PIXEL_BUDGET;
+    const dpr = Math.min(window.devicePixelRatio, 2, Math.sqrt(budget / (cw * ch))) * this.renderScale * this.autoScale;
+    const w = Math.max(1, Math.floor(cw * dpr));
+    const h = Math.max(1, Math.floor(ch * dpr));
+    this.ctx.canvas.width = w;
+    this.ctx.canvas.height = h;
+    this.camera.aspect = w / h;
+    this.post.resize(w, h);
+    this.dirty = true;
   };
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    const moving = this.controls.moving;
     this.controls.update();
-
-    this.camera.updateMatrixWorld();
-    if (this.post) {
-      this.renderer.render({ scene: this.scene, camera: this.camera, target: this.post.target as never });
-      this.post.finish({ bloom: this.bloom, raw: this.debugMode > 0 });
-      // the chain drove raw GL; ogl's cache describes a state that no longer holds
-      invalidateRendererState(this.renderer, this.renderer.gl as unknown as WebGL2RenderingContext);
-    } else {
-      this.renderer.render({ scene: this.scene, camera: this.camera });
+    this.camera.update();
+    if (!this.frameBind) return;
+    if (this.bakeQueued) {
+      this.bakeQueued = false;
+      this.bakeOcclusion();
     }
+    // the second bounce is the costlier half of a traced frame; it waits for the camera to settle
+    const bounces = moving ? 1 : 2;
+    if (bounces !== this.bounces) {
+      this.bounces = bounces;
+      this.writeTraceParams();
+      this.dirty = true;
+    }
+    // nothing to draw when nothing has changed: the GPU idles and the page stays responsive
+    if (!this.dirty && !moving) return;
+    this.dirty = false;
+    this.frameCount++;
+    this.pace(moving);
+    const { device } = this.ctx;
+
+    const frame = new Float32Array(FRAME_SIZE / 4);
+    frame.set(this.camera.viewProjection, 0);
+    frame.set([...this.camera.position, this.exposure], 16);
+    frame.set([this.envSpin, this.debugMode, (this.environment?.mips ?? 1) - 1, this.occlusion ? 1 : 0], 20);
+    device.queue.writeBuffer(this.frameBuffer, 0, frame);
+
+    const encoder = device.createCommandEncoder({ label: 'frame' });
+    const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
+    pass.setBindGroup(0, this.frameBind);
+
+    if (this.groups.length) {
+      pass.setPipeline(this.prepassPipeline);
+      for (const g of this.groups) {
+        pass.setVertexBuffer(0, g.position);
+        pass.setVertexBuffer(1, g.instance);
+        pass.setIndexBuffer(g.index, 'uint32');
+        pass.drawIndexed(g.indexCount, g.instanceCount);
+      }
+    }
+
+    if (this.occlusion && this.groundBind) {
+      pass.setPipeline(this.groundPipeline);
+      pass.setBindGroup(1, this.groundBind);
+      pass.setVertexBuffer(0, this.discPosition);
+      pass.setIndexBuffer(this.discIndex, 'uint32');
+      pass.drawIndexed(this.discCount);
+    }
+
+    if (this.groups.length && this.materialBind && this.traceBind) {
+      pass.setPipeline(this.pbrPipeline);
+      pass.setBindGroup(2, this.traceBind);
+      this.groups.forEach((g, k) => {
+        pass.setBindGroup(1, this.materialBind!, [k * MATERIAL_STRIDE]);
+        pass.setVertexBuffer(0, g.position);
+        pass.setVertexBuffer(1, g.normal);
+        pass.setVertexBuffer(2, g.uv);
+        pass.setVertexBuffer(3, g.wear);
+        pass.setVertexBuffer(4, g.instance);
+        pass.setVertexBuffer(5, g.enamel);
+        pass.setIndexBuffer(g.index, 'uint32');
+        pass.drawIndexed(g.indexCount, g.instanceCount);
+      });
+    }
+
+    if (this.anchorCount && this.anchorPosition && this.anchorColour) {
+      pass.setPipeline(this.anchorPipeline);
+      pass.setVertexBuffer(0, this.anchorPosition);
+      pass.setVertexBuffer(1, this.anchorColour);
+      pass.draw(this.anchorCount);
+    }
+    pass.end();
+
+    this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
+      bloom: this.bloom, raw: this.debugMode > 0,
+    });
+    device.queue.submit([encoder.finish()]);
   };
 
-  dispose() {
-    cancelAnimationFrame(this.raf);
-    window.removeEventListener('resize', this.resize);
-    this.controls.remove();
-    this.environment?.dispose();
+  /**
+   * Time consecutive frames during interaction and move the internal scale to
+   * hold 30 a second. Measured at the tick, which is the frame rate the user
+   * feels: a slow GPU backs the ticks up just as surely as slow script would.
+   */
+  private pace(moving: boolean) {
+    const now = performance.now();
+    const gap = now - this.lastFrameAt;
+    this.lastFrameAt = now;
+    // only consecutive frames say anything; a gap after an idle spell does not
+    if (!moving || gap > 250) return;
+    this.frameMs = this.frameMs * 0.8 + gap * 0.2;
+    // a step swaps a few hundred megabytes of targets, so at most a few a second
+    if (now - this.lastScaleStep < 300) return;
+    if (this.frameMs > 36 && this.autoScale > 0.5) {
+      // step by how far over budget the frame is, so a very slow frame drops straight to the floor
+      this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(33 / this.frameMs)));
+      this.frameMs = 16;
+      this.lastScaleStep = now;
+      this.resize();
+    } else if (this.frameMs < 14 && this.autoScale < 1) {
+      this.autoScale = Math.min(1, this.autoScale / 0.85);
+      this.frameMs = 16;
+      this.lastScaleStep = now;
+      this.resize();
+    }
+  }
+
+  private rebuildFrameBind() {
+    const env = this.environment;
+    if (!env) return;
+    this.frameBind = this.ctx.device.createBindGroup({
+      label: 'frame',
+      layout: this.frameLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.frameBuffer } },
+        { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
+        { binding: 2, resource: env.brdf.createView() },
+        { binding: 3, resource: this.sampler },
+        { binding: 4, resource: { buffer: this.occlusion?.lookup ?? this.dummyLookup } },
+      ],
+    });
+  }
+
+  /** Per-group material and occlusion slice, 96 bytes at a 256-byte stride. */
+  private writeMaterials() {
+    if (!this.materialBuffer) return;
+    const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
+    const f32 = new Float32Array(data);
+    const u32 = new Uint32Array(data);
+    const bases = this.occlusionBases();
+    this.groups.forEach((g, k) => {
+      const m = metals[g.source.metal ?? ''] ?? this.metal;
+      const f = finishes[g.source.finish ?? ''] ?? this.finish;
+      const o = (k * MATERIAL_STRIDE) / 4;
+      f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
+      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : 0, 0], o + 12);
+      f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
+      const e = enamels[g.source.enamel ?? ''];
+      f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);
+    });
+    this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
+  }
+
+  /**
+   * Visibility for every placed vertex, and a shadow for the table under them.
+   * Runs on the GPU in a few tens of milliseconds, so it simply happens whenever
+   * the scene or the light does.
+   */
+  private bakeOcclusion() {
+    const previous = this.occlusion;
+    const occ = bakeOcclusion(
+      this.ctx,
+      this.groups.map((g) => ({
+        mesh: g.source.mesh, matrices: g.source.matrices,
+        position: g.position, normal: g.normal, instance: g.instance, index: g.index,
+      })),
+      {
+        env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined,
+        // a quarter of the directions at half the resolution is a tenth of the
+        // work, and soft shadows on a working model do not need more
+        directions: this.quality === 'final' ? 256 : 64,
+        depthSize: this.quality === 'final' ? 2048 : 1024,
+      },
+    );
+    this.occlusion = occ;
+    // a superseded bake stops at its next chunk; this one redraws as each chunk lands
+    previous?.dispose();
+    if (occ) occ.onProgress = () => { this.dirty = true; };
+    this.rebuildFrameBind();
+    this.writeMaterials();
+    if (!occ) { this.groundBind = null; return; }
+
+    const { device } = this.ctx;
+    device.queue.writeBuffer(this.groundBuffer, 0, new Float32Array([
+      ...occ.groundCentre, occ.groundRadius,
+      ...this.background, 0,
+      // a dark matte table: enough to pool a little light, not enough to compete
+      0.04, 0.04, 0.043, 0,
+    ]));
+    this.groundBind = device.createBindGroup({
+      label: 'ground',
+      layout: this.groundLayout,
+      entries: [
+        { binding: 0, resource: { buffer: this.groundBuffer } },
+        { binding: 1, resource: occ.ground.createView() },
+      ],
+    });
+  }
+
+  private clearOcclusion() {
     this.occlusion?.dispose();
-    this.post?.dispose();
+    this.occlusion = null;
+    this.groundBind = null;
+    this.rebuildFrameBind();
   }
 }
 
 /** A unit disc in the XY plane, wound counter-clockwise seen from +Z. */
-function unitDisc(gl: ConstructorParameters<typeof Geometry>[0], segments: number): Geometry {
-  const position = new Float32Array((segments + 1) * 3);
+function unitDisc(segments: number) {
+  const positions = new Float32Array((segments + 1) * 3);
   for (let i = 0; i < segments; i++) {
     const a = (i / segments) * Math.PI * 2;
-    position[(i + 1) * 3] = Math.cos(a);
-    position[(i + 1) * 3 + 1] = Math.sin(a);
+    positions[(i + 1) * 3] = Math.cos(a);
+    positions[(i + 1) * 3 + 1] = Math.sin(a);
   }
-  const index = new Uint16Array(segments * 3);
+  const indices = new Uint32Array(segments * 3);
   for (let i = 0; i < segments; i++) {
-    index[i * 3] = 0;
-    index[i * 3 + 1] = i + 1;
-    index[i * 3 + 2] = ((i + 1) % segments) + 1;
+    indices[i * 3] = 0;
+    indices[i * 3 + 1] = i + 1;
+    indices[i * 3 + 2] = ((i + 1) % segments) + 1;
   }
-  return new Geometry(gl, {
-    position: { size: 3, data: position },
-    index: { data: index },
-  });
-}
-
-/**
- * The bake drives raw WebGL, which leaves ogl's state cache describing a world
- * that no longer exists — it will happily skip re-binding a texture unit it
- * believes is already correct, and then every IBL lookup samples whatever the
- * baker left bound. Clearing the cache forces ogl to re-issue everything.
- */
-function invalidateRendererState(renderer: Renderer, gl: WebGL2RenderingContext) {
-  const state = renderer.state as unknown as Record<string | number, unknown>;
-  state.textureUnits = [];
-  state.activeTextureUnit = -1;
-  state.framebuffer = undefined;
-  state.currentProgram = null;
-  state.boundBuffer = null;
-  state.viewport = { x: 0, y: 0, width: null, height: null };
-  state.depthMask = undefined;
-  state.depthFunc = undefined;
-  state.cullFace = undefined;
-  state.frontFace = undefined;
-  delete state[gl.DEPTH_TEST];
-  delete state[gl.BLEND];
-  delete state[gl.CULL_FACE];
-  (renderer as unknown as { currentGeometry: string | null }).currentGeometry = null;
-}
-
-/**
- * An ogl Texture standing in for a texture created by raw GL.
- *
- * ogl's update() short-circuits when the image has not changed and simply binds
- * whatever handle the object holds, so swapping the handle in is enough to keep
- * its texture-unit bookkeeping working for textures it did not create.
- */
-function wrapTexture(gl: ConstructorParameters<typeof Texture>[0], target: number): Texture {
-  const t = new Texture(gl, { target, generateMipmaps: false });
-  // the wrapper never owns a texture; drop the one ogl allocated for it
-  if (t.texture) (gl as unknown as WebGL2RenderingContext).deleteTexture(t.texture);
-  (t as unknown as { texture: WebGLTexture | null }).texture = null;
-  t.needsUpdate = false;
-  return t;
-}
-
-/** Point the wrapper at a baked texture. Ownership stays with the Environment. */
-function adoptTexture(wrapper: Texture, handle: WebGLTexture) {
-  wrapper.texture = handle;
-  wrapper.needsUpdate = false;
-  wrapper.store.image = wrapper.image;
+  return { positions, indices };
 }

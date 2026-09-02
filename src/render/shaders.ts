@@ -1,322 +1,627 @@
-export const PBR_VERT = `#version 300 es
-in vec3 position;
-in vec3 normal;
-in vec2 uv;
-in float wear;   // signed curvature, +1 exposed edge .. -1 crease; see mesh/wear.ts
-
-// one transform per placement: a form is a few meshes and a lot of matrices
-in vec4 im0;
-in vec4 im1;
-in vec4 im2;
-in vec4 im3;
-
-uniform mat4 modelViewMatrix;
-uniform mat4 projectionMatrix;
-uniform mat4 viewMatrix;
-uniform vec3 cameraPosition;
-
-// Baked visibility, one texel per (placement, vertex): R = sum(vis * w), G = sum(w).
-uniform sampler2D uOcclusion;
-uniform int uOcclusionBase;
-uniform int uVertexCount;
-uniform float uOcclusionOn;
-
-out vec3 vNormal;
-out vec3 vWorld;
-out vec3 vObject;
-out vec2 vUv;
-out float vAo;
-out float vWear;
-
-void main() {
-  mat4 inst = mat4(im0, im1, im2, im3);
-  vec4 world = inst * vec4(position, 1.0);
-
-  int index = uOcclusionBase + gl_InstanceID * uVertexCount + gl_VertexID;
-  int width = textureSize(uOcclusion, 0).x;
-  vec2 acc = texelFetch(uOcclusion, ivec2(index % width, index / width), 0).rg;
-  float ao = acc.g > 0.0 ? clamp(acc.r / acc.g, 0.0, 1.0) : 1.0;
-  vAo = mix(1.0, ao, uOcclusionOn);
-
-  // placements are rigid with uniform scale, mirrors included, so rotating the
-  // authored normal and renormalising is exact — no inverse transpose needed
-  vNormal = normalize(mat3(inst) * normal);
-  vWorld = world.xyz;
-  vObject = position;
-  vUv = uv;
-  vWear = wear;
-
-  gl_Position = projectionMatrix * viewMatrix * world;
-}`;
-
-export const PBR_FRAG = `#version 300 es
-precision highp float;
-
-in vec3 vNormal;
-in vec3 vWorld;
-in vec3 vObject;
-in vec2 vUv;
-in float vAo;
-in float vWear;
-
-out vec4 fragColor;
-
-uniform samplerCube uSpecular;
-uniform sampler2D uBrdf;
-uniform float uMaxLod;
-
-uniform vec3 uF0;
-uniform float uRoughness;
-uniform float uAnisotropy;
-uniform float uHammer;
-uniform float uPatina;
-uniform vec3 uPatinaColour;
-uniform float uWear;
-uniform float uLinearOut;   // 1: leave linear HDR for the post chain; 0: tonemap here
-
-uniform vec3 cameraPosition;
-uniform float uExposure;
-uniform float uEnvSpin;
-uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear
-
-const float PI = 3.14159265359;
-
-// about Z, because that is the environment's up: the studio preset reads its
-// height as d.z and hangs its key light at z = 2.6. Spinning about Y tumbled the
-// sky over the horizon instead of turning it round the scene.
-mat3 spinZ(float a) {
-  float c = cos(a), s = sin(a);
-  return mat3(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
-}
-
 /**
- * Tangent frame from screen-space derivatives rather than a vertex attribute.
+ * WGSL for the three things drawn in the scene pass: the metal, the ground disc
+ * and the anchor lines. All three share bind group 0, the frame: camera,
+ * exposure, environment textures and the baked occlusion.
  *
- * The generators already give every surface a meaningful parameterisation — u runs
- * along a sweep and around a revolve — so the brush direction of a finish is just
- * dP/du, and no extra attribute has to be built, stored or instanced.
+ * Every shader here writes linear HDR; tonemapping is the post chain's job.
  */
-mat3 tangentFrame(vec3 n, vec3 p, vec2 uv) {
-  vec3 dp1 = dFdx(p);
-  vec3 dp2 = dFdy(p);
-  vec2 duv1 = dFdx(uv);
-  vec2 duv2 = dFdy(uv);
 
-  vec3 dp2perp = cross(dp2, n);
-  vec3 dp1perp = cross(n, dp1);
-  vec3 t = dp2perp * duv1.x + dp1perp * duv2.x;
-  vec3 b = dp2perp * duv1.y + dp1perp * duv2.y;
-  float inv = inversesqrt(max(dot(t, t), dot(b, b)) + 1e-12);
-  return mat3(t * inv, b * inv, n);
+export const FRAME_STRUCT = `
+struct Frame {
+  viewProj: mat4x4f,
+  cameraPos: vec3f,
+  exposure: f32,
+  envSpin: f32,
+  debug: f32,      // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear
+  maxLod: f32,
+  occlusionOn: f32,
+};
+@group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(1) var envSpecular: texture_cube<f32>;
+@group(0) @binding(2) var envBrdf: texture_2d<f32>;
+@group(0) @binding(3) var linearSampler: sampler;
+@group(0) @binding(4) var<storage, read> occlusion: array<u32>;
+`;
+
+const COMMON = `
+// about Z, because that is the environment's up
+fn spinZ(a: f32) -> mat3x3f {
+  let c = cos(a); let s = sin(a);
+  return mat3x3f(vec3f(c, -s, 0.0), vec3f(s, c, 0.0), vec3f(0.0, 0.0, 1.0));
 }
 
-/** Planished dimpling: three crossed waves, which reads as hand-worked metal. */
-float planish(vec3 p) {
-  return sin(p.x * 1.7 + p.y * 0.9)
-       * sin(p.y * 1.9 - p.z * 1.1)
-       * sin(p.z * 1.6 + p.x * 0.8);
-}
-
-float hash13(vec3 p) {
-  p = fract(p * 0.1031);
+fn hash13(p0: vec3f) -> f32 {
+  var p = fract(p0 * 0.1031);
   p += dot(p, p.zyx + 31.32);
   return fract((p.x + p.y) * p.z);
 }
 
-float noise3(vec3 p) {
-  vec3 i = floor(p);
-  vec3 f = fract(p);
+fn noise3(p: vec3f) -> f32 {
+  let i = floor(p);
+  var f = fract(p);
   f = f * f * (3.0 - 2.0 * f);
-  float n = mix(
-    mix(mix(hash13(i + vec3(0,0,0)), hash13(i + vec3(1,0,0)), f.x),
-        mix(hash13(i + vec3(0,1,0)), hash13(i + vec3(1,1,0)), f.x), f.y),
-    mix(mix(hash13(i + vec3(0,0,1)), hash13(i + vec3(1,0,1)), f.x),
-        mix(hash13(i + vec3(0,1,1)), hash13(i + vec3(1,1,1)), f.x), f.y), f.z);
-  return n;
+  return mix(
+    mix(mix(hash13(i + vec3f(0.0, 0.0, 0.0)), hash13(i + vec3f(1.0, 0.0, 0.0)), f.x),
+        mix(hash13(i + vec3f(0.0, 1.0, 0.0)), hash13(i + vec3f(1.0, 1.0, 0.0)), f.x), f.y),
+    mix(mix(hash13(i + vec3f(0.0, 0.0, 1.0)), hash13(i + vec3f(1.0, 0.0, 1.0)), f.x),
+        mix(hash13(i + vec3f(0.0, 1.0, 1.0)), hash13(i + vec3f(1.0, 1.0, 1.0)), f.x), f.y), f.z);
+}
+`;
+
+export const PBR_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+
+struct Material {
+  f0: vec3f,
+  roughness: f32,
+  anisotropy: f32,
+  hammer: f32,
+  patina: f32,
+  wear: f32,
+  patinaColour: vec3f,
+  _pad: f32,
+  occlusionBase: u32,
+  vertexCount: u32,
+  model: u32,          // 0 metal, 1 nacre
+  _pad2: u32,
+  baseColour: vec3f,
+  orient: f32,
+  enamelColour: vec3f,
+  enamelOpacity: f32,   // 0: no enamel on this part
+};
+@group(1) @binding(0) var<uniform> material: Material;
+
+// --- the scene, for tracing reflected rays ---
+struct Node { bmin: vec3f, left: u32, bmax: vec3f, count: u32 };
+struct Inst {
+  worldToObject: mat4x4f,
+  objectToWorld: mat4x4f,
+  bmin: vec3f, nodeOffset: u32,
+  bmax: vec3f, triOffset: u32,
+  group: u32, occlusionBase: u32, _p: vec2u,
+};
+struct MaterialRec {
+  f0: vec3f, roughness: f32,
+  anisotropy: f32, hammer: f32, patina: f32, wear: f32,
+  patinaColour: vec3f, _pad: f32,
+  occlusionBase: u32, vertexCount: u32, model: u32, _pad2: u32,
+  baseColour: vec3f, orient: f32,
+  enamelColour: vec3f, enamelOpacity: f32,
+  _fill: array<vec4f, 10>,
+};
+struct Trace { instanceCount: u32, enabled: u32, eps: f32, bounces: u32 };
+@group(2) @binding(0) var<storage, read> nodes: array<Node>;
+@group(2) @binding(1) var<storage, read> tris: array<vec4f>;      // 6 per triangle: v0 v1 v2 n0 n1 n2
+@group(2) @binding(2) var<storage, read> triIdx: array<vec4u>;    // i0 i1 i2, for the occlusion lookup
+@group(2) @binding(3) var<storage, read> instances: array<Inst>;
+@group(2) @binding(4) var<storage, read> materials: array<MaterialRec>;
+@group(2) @binding(5) var<uniform> trace: Trace;
+@group(2) @binding(6) var<storage, read> tlas: array<Node>;
+
+struct VsIn {
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+  @location(3) wear: f32,
+  @location(4) im0: vec4f,
+  @location(5) im1: vec4f,
+  @location(6) im2: vec4f,
+  @location(7) im3: vec4f,
+  @location(8) enamel: f32,
+  @builtin(vertex_index) vid: u32,
+  @builtin(instance_index) iid: u32,
+};
+
+struct VsOut {
+  // invariant, so the depth prepass and this pass agree to the bit
+  @builtin(position) @invariant clip: vec4f,
+  @location(0) normal: vec3f,
+  @location(1) world: vec3f,
+  @location(2) object: vec3f,
+  @location(3) uv: vec2f,
+  @location(4) ao: f32,
+  @location(5) wear: f32,
+  @location(6) enamel: f32,
+};
+
+@vertex fn vsMain(in: VsIn) -> VsOut {
+  let inst = mat4x4f(in.im0, in.im1, in.im2, in.im3);
+  let world = inst * vec4f(in.position, 1.0);
+
+  // baked visibility, one pair of fixed-point sums per (placement, vertex)
+  let index = material.occlusionBase + in.iid * material.vertexCount + in.vid;
+  let r = f32(occlusion[2u * index]);
+  let g = f32(occlusion[2u * index + 1u]);
+  let ao = select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
+
+  var out: VsOut;
+  out.clip = frame.viewProj * world;
+  // placements are rigid with uniform scale, so rotating the normal is exact
+  out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
+  out.world = world.xyz;
+  out.object = in.position;
+  out.uv = in.uv;
+  out.ao = mix(1.0, ao, frame.occlusionOn);
+  out.wear = in.wear;
+  out.enamel = in.enamel * select(0.0, 1.0, material.enamelOpacity > 0.0);
+  return out;
 }
 
-// Narkowicz's ACES fit. Cheap, and it rolls specular highlights off instead of
-// clipping them to white, which matters when the brightest thing on screen is a
-// softbox reflected in polished gold.
-vec3 tonemap(vec3 x) {
-  const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+// Tangent frame from screen-space derivatives: u runs along a sweep and around
+// a revolve, so dP/du is the brush direction of a finish.
+fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
+  let dp1 = dpdx(p); let dp2 = dpdy(p);
+  let duv1 = dpdx(uv); let duv2 = dpdy(uv);
+  let dp2perp = cross(dp2, n);
+  let dp1perp = cross(n, dp1);
+  let t = dp2perp * duv1.x + dp1perp * duv2.x;
+  let b = dp2perp * duv1.y + dp1perp * duv2.y;
+  let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+  return mat3x3f(t * inv, b * inv, n);
 }
 
-void main() {
-  vec3 n = normalize(vNormal);
-  vec3 v = normalize(cameraPosition - vWorld);
-  if (!gl_FrontFacing) n = -n;
+/** Planished dimpling: three crossed waves. */
+fn planish(p: vec3f) -> f32 {
+  return sin(p.x * 1.7 + p.y * 0.9) * sin(p.y * 1.9 - p.z * 1.1) * sin(p.z * 1.6 + p.x * 0.8);
+}
 
-  mat3 tbn = tangentFrame(n, vWorld, vUv);
+// ---- ray tracing against the placed parts ----
 
-  float roughness = uRoughness;
-  vec3 f0 = uF0;
-  float metallic = 1.0;
+const NO_HIT: u32 = 0xffffffffu;
+/** Fired enamel is glass with a faint orange peel: glossy, never a mirror. */
+const ENAMEL_ROUGHNESS: f32 = 0.09;
+const MAX_BLAS_STEPS: u32 = 512u;
+const MAX_TLAS_STEPS: u32 = 256u;
+
+/** Slab test: the entry distance, or a large number when the ray misses or the box is beyond tMax. */
+fn rayBox(o: vec3f, invD: vec3f, bmin: vec3f, bmax: vec3f, tMax: f32) -> f32 {
+  let t0 = (bmin - o) * invD;
+  let t1 = (bmax - o) * invD;
+  let tn = min(t0, t1);
+  let tf = max(t0, t1);
+  let tEnter = max(max(tn.x, tn.y), max(tn.z, 0.0));
+  let tExit = min(min(tf.x, tf.y), min(tf.z, tMax));
+  return select(1e30, tEnter, tExit >= tEnter);
+}
+
+/** Möller–Trumbore: (t, u, v), with t < 0 for a miss. */
+fn rayTri(o: vec3f, d: vec3f, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
+  let e1 = v1 - v0;
+  let e2 = v2 - v0;
+  let p = cross(d, e2);
+  let det = dot(e1, p);
+  if (abs(det) < 1e-9) { return vec3f(-1.0); }
+  let inv = 1.0 / det;
+  let s = o - v0;
+  let u = dot(s, p) * inv;
+  if (u < 0.0 || u > 1.0) { return vec3f(-1.0); }
+  let q = cross(s, e1);
+  let v = dot(d, q) * inv;
+  if (v < 0.0 || u + v > 1.0) { return vec3f(-1.0); }
+  return vec3f(dot(e2, q) * inv, u, v);
+}
+
+struct Hit { t: f32, inst: u32, tri: u32, u: f32, v: f32 };
+
+fn safeDir(d: vec3f) -> vec3f {
+  return select(d, vec3f(1e-6), abs(d) < vec3f(1e-6));
+}
+
+/** Walk one mesh's hierarchy in its own space, front to back, tightening the hit. */
+fn traceInstance(i: u32, o: vec3f, d: vec3f, tMin: f32, hit: ptr<function, Hit>) {
+  let inst = instances[i];
+  let oo = (inst.worldToObject * vec4f(o, 1.0)).xyz;
+  let od = safeDir((inst.worldToObject * vec4f(d, 0.0)).xyz);
+  let oinv = 1.0 / od;
+  var stack: array<u32, 20>;
+  var sp = 1u;
+  stack[0] = inst.nodeOffset;
+  // a ceiling on the walk: no tree here needs it, but a command buffer that
+  // runs on is a lost device, and this keeps the worst case bounded
+  var steps = 0u;
+  while (sp > 0u && steps < MAX_BLAS_STEPS) {
+    sp--;
+    steps++;
+    let node = nodes[stack[sp]];
+    if ((node.count & 0x80000000u) != 0u) {
+      let li = inst.nodeOffset + node.left;
+      let ri = inst.nodeOffset + (node.count & 0x7fffffffu);
+      let ln = nodes[li];
+      let rn = nodes[ri];
+      var tl = rayBox(oo, oinv, ln.bmin, ln.bmax, (*hit).t);
+      var tr = rayBox(oo, oinv, rn.bmin, rn.bmax, (*hit).t);
+      var near = li; var far = ri;
+      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
+      if (sp + 2u <= 20u) {
+        if (tr < (*hit).t) { stack[sp] = far; sp++; }
+        if (tl < (*hit).t) { stack[sp] = near; sp++; }
+      }
+      continue;
+    }
+    let first = inst.triOffset + node.left;
+    for (var k = 0u; k < node.count; k++) {
+      let b = (first + k) * 6u;
+      let r = rayTri(oo, od, tris[b].xyz, tris[b + 1u].xyz, tris[b + 2u].xyz);
+      if (r.x > tMin && r.x < (*hit).t) {
+        (*hit).t = r.x; (*hit).inst = i; (*hit).tri = first + k; (*hit).u = r.y; (*hit).v = r.z;
+      }
+    }
+  }
+}
+
+/**
+ * Closest hit along a world-space ray. The hierarchy over placements finds the
+ * few this ray can touch, nearest first; each takes the ray into its mesh's
+ * space and walks that mesh's tree. Directions are never renormalised after a
+ * transform, so t stays in world units and the nearest hit is the nearest hit.
+ */
+fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
+  var hit: Hit;
+  hit.t = 1e30;
+  hit.inst = NO_HIT;
+  if (trace.instanceCount == 0u) { return hit; }
+  let d = safeDir(dIn);
+  let invD = 1.0 / d;
+  var stack: array<u32, 16>;
+  var sp = 1u;
+  stack[0] = 0u;
+  var steps = 0u;
+  while (sp > 0u && steps < MAX_TLAS_STEPS) {
+    sp--;
+    steps++;
+    let node = tlas[stack[sp]];
+    if ((node.count & 0x80000000u) != 0u) {
+      let li = node.left;
+      let ri = node.count & 0x7fffffffu;
+      let ln = tlas[li];
+      let rn = tlas[ri];
+      var tl = rayBox(o, invD, ln.bmin, ln.bmax, hit.t);
+      var tr = rayBox(o, invD, rn.bmin, rn.bmax, hit.t);
+      var near = li; var far = ri;
+      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
+      if (sp + 2u <= 16u) {
+        if (tr < hit.t) { stack[sp] = far; sp++; }
+        if (tl < hit.t) { stack[sp] = near; sp++; }
+      }
+      continue;
+    }
+    for (var k = 0u; k < node.count; k++) {
+      traceInstance(node.left + k, o, d, tMin, &hit);
+    }
+  }
+  return hit;
+}
+
+/**
+ * Nacre: light gets under the surface and comes back out diffused, so the
+ * body is lit by a broad, wrapped irradiance rather than the normal's alone,
+ * with a little bleeding through from behind at the rim. Over it sits a soft
+ * dielectric lustre, and an iridescent sheen — the trade calls it orient —
+ * that shifts hue as the view turns across the plates.
+ */
+fn orientTint(ndv: f32, strength: f32) -> vec3f {
+  let phase = ndv * 1.3;
+  return vec3f(1.0) + strength * vec3f(
+    sin(6.2832 * phase), sin(6.2832 * (phase + 0.33)), sin(6.2832 * (phase + 0.67)));
+}
+
+fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
+  let spin = spinZ(frame.envSpin);
+  let irrN = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+  let irrWrap = textureSampleLevel(envSpecular, linearSampler, spin * normalize(n + v), frame.maxLod).rgb;
+  let irrBack = textureSampleLevel(envSpecular, linearSampler, spin * (-n), frame.maxLod).rgb;
+  let scattered = irrN * 0.7 + irrWrap * 0.3;
+  let rim = pow(1.0 - ndv, 2.5) * 0.35;
+  // multiple scattering loses some light on every pass through the plates:
+  // nacre returns about half of what falls on it, not all of it
+  return base * (scattered + irrBack * rim) * ao * 0.55;
+}
+
+struct Surface { n: vec3f, ao: f32, m: MaterialRec };
+
+/** Normal, occlusion and material at a hit, facing the ray. */
+fn surfaceAt(hit: Hit, d: vec3f) -> Surface {
+  let inst = instances[hit.inst];
+  let b = hit.tri * 6u;
+  let w0 = 1.0 - hit.u - hit.v;
+  let nObj = tris[b + 3u].xyz * w0 + tris[b + 4u].xyz * hit.u + tris[b + 5u].xyz * hit.v;
+  var n = normalize((inst.objectToWorld * vec4f(nObj, 0.0)).xyz);
+  if (dot(n, d) > 0.0) { n = -n; }
+  let idx = triIdx[hit.tri];
+  let base = inst.occlusionBase;
+  var s: Surface;
+  s.n = n;
+  s.ao = occlusionAt(base + idx.x) * w0 + occlusionAt(base + idx.y) * hit.u + occlusionAt(base + idx.z) * hit.v;
+  s.m = materials[inst.group];
+  return s;
+}
+
+/** Lighting at a surface given what its reflection ray sees. */
+fn shadeSurface(s: Surface, d: vec3f, reflected: vec3f) -> vec3f {
+  let v = -d;
+  let ndv = clamp(dot(s.n, v), 0.001, 1.0);
+  let spin = spinZ(frame.envSpin);
+  if (s.m.model == 1u) {
+    let roughness = max(s.m.roughness, 0.18);
+    let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
+    let fresnel = s.m.f0 * ab.x + ab.y;
+    return nacreBody(s.n, v, ndv, s.m.baseColour, s.ao) * (1.0 - fresnel) + reflected * fresnel * orientTint(ndv, s.m.orient);
+  }
+  let roughness = clamp(s.m.roughness, 0.03, 1.0);
+  let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
+  let specOcclusion = clamp(pow(ndv + s.ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + s.ao, 0.0, 1.0);
+  let specular = reflected * (s.m.f0 * ab.x + ab.y) * specOcclusion;
+  let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * s.n, frame.maxLod).rgb;
+  let diffuse = irradiance * s.m.patinaColour * s.m.patina * 0.5 * s.ao;
+  return specular + diffuse;
+}
+
+fn envAt(dir: vec3f, roughness: f32) -> vec3f {
+  return textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * dir, roughness * frame.maxLod).rgb;
+}
+
+/** The last bounce: what this surface reflects is the environment. */
+fn shadeHit2(hit: Hit, d: vec3f) -> vec3f {
+  let s = surfaceAt(hit, d);
+  let r = reflect(d, s.n);
+  return shadeSurface(s, d, envAt(r, select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u)));
+}
+
+/**
+ * Shade the point a reflected ray landed on, through that surface's own
+ * material, so a rose-gold rivet reflected in a gold leaf still reads as rose
+ * gold. Two bounces: this surface's reflection is traced once more, which is
+ * what lights the deep folds of a cup, where a petal reflects a petal that
+ * reflects the room.
+ */
+fn shadeHit(o: vec3f, hit: Hit, d: vec3f) -> vec3f {
+  let s = surfaceAt(hit, d);
+  let p = o + d * hit.t;
+  let r = reflect(d, s.n);
+  let roughness = select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u);
+  var reflected = envAt(r, roughness);
+  // the second bounce is dropped while the camera moves: it is the costlier
+  // half of the trace and the least visible in motion
+  if (roughness < 0.45 && trace.bounces > 1u) {
+    let hit2 = traceRay(p + s.n * trace.eps, r, trace.eps);
+    if (hit2.inst != NO_HIT) {
+      reflected = mix(reflected, shadeHit2(hit2, r), 1.0 - smoothstep(0.12, 0.45, roughness));
+    }
+  }
+  return shadeSurface(s, d, reflected);
+}
+
+fn occlusionAt(index: u32) -> f32 {
+  let r = f32(occlusion[2u * index]);
+  let g = f32(occlusion[2u * index + 1u]);
+  return select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
+}
+
+@fragment fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
+  var n = normalize(in.normal);
+  let v = normalize(frame.cameraPos - in.world);
+  if (!frontFacing) { n = -n; }
+
+  let tbn = tangentFrame(n, in.world, in.uv);
+
+  var roughness = material.roughness;
+  var f0 = material.f0;
+  var metallic = 1.0;
+  // nacre has a soft lustre whatever finish the sketch asked for, and no
+  // planishing, patina or wear: those are things done to metal
+  let nacre = material.model == 1u;
+  if (nacre) { roughness = max(roughness, 0.18); }
 
   // --- planishing: perturb the normal by the gradient of a height field ---
-  if (uHammer > 0.0) {
-    vec3 p = vObject * 0.55;
-    float eps = 0.35;
-    float h0 = planish(p);
-    float hx = planish(p + tbn[0] * eps);
-    float hy = planish(p + tbn[1] * eps);
-    vec3 bump = (tbn[0] * (hx - h0) + tbn[1] * (hy - h0)) / eps;
-    n = normalize(n - bump * uHammer * 0.22);
+  if (material.hammer > 0.0 && !nacre) {
+    let p = in.object * 0.55;
+    let eps = 0.35;
+    let h0 = planish(p);
+    let hx = planish(p + tbn[0] * eps);
+    let hy = planish(p + tbn[1] * eps);
+    let bump = (tbn[0] * (hx - h0) + tbn[1] * (hy - h0)) / eps;
+    n = normalize(n - bump * material.hammer * 0.22);
   }
 
   // --- patina: an oxide fraction that is not metal any more ---
-  if (uPatina > 0.0) {
-    float blotch = noise3(vObject * 0.32) * 0.65 + noise3(vObject * 0.9) * 0.35;
-    float mask = smoothstep(0.62 - uPatina * 0.55, 0.78 - uPatina * 0.3, blotch);
-    metallic = mix(1.0, 0.0, mask * uPatina);
-    f0 = mix(f0, vec3(0.04), mask * uPatina);
-    roughness = mix(roughness, min(roughness + 0.35, 0.95), mask * uPatina);
+  if (material.patina > 0.0 && !nacre) {
+    let blotch = noise3(in.object * 0.32) * 0.65 + noise3(in.object * 0.9) * 0.35;
+    let mask = smoothstep(0.62 - material.patina * 0.55, 0.78 - material.patina * 0.3, blotch);
+    metallic = mix(1.0, 0.0, mask * material.patina);
+    f0 = mix(f0, vec3f(0.04), mask * material.patina);
+    roughness = mix(roughness, min(roughness + 0.35, 0.95), mask * material.patina);
   }
 
   // --- wear: edges handled bright, creases left dull ---
-  // Convex edges are buffed: smoother than the field, and a touch of the finish's
-  // texture rubbed off. Concave creases hold residue: rougher, and the metal
-  // itself reads a little darker and less pure there, which is what tarnish is.
-  float edge = smoothstep(0.05, 0.8, vWear) * uWear;
-  float crease = smoothstep(0.05, 0.8, -vWear) * uWear;
-  // grain drifts across the crease so the tarnish line is not a clean band
-  crease *= 0.7 + 0.6 * noise3(vObject * 1.7);
+  let wearOn = select(material.wear, 0.0, nacre);
+  let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
+  var crease = smoothstep(0.05, 0.8, -in.wear) * wearOn;
+  // the grain only matters where there is a crease, and most of a surface has none
+  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(in.object * 1.7); }
   roughness = mix(roughness, roughness * 0.45, edge);
   roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
   f0 = mix(f0, f0 * 0.55, crease * 0.8);
   metallic = mix(metallic, metallic * 0.6, crease * 0.6);
 
-  // --- specular anti-aliasing ---
-  // Where the normal changes faster than the pixel grid can follow — hammered
-  // dimples, thin wires, a rim seen edge-on — a mirror-sharp lobe just shimmers.
-  // Widening the lobe by the normal's variance across the pixel (Tokuyoshi and
-  // Kaplanyan) turns that shimmer into the blur it would have had anyway.
+  // --- specular anti-aliasing: widen the lobe by the normal's variance across the pixel ---
   {
-    vec3 dnx = dFdx(n), dny = dFdy(n);
-    float variance = 0.25 * (dot(dnx, dnx) + dot(dny, dny));
-    float kernel = min(2.0 * variance, 0.18);
-    float alpha = roughness * roughness;
+    let dnx = dpdx(n); let dny = dpdy(n);
+    let variance = 0.25 * (dot(dnx, dnx) + dot(dny, dny));
+    let kernel = min(2.0 * variance, 0.18);
+    let alpha = roughness * roughness;
     roughness = sqrt(sqrt(alpha * alpha + kernel));
   }
 
   roughness = clamp(roughness, 0.03, 1.0);
 
   // --- anisotropy: bend the reflection vector along the brush direction ---
-  vec3 reflectN = n;
-  if (uAnisotropy > 0.0) {
-    vec3 bitangent = tbn[1];
-    vec3 anisoT = cross(bitangent, v);
-    vec3 anisoN = cross(anisoT, bitangent);
-    reflectN = normalize(mix(n, anisoN, uAnisotropy * (1.0 - roughness * 0.4)));
+  var reflectN = n;
+  if (material.anisotropy > 0.0) {
+    let bitangent = tbn[1];
+    let anisoT = cross(bitangent, v);
+    let anisoN = cross(anisoT, bitangent);
+    reflectN = normalize(mix(n, anisoN, material.anisotropy * (1.0 - roughness * 0.4)));
   }
 
-  vec3 r = reflect(-v, reflectN);
-  float ndv = clamp(dot(n, v), 0.001, 1.0);
+  let r = reflect(-v, reflectN);
+  let ndv = clamp(dot(n, v), 0.001, 1.0);
+  let spin = spinZ(frame.envSpin);
 
-  mat3 spin = spinZ(uEnvSpin);
+  // never sample the environment sharper than the pixel can show
+  let envSize = f32(textureDimensions(envSpecular).x);
+  let footprint = max(length(dpdx(r)), length(dpdy(r)));
+  let footLod = log2(max(footprint * envSize * 0.5, 1.0));
+  let lod = max(roughness * frame.maxLod, footLod);
+  let prefiltered = textureSampleLevel(envSpecular, linearSampler, spin * r, lod).rgb;
+  let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
 
-  // Never sample the environment sharper than the pixel can show. A polished
-  // surface curving away compresses the whole room into a few pixels, and an
-  // explicit lod of zero there is pure aliasing; the footprint of the reflected
-  // ray across the pixel gives the mip that just resolves it.
-  float envSize = float(textureSize(uSpecular, 0).x);
-  float footprint = max(length(dFdx(r)), length(dFdy(r)));
-  float footLod = log2(max(footprint * envSize * 0.5, 1.0));
-  float lod = max(roughness * uMaxLod, footLod);
-  vec3 prefiltered = textureLod(uSpecular, spin * r, lod).rgb;
-  vec2 ab = texture(uBrdf, vec2(ndv, roughness)).rg;
+  // Lagarde's specular occlusion: a mirror keeps more of its reflection than
+  // its hemisphere visibility suggests
+  let ao = in.ao;
+  let specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+  var reflected = prefiltered * specOcclusion;
 
-  // Baked visibility darkens the diffuse term directly. A mirror is a different
-  // matter: what it reflects is whatever lies along one ray, not the hemisphere
-  // average, so a polished surface keeps more of its reflection than its ambient
-  // occlusion suggests. Lagarde's fit bends the term toward that as roughness
-  // falls and the view grazes.
-  float ao = vAo;
-  float specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+  // Inter-reflection: a polished surface reflects its neighbours, not just the
+  // room. One mirror ray per pixel, which is exact for a mirror and blurs to the
+  // prefiltered environment as roughness rises, since a single ray cannot stand
+  // in for a wide lobe. On a miss the environment is used unoccluded: the
+  // visibility along that ray is now known, not estimated.
+  // Enamel is glass, so it traces too: its lobe is always narrow.
+  var traced = prefiltered;
+  var traceWeight = 0.0;
+  let enamelled = in.enamel > 0.001;
+  if (trace.enabled != 0u) {
+    traceWeight = 1.0 - smoothstep(0.12, 0.45, select(roughness, ENAMEL_ROUGHNESS, enamelled));
+    if (traceWeight > 0.001) {
+      let origin = in.world + n * trace.eps;
+      let hit = traceRay(origin, r, trace.eps);
+      if (hit.inst != NO_HIT) { traced = shadeHit(origin, hit, r); }
+      reflected = mix(reflected, traced, traceWeight);
+    }
+  }
 
-  vec3 specular = prefiltered * (f0 * ab.x + ab.y) * specOcclusion;
+  var colour: vec3f;
+  if (material.model == 1u) {
+    // nacre: a lustre over a scattering body, with the sheen on the lustre
+    let fresnel = f0 * ab.x + ab.y;
+    let tint = orientTint(ndv, material.orient);
+    let body = nacreBody(n, v, ndv, material.baseColour, ao);
+    colour = (body * (1.0 - fresnel) * mix(vec3f(1.0), tint, 0.3) + reflected * fresnel * tint) * frame.exposure;
+  } else {
+    let specular = reflected * (f0 * ab.x + ab.y);
+    // metal has no diffuse lobe, so this only shows where patina has taken hold
+    let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+    let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
+    colour = (specular + diffuse) * frame.exposure;
 
-  // Metal has no diffuse lobe, so this contributes only where patina has taken
-  // hold. The roughest prefiltered mip stands in for an irradiance map — close
-  // enough for a dull oxide, and it saves a whole convolution pass.
-  vec3 irradiance = textureLod(uSpecular, spin * n, uMaxLod).rgb;
-  vec3 diffuse = irradiance * uPatinaColour * (1.0 - metallic) * ao;
+    // Enamel: a glass skin over the metal, on the vertices that carry it. The
+    // surface is a smooth dielectric with its own narrow highlight; under it
+    // the body scatters light in its colour, and a transparent enamel lets the
+    // metal's reflection back out through the colour, which is the glow of a
+    // translucent enamel over a bright foil.
+    if (enamelled) {
+      let eRough = ENAMEL_ROUGHNESS;
+      let eLod = max(eRough * frame.maxLod, footLod);
+      let ePrefiltered = textureSampleLevel(envSpecular, linearSampler, spin * reflect(-v, n), eLod).rgb;
+      let eOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * eRough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+      let eReflected = mix(ePrefiltered * eOcclusion, traced, traceWeight);
+      let eAb = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, eRough), 0.0).rg;
+      let eFresnel = vec3f(0.04) * eAb.x + eAb.y;
+      let eSpecular = eReflected * eFresnel;
+      // the metal's own highlight, seen through the glass and dyed by it: the
+      // colour is the round trip's transmittance, in and back out. A little
+      // stays even in an opaque enamel, where the layer is thin at the rim.
+      let through = specular * material.enamelColour * (1.0 - material.enamelOpacity);
+      let body = irradiance * material.enamelColour * ao * material.enamelOpacity;
+      let enamel = (eSpecular + (1.0 - eFresnel) * (body + through)) * frame.exposure;
+      colour = mix(colour, enamel, in.enamel);
+    }
+  }
 
-  vec3 colour = specular + diffuse;
-  colour *= uExposure;
+  let d = frame.debug;
+  if (d > 6.5) {
+    colour = select(vec3f(0.3, 0.3 * (1.0 + in.wear), 0.3 * (1.0 + in.wear)), vec3f(0.3 + in.wear * 0.7), in.wear > 0.0);
+  } else if (d > 5.5) { colour = vec3f(ao); }
+  else if (d > 4.5) { colour = vec3f(ab, 0.0) * 4.0; }
+  else if (d > 3.5) { colour = prefiltered; }
+  else if (d > 2.5) { colour = vec3f(roughness); }
+  else if (d > 1.5) { colour = vec3f(in.uv, 0.35); }
+  else if (d > 0.5) { colour = n * 0.5 + 0.5; }
 
-  if (uDebug > 6.5) colour = vWear > 0.0 ? vec3(0.3 + vWear * 0.7) : vec3(0.3, 0.3 * (1.0 + vWear), 0.3 * (1.0 + vWear));
-  else if (uDebug > 5.5) colour = vec3(ao);
-  else if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
-  else if (uDebug > 3.5) colour = prefiltered;
-  else if (uDebug > 2.5) colour = vec3(roughness);
-  else if (uDebug > 1.5) colour = vec3(vUv, 0.35);
-  else if (uDebug > 0.5) colour = n * 0.5 + 0.5;
-  else if (uLinearOut < 0.5) colour = tonemap(colour);
+  return vec4f(colour, 1.0);
+}
+`;
 
-  if (uLinearOut > 0.5) fragColor = vec4(colour, 1.0);
-  else fragColor = vec4(pow(colour, vec3(1.0 / 2.2)), 1.0);
-}`;
+export const GROUND_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+
+struct Ground {
+  centre: vec3f,
+  radius: f32,
+  background: vec3f,   // linear: what tonemaps to the page colour
+  _pad: f32,
+  albedo: vec3f,
+  _pad2: f32,
+};
+@group(1) @binding(0) var<uniform> ground: Ground;
+@group(1) @binding(1) var shadow: texture_2d<f32>;
+
+struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
+
+@vertex fn vsMain(@location(0) position: vec3f) -> VsOut {
+  var out: VsOut;
+  out.local = position.xy;
+  let world = ground.centre + vec3f(position.xy * ground.radius, 0.0);
+  out.clip = frame.viewProj * vec4f(world, 1.0);
+  return out;
+}
+
+@fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
+  let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
+  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
+  let irradiance = textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod).rgb;
+  let lit = irradiance * ground.albedo * ao * frame.exposure;
+  let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
+  var colour = mix(ground.background, lit, fade);
+  if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
+  else if (frame.debug > 0.5) { colour = ground.background; }
+  return vec4f(colour, 1.0);
+}
+`;
 
 /**
- * The ground: a matte disc under the piece, lit by the environment's downward
- * irradiance and darkened by the baked shadow, fading into the page colour at its
- * rim so it never reads as an object in its own right.
+ * Depth only, ahead of the scene pass. Tracing a reflected ray is the most
+ * expensive thing a fragment does, and a rose is forty petals deep: without a
+ * prepass most of that work is done for surfaces a nearer petal then covers.
  */
-export const GROUND_VERT = `#version 300 es
-in vec3 position;   // unit disc in the XY plane
-
-uniform mat4 viewMatrix;
-uniform mat4 projectionMatrix;
-uniform vec3 uCentre;
-uniform float uRadius;
-
-out vec2 vLocal;
-
-void main() {
-  vLocal = position.xy;
-  vec3 world = uCentre + vec3(position.xy * uRadius, 0.0);
-  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
-}`;
-
-export const GROUND_FRAG = `#version 300 es
-precision highp float;
-
-in vec2 vLocal;
-out vec4 fragColor;
-
-uniform sampler2D uShadow;
-uniform samplerCube uSpecular;
-uniform float uMaxLod;
-uniform float uExposure;
-uniform float uEnvSpin;
-uniform vec3 uBackground;   // display colour when tonemapping here, linear when not
-uniform vec3 uAlbedo;
-uniform float uDebug;
-uniform float uLinearOut;
-
-mat3 spinZ(float a) {
-  float c = cos(a), s = sin(a);
-  return mat3(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
+export const PREPASS_WGSL = `
+${FRAME_STRUCT}
+struct PrepassOut { @builtin(position) @invariant clip: vec4f };
+@vertex fn vsMain(
+  @location(0) position: vec3f,
+  @location(4) im0: vec4f, @location(5) im1: vec4f, @location(6) im2: vec4f, @location(7) im3: vec4f,
+) -> PrepassOut {
+  // the same expression, in the same order, as the scene pass
+  let inst = mat4x4f(im0, im1, im2, im3);
+  let world = inst * vec4f(position, 1.0);
+  var out: PrepassOut;
+  out.clip = frame.viewProj * world;
+  return out;
 }
+// the pass has a colour target, so the pipeline must name it; the write mask is zero
+@fragment fn fsMain() -> @location(0) vec4f { return vec4f(0.0); }
+`;
 
-vec3 tonemap(vec3 x) {
-  const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
-  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+export const ANCHOR_WGSL = `
+${FRAME_STRUCT}
+struct VsOut { @builtin(position) clip: vec4f, @location(0) colour: vec3f };
+@vertex fn vsMain(@location(0) position: vec3f, @location(1) colour: vec3f) -> VsOut {
+  var out: VsOut;
+  out.clip = frame.viewProj * vec4f(position, 1.0);
+  out.colour = colour;
+  return out;
 }
-
-void main() {
-  vec2 acc = texture(uShadow, vLocal * 0.5 + 0.5).rg;
-  float ao = acc.g > 0.0 ? clamp(acc.r / acc.g, 0.0, 1.0) : 1.0;
-
-  vec3 irradiance = textureLod(uSpecular, spinZ(uEnvSpin) * vec3(0.0, 0.0, 1.0), uMaxLod).rgb;
-  vec3 hdr = irradiance * uAlbedo * ao * uExposure;
-  vec3 lit = uLinearOut > 0.5 ? hdr : pow(tonemap(hdr), vec3(1.0 / 2.2));
-
-  float fade = 1.0 - smoothstep(0.3, 1.0, length(vLocal));
-  vec3 colour = mix(uBackground, lit, fade);
-  if (uDebug > 5.5 && uDebug < 6.5) colour = vec3(ao);
-  else if (uDebug > 0.5) colour = uBackground;
-  fragColor = vec4(colour, 1.0);
-}`;
+@fragment fn fsMain(in: VsOut) -> @location(0) vec4f { return vec4f(in.colour, 1.0); }
+`;

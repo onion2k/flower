@@ -1,5 +1,5 @@
 /**
- * Procedural image-based lighting.
+ * Procedural image-based lighting, baked on the GPU.
  *
  * Metal is essentially all reflection: with nothing around it, gold renders as a
  * flat brown blob. So before any shading is worth looking at there has to be an
@@ -7,289 +7,231 @@
  * smooth gradient, because the edge of a reflected light source is what tells the
  * eye a surface is polished.
  *
- * Written against raw WebGL2 rather than ogl's RenderTarget, which only makes 2D
- * attachments; prefiltering needs to render into individual cubemap faces.
+ * Three textures come out: the sharp background cube with a mip chain, a
+ * GGX-prefiltered cube whose mip level maps to roughness, and the split-sum
+ * BRDF lookup. A small mip of the background is also read back, because the
+ * occlusion bake draws its directions from where the light is.
  */
+
+import { FULLSCREEN_VERT, halfToFloat, readbackLayer, shader, type GpuContext } from '../gpu/context';
 
 export type EnvPreset = 'studio' | 'dusk' | 'gallery';
 
+export interface EnvSamples {
+  /** Radiance per face, RGBA floats, row 0 first, in GL face order. */
+  faces: Float32Array[];
+  size: number;
+}
+
 export interface Environment {
-  /** Sharp cube for the backdrop, with a mip chain for cheap blur. */
-  background: WebGLTexture;
-  /** GGX-prefiltered chain: mip level maps to roughness. */
-  specular: WebGLTexture;
-  /** Split-sum lookup: scale and bias for F0, by (NdotV, roughness). */
-  brdf: WebGLTexture;
+  background: GPUTexture;
+  specular: GPUTexture;
+  brdf: GPUTexture;
   /** Face size of mip 0. */
   size: number;
   mips: number;
-  /** False when the context cannot render to float, so the bake ran at 8 bits. */
+  /** Always true here: the bake is float end to end. Kept for the UI. */
   highDynamicRange: boolean;
+  /** Resolves once the small-mip readback lands. */
+  samples: Promise<EnvSamples>;
   dispose(): void;
 }
 
-const FULLSCREEN_VERT = `#version 300 es
-// three vertices, no buffers: the classic oversized triangle
-out vec2 vUv;
-void main() {
-  vec2 p = vec2((gl_VertexID << 1) & 2, gl_VertexID & 2);
-  vUv = p;
-  gl_Position = vec4(p * 2.0 - 1.0, 0.0, 1.0);
-}`;
+const FORMAT: GPUTextureFormat = 'rgba16float';
 
-const SKY_FRAG = `#version 300 es
-precision highp float;
+const CUBE_BASIS = `
+struct Basis { forward: vec3f, _p0: f32, right: vec3f, _p1: f32, up: vec3f, _p2: f32, preset: f32, roughness: f32, sourceSize: f32, _p3: f32 };
+@group(0) @binding(0) var<uniform> basis: Basis;
+`;
 
-in vec2 vUv;
-out vec4 fragColor;
+const SKY = `
+${FULLSCREEN_VERT}
+${CUBE_BASIS}
 
-uniform vec3 uForward;
-uniform vec3 uRight;
-uniform vec3 uUp;
-uniform int uPreset;
-
-/**
- * A rectangular area light, hit-tested against the ray.
- *
- * Deliberately not a dot-product falloff: a soft blob reflects as a soft blob and
- * reads like plastic. A rectangle with a narrow gradient at its border gives the
- * hard-edged bar of light that makes a polished surface look polished.
- */
-vec3 rectLight(vec3 d, vec3 centre, vec3 right, vec3 up, vec2 halfSize, vec3 colour, float softness) {
-  vec3 n = normalize(cross(right, up));
-  float denom = dot(d, n);
-  float t = dot(centre, n) / denom;
-  if (t <= 0.0) return vec3(0.0);
-  vec3 local = d * t - centre;
-  vec2 q = vec2(dot(local, normalize(right)), dot(local, normalize(up)));
-  vec2 e = smoothstep(halfSize + softness, halfSize - softness, abs(q));
-  // brighter in the middle than at the frame, as diffusion fabric is
-  vec2 f = q / halfSize;
-  float middle = 1.0 - 0.3 * clamp(dot(f, f), 0.0, 1.0);
+// A rectangular area light, hit-tested against the ray. Not a dot-product
+// falloff: a soft blob reflects as a soft blob and reads like plastic.
+fn rectLight(d: vec3f, centre: vec3f, right: vec3f, up: vec3f, halfSize: vec2f, colour: vec3f, softness: f32) -> vec3f {
+  let n = normalize(cross(right, up));
+  let denom = dot(d, n);
+  let t = dot(centre, n) / denom;
+  if (t <= 0.0) { return vec3f(0.0); }
+  let local = d * t - centre;
+  let q = vec2f(dot(local, normalize(right)), dot(local, normalize(up)));
+  let e = smoothstep(halfSize + softness, halfSize - softness, abs(q));
+  let f = q / halfSize;
+  let middle = 1.0 - 0.3 * clamp(dot(f, f), 0.0, 1.0);
   return colour * e.x * e.y * middle;
 }
 
-/** Where a downward ray meets the floor, one unit below the eye. */
-vec2 floorHit(vec3 d) {
-  return d.xy * (-1.0 / min(d.z, -1e-3));
-}
+fn floorHit(d: vec3f) -> vec2f { return d.xy * (-1.0 / min(d.z, -1e-3)); }
 
-vec3 studio(vec3 d) {
-  // A dark room: walls that lift slightly toward the ceiling, a table below with
-  // the key's pool of light on it. The floor matters more than it seems — it is
-  // what the underside of every petal reflects, and a room with no floor makes
-  // metal look like it is hanging in a void.
-  float h = d.z;
-  vec3 wall = mix(vec3(0.016, 0.017, 0.02), vec3(0.05, 0.056, 0.07), smoothstep(-0.2, 1.0, h));
-  wall += vec3(0.014, 0.012, 0.01) * smoothstep(0.35, -0.1, h); // warm bounce low on the walls
-
-  vec3 col = wall;
+fn studio(d: vec3f) -> vec3f {
+  let h = d.z;
+  var wall = mix(vec3f(0.016, 0.017, 0.02), vec3f(0.05, 0.056, 0.07), smoothstep(-0.2, 1.0, h));
+  wall += vec3f(0.014, 0.012, 0.01) * smoothstep(0.35, -0.1, h);
+  var col = wall;
   if (h < 0.0) {
-    vec2 hit = floorHit(d);
-    vec2 toPool = hit - vec2(0.45, -0.75);
-    float pool = exp(-dot(toPool, toPool) * 0.3);
-    vec3 floorCol = vec3(0.022, 0.022, 0.025) + vec3(0.11, 0.105, 0.098) * pool;
-    col = mix(floorCol, wall, smoothstep(-0.1, 0.0, h)); // the far floor meets the wall softly
+    let hit = floorHit(d);
+    let toPool = hit - vec2f(0.45, -0.75);
+    let pool = exp(-dot(toPool, toPool) * 0.3);
+    let floorCol = vec3f(0.022, 0.022, 0.025) + vec3f(0.11, 0.105, 0.098) * pool;
+    col = mix(floorCol, wall, smoothstep(-0.1, 0.0, h));
   }
-
-  // warm key overhead, cool fill, cold rim behind
-  col += rectLight(d, vec3(0.9, -1.5, 2.6), vec3(2.4, 0.0, 0.0), vec3(0.0, 1.5, 0.9), vec2(1.5, 1.0), vec3(22.0, 21.0, 19.5), 0.35);
-  col += rectLight(d, vec3(-2.6, 0.6, 0.5), vec3(0.0, 1.8, 0.0), vec3(0.0, 0.0, 1.8), vec2(1.1, 1.4), vec3(2.4, 2.8, 3.6), 0.5);
-  col += rectLight(d, vec3(1.4, 2.8, 0.9), vec3(1.6, -0.8, 0.0), vec3(0.0, 0.0, 1.4), vec2(0.9, 0.7), vec3(5.5, 4.4, 3.2), 0.4);
-
-  // a strip light: long and thin, which is what draws a single bright line down a
-  // curved stem or across a cupped petal instead of a blob
-  col += rectLight(d, vec3(-0.6, 1.4, 2.3), vec3(3.0, 0.9, 0.0), vec3(0.0, -0.5, 1.6), vec2(2.4, 0.09), vec3(9.0, 9.2, 9.8), 0.05);
-
-  // a large dim top light: broad, soft, and what keeps the shadows from going black
-  col += rectLight(d, vec3(0.0, 0.0, 3.6), vec3(3.0, 0.0, 0.0), vec3(0.0, 3.0, 0.0), vec2(2.6, 2.6), vec3(0.9, 0.93, 1.0), 1.4);
+  col += rectLight(d, vec3f(0.9, -1.5, 2.6), vec3f(2.4, 0.0, 0.0), vec3f(0.0, 1.5, 0.9), vec2f(1.5, 1.0), vec3f(22.0, 21.0, 19.5), 0.35);
+  col += rectLight(d, vec3f(-2.6, 0.6, 0.5), vec3f(0.0, 1.8, 0.0), vec3f(0.0, 0.0, 1.8), vec2f(1.1, 1.4), vec3f(2.4, 2.8, 3.6), 0.5);
+  col += rectLight(d, vec3f(1.4, 2.8, 0.9), vec3f(1.6, -0.8, 0.0), vec3f(0.0, 0.0, 1.4), vec2f(0.9, 0.7), vec3f(5.5, 4.4, 3.2), 0.4);
+  col += rectLight(d, vec3f(-0.6, 1.4, 2.3), vec3f(3.0, 0.9, 0.0), vec3f(0.0, -0.5, 1.6), vec2f(2.4, 0.09), vec3f(9.0, 9.2, 9.8), 0.05);
+  col += rectLight(d, vec3f(0.0, 0.0, 3.6), vec3f(3.0, 0.0, 0.0), vec3f(0.0, 3.0, 0.0), vec2f(2.6, 2.6), vec3f(0.9, 0.93, 1.0), 1.4);
   return col;
 }
 
-vec3 dusk(vec3 d) {
-  float h = d.z;
-  vec3 sky = mix(vec3(0.25, 0.32, 0.5), vec3(0.03, 0.05, 0.12), smoothstep(0.0, 0.85, h));
-  vec3 horizon = mix(vec3(1.15, 0.55, 0.24), sky, smoothstep(0.0, 0.28, h));
-  vec3 ground = mix(vec3(0.045, 0.038, 0.032), vec3(0.14, 0.10, 0.08), smoothstep(-0.7, 0.0, h));
-  vec3 col = h > 0.0 ? horizon : ground;
-
-  // low sun, small and very bright, which is what gives a hard specular glint
-  vec3 sunDir = normalize(vec3(0.86, 0.36, 0.10));
-  float sun = smoothstep(0.9965, 0.9992, dot(d, sunDir));
-  col += vec3(46.0, 26.0, 12.0) * sun;
-  col += vec3(1.5, 0.7, 0.3) * pow(max(dot(d, sunDir), 0.0), 22.0);
+fn dusk(d: vec3f) -> vec3f {
+  let h = d.z;
+  let sky = mix(vec3f(0.25, 0.32, 0.5), vec3f(0.03, 0.05, 0.12), smoothstep(0.0, 0.85, h));
+  let horizon = mix(vec3f(1.15, 0.55, 0.24), sky, smoothstep(0.0, 0.28, h));
+  let ground = mix(vec3f(0.045, 0.038, 0.032), vec3f(0.14, 0.10, 0.08), smoothstep(-0.7, 0.0, h));
+  var col = select(ground, horizon, h > 0.0);
+  let sunDir = normalize(vec3f(0.86, 0.36, 0.10));
+  let sun = smoothstep(0.9965, 0.9992, dot(d, sunDir));
+  col += vec3f(46.0, 26.0, 12.0) * sun;
+  col += vec3f(1.5, 0.7, 0.3) * pow(max(dot(d, sunDir), 0.0), 22.0);
   return col;
 }
 
-vec3 gallery(vec3 d) {
-  float h = d.z * 0.5 + 0.5;
-  vec3 col = mix(vec3(0.10, 0.10, 0.105), vec3(0.30, 0.31, 0.33), smoothstep(0.1, 0.95, h));
-
-  // a pale concrete floor, meeting the wall at a soft line
+fn gallery(d: vec3f) -> vec3f {
+  let h = d.z * 0.5 + 0.5;
+  var col = mix(vec3f(0.10, 0.10, 0.105), vec3f(0.30, 0.31, 0.33), smoothstep(0.1, 0.95, h));
   if (d.z < 0.0) {
-    vec2 hit = floorHit(d);
-    float near = exp(-dot(hit, hit) * 0.08);
-    vec3 floorCol = vec3(0.13, 0.128, 0.125) + vec3(0.07, 0.068, 0.065) * near;
+    let hit = floorHit(d);
+    let near = exp(-dot(hit, hit) * 0.08);
+    let floorCol = vec3f(0.13, 0.128, 0.125) + vec3f(0.07, 0.068, 0.065) * near;
     col = mix(floorCol, col, smoothstep(-0.08, 0.0, d.z));
   }
-
-  // a row of ceiling panels: repeated hard-edged sources read as a real room
-  for (int i = -1; i <= 1; i++) {
-    float x = float(i) * 2.1;
-    col += rectLight(d, vec3(x, 0.0, 3.0), vec3(0.75, 0.0, 0.0), vec3(0.0, 3.0, 0.0), vec2(0.42, 1.9), vec3(9.0, 9.0, 9.2), 0.18);
+  for (var i = -1; i <= 1; i++) {
+    let x = f32(i) * 2.1;
+    col += rectLight(d, vec3f(x, 0.0, 3.0), vec3f(0.75, 0.0, 0.0), vec3f(0.0, 3.0, 0.0), vec2f(0.42, 1.9), vec3f(9.0, 9.0, 9.2), 0.18);
   }
-  col += rectLight(d, vec3(0.0, -3.2, 0.3), vec3(4.0, 0.0, 0.0), vec3(0.0, 0.0, 2.2), vec2(2.4, 1.4), vec3(0.9, 0.92, 1.0), 0.7);
+  col += rectLight(d, vec3f(0.0, -3.2, 0.3), vec3f(4.0, 0.0, 0.0), vec3f(0.0, 0.0, 2.2), vec2f(2.4, 1.4), vec3f(0.9, 0.92, 1.0), 0.7);
   return col;
 }
 
-void main() {
-  vec2 p = vUv * 2.0 - 1.0;
-  vec3 d = normalize(uForward + uRight * p.x + uUp * p.y);
-  vec3 col = uPreset == 0 ? studio(d) : uPreset == 1 ? dusk(d) : gallery(d);
-  fragColor = vec4(col, 1.0);
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let p = uv * 2.0 - 1.0;
+  let d = normalize(basis.forward + basis.right * p.x + basis.up * p.y);
+  var col: vec3f;
+  if (basis.preset < 0.5) { col = studio(d); }
+  else if (basis.preset < 1.5) { col = dusk(d); }
+  else { col = gallery(d); }
+  return vec4f(col, 1.0);
 }`;
 
-const PREFILTER_FRAG = `#version 300 es
-precision highp float;
+/** One mip level down: a linear sample at the centre of each texel averages the four beneath. */
+const DOWNSAMPLE = `
+${FULLSCREEN_VERT}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  return vec4f(textureSampleLevel(src, samp, uv, 0.0).rgb, 1.0);
+}`;
 
-in vec2 vUv;
-out vec4 fragColor;
+const GGX_COMMON = `
+const PI: f32 = 3.14159265359;
 
-uniform samplerCube uSource;
-uniform vec3 uForward;
-uniform vec3 uRight;
-uniform vec3 uUp;
-uniform float uRoughness;
-uniform float uSourceSize;
-
-const float PI = 3.14159265359;
-
-float radicalInverse(uint bits) {
+fn radicalInverse(bits0: u32) -> f32 {
+  var bits = bits0;
   bits = (bits << 16u) | (bits >> 16u);
   bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
   bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
   bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
   bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-  return float(bits) * 2.3283064365386963e-10;
+  return f32(bits) * 2.3283064365386963e-10;
 }
 
-vec3 importanceGGX(vec2 xi, vec3 n, float a) {
-  float phi = 2.0 * PI * xi.x;
-  float cosTheta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
-  float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-  vec3 h = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-  vec3 up = abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-  vec3 tx = normalize(cross(up, n));
-  vec3 ty = cross(n, tx);
+fn importanceGGX(xi: vec2f, n: vec3f, a: f32) -> vec3f {
+  let phi = 2.0 * PI * xi.x;
+  let cosTheta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
+  let sinTheta = sqrt(1.0 - cosTheta * cosTheta);
+  let h = vec3f(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
+  let up = select(vec3f(1.0, 0.0, 0.0), vec3f(0.0, 0.0, 1.0), abs(n.z) < 0.999);
+  let tx = normalize(cross(up, n));
+  let ty = cross(n, tx);
   return normalize(tx * h.x + ty * h.y + n * h.z);
 }
+`;
 
-void main() {
-  vec2 p = vUv * 2.0 - 1.0;
-  vec3 n = normalize(uForward + uRight * p.x + uUp * p.y);
-  vec3 v = n; // the usual N = V = R simplification
+const PREFILTER = `
+${FULLSCREEN_VERT}
+${CUBE_BASIS}
+${GGX_COMMON}
+@group(0) @binding(1) var source: texture_cube<f32>;
+@group(0) @binding(2) var samp: sampler;
 
-  const uint SAMPLES = 128u;
-  // Never let alpha reach zero. At roughness 0 the GGX half-vector is exactly the
-  // normal, the distribution denominator collapses to zero, and the pdf becomes
-  // 0/0 — so mip 0 fills with NaN and every lookup below lod 1 blends against it,
-  // which is to say every polished surface in the scene renders black.
-  float a = max(uRoughness * uRoughness, 1e-3);
-  vec3 sum = vec3(0.0);
-  float weight = 0.0;
-
-  for (uint i = 0u; i < SAMPLES; i++) {
-    vec2 xi = vec2(float(i) / float(SAMPLES), radicalInverse(i));
-    vec3 h = importanceGGX(xi, n, a);
-    vec3 l = normalize(2.0 * dot(v, h) * h - v);
-    float ndl = dot(n, l);
-    if (ndl <= 0.0) continue;
-
-    // Sample from a mip chosen by solid angle, or sparse sampling of a bright
-    // softbox turns into a field of fireflies rather than a blurred highlight.
-    float ndh = max(dot(n, h), 0.0);
-    float d = (ndh * ndh * (a * a - 1.0) + 1.0);
-    float pdf = (a * a) / max(PI * d * d, 1e-8) * 0.25 + 1e-4;
-    float saTexel = 4.0 * PI / (6.0 * uSourceSize * uSourceSize);
-    float saSample = 1.0 / (float(SAMPLES) * pdf + 0.0001);
-    float lod = uRoughness == 0.0 ? 0.0 : 0.5 * log2(saSample / saTexel);
-
-    sum += textureLod(uSource, l, lod).rgb * ndl;
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let p = uv * 2.0 - 1.0;
+  let n = normalize(basis.forward + basis.right * p.x + basis.up * p.y);
+  let v = n;
+  let SAMPLES = 128u;
+  // never let alpha reach zero: the pdf becomes 0/0 and mip 0 fills with NaN
+  let a = max(basis.roughness * basis.roughness, 1e-3);
+  var sum = vec3f(0.0);
+  var weight = 0.0;
+  for (var i = 0u; i < SAMPLES; i++) {
+    let xi = vec2f(f32(i) / f32(SAMPLES), radicalInverse(i));
+    let h = importanceGGX(xi, n, a);
+    let l = normalize(2.0 * dot(v, h) * h - v);
+    let ndl = dot(n, l);
+    if (ndl <= 0.0) { continue; }
+    // sample from a mip chosen by solid angle, or a bright softbox turns into fireflies
+    let ndh = max(dot(n, h), 0.0);
+    let d = (ndh * ndh * (a * a - 1.0) + 1.0);
+    let pdf = (a * a) / max(PI * d * d, 1e-8) * 0.25 + 1e-4;
+    let saTexel = 4.0 * PI / (6.0 * basis.sourceSize * basis.sourceSize);
+    let saSample = 1.0 / (f32(SAMPLES) * pdf + 0.0001);
+    let lod = select(0.5 * log2(saSample / saTexel), 0.0, basis.roughness == 0.0);
+    sum += textureSampleLevel(source, samp, l, lod).rgb * ndl;
     weight += ndl;
   }
-
-  fragColor = vec4(sum / max(weight, 0.001), 1.0);
+  return vec4f(sum / max(weight, 0.001), 1.0);
 }`;
 
-const BRDF_FRAG = `#version 300 es
-precision highp float;
+const BRDF = `
+${FULLSCREEN_VERT}
+${GGX_COMMON}
 
-in vec2 vUv;
-out vec4 fragColor;
-
-const float PI = 3.14159265359;
-
-float radicalInverse(uint bits) {
-  bits = (bits << 16u) | (bits >> 16u);
-  bits = ((bits & 0x55555555u) << 1u) | ((bits & 0xAAAAAAAAu) >> 1u);
-  bits = ((bits & 0x33333333u) << 2u) | ((bits & 0xCCCCCCCCu) >> 2u);
-  bits = ((bits & 0x0F0F0F0Fu) << 4u) | ((bits & 0xF0F0F0F0u) >> 4u);
-  bits = ((bits & 0x00FF00FFu) << 8u) | ((bits & 0xFF00FF00u) >> 8u);
-  return float(bits) * 2.3283064365386963e-10;
-}
-
-vec3 importanceGGX(vec2 xi, vec3 n, float a) {
-  float phi = 2.0 * PI * xi.x;
-  float cosTheta = sqrt((1.0 - xi.y) / (1.0 + (a * a - 1.0) * xi.y));
-  float sinTheta = sqrt(1.0 - cosTheta * cosTheta);
-  vec3 h = vec3(cos(phi) * sinTheta, sin(phi) * sinTheta, cosTheta);
-  vec3 up = abs(n.z) < 0.999 ? vec3(0.0, 0.0, 1.0) : vec3(1.0, 0.0, 0.0);
-  vec3 tx = normalize(cross(up, n));
-  vec3 ty = cross(n, tx);
-  return normalize(tx * h.x + ty * h.y + n * h.z);
-}
-
-float geometrySmith(float ndv, float ndl, float roughness) {
-  // Schlick-GGX with the IBL k, not the direct-light one
-  float k = (roughness * roughness) / 2.0;
-  float gv = ndv / (ndv * (1.0 - k) + k);
-  float gl = ndl / (ndl * (1.0 - k) + k);
+fn geometrySmith(ndv: f32, ndl: f32, roughness: f32) -> f32 {
+  let k = (roughness * roughness) / 2.0;
+  let gv = ndv / (ndv * (1.0 - k) + k);
+  let gl = ndl / (ndl * (1.0 - k) + k);
   return gv * gl;
 }
 
-void main() {
-  float ndv = max(vUv.x, 0.001);
-  float roughness = vUv.y;
-
-  vec3 v = vec3(sqrt(1.0 - ndv * ndv), 0.0, ndv);
-  vec3 n = vec3(0.0, 0.0, 1.0);
-  float a = roughness * roughness;
-
-  float scale = 0.0;
-  float bias = 0.0;
-  const uint SAMPLES = 512u;
-
-  for (uint i = 0u; i < SAMPLES; i++) {
-    vec2 xi = vec2(float(i) / float(SAMPLES), radicalInverse(i));
-    vec3 h = importanceGGX(xi, n, a);
-    vec3 l = normalize(2.0 * dot(v, h) * h - v);
-
-    float ndl = max(l.z, 0.0);
-    if (ndl <= 0.0) continue;
-    float ndh = max(h.z, 0.0);
-    float vdh = max(dot(v, h), 0.0);
-
-    float g = geometrySmith(ndv, ndl, roughness);
-    float gVis = (g * vdh) / max(ndh * ndv, 0.0001);
-    float fc = pow(1.0 - vdh, 5.0);
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let ndv = max(uv.x, 0.001);
+  let roughness = uv.y;
+  let v = vec3f(sqrt(1.0 - ndv * ndv), 0.0, ndv);
+  let n = vec3f(0.0, 0.0, 1.0);
+  let a = roughness * roughness;
+  var scale = 0.0;
+  var bias = 0.0;
+  let SAMPLES = 512u;
+  for (var i = 0u; i < SAMPLES; i++) {
+    let xi = vec2f(f32(i) / f32(SAMPLES), radicalInverse(i));
+    let h = importanceGGX(xi, n, a);
+    let l = normalize(2.0 * dot(v, h) * h - v);
+    let ndl = max(l.z, 0.0);
+    if (ndl <= 0.0) { continue; }
+    let ndh = max(h.z, 0.0);
+    let vdh = max(dot(v, h), 0.0);
+    let g = geometrySmith(ndv, ndl, roughness);
+    let gVis = (g * vdh) / max(ndh * ndv, 0.0001);
+    let fc = pow(1.0 - vdh, 5.0);
     scale += (1.0 - fc) * gVis;
     bias += fc * gVis;
   }
-
-  fragColor = vec4(scale / float(SAMPLES), bias / float(SAMPLES), 0.0, 1.0);
+  return vec4f(scale / f32(SAMPLES), bias / f32(SAMPLES), 0.0, 1.0);
 }`;
 
-/** GL cube face conventions: forward, right and up per face. */
+/** [forward, right, up] per cube face, in GL's face order, which WebGPU shares. */
 const FACES: Array<[number[], number[], number[]]> = [
   [[1, 0, 0], [0, 0, -1], [0, -1, 0]],
   [[-1, 0, 0], [0, 0, 1], [0, -1, 0]],
@@ -300,98 +242,167 @@ const FACES: Array<[number[], number[], number[]]> = [
 ];
 
 const PRESET_INDEX: Record<EnvPreset, number> = { studio: 0, dusk: 1, gallery: 2 };
+const BASIS_STRIDE = 256;
+
+interface Pipelines {
+  sky: GPURenderPipeline;
+  down: GPURenderPipeline;
+  prefilter: GPURenderPipeline;
+  brdf: GPURenderPipeline;
+  sampler: GPUSampler;
+}
+
+const pipelines = new WeakMap<GPUDevice, Pipelines>();
+
+function getPipelines(device: GPUDevice): Pipelines {
+  let p = pipelines.get(device);
+  if (p) return p;
+  // The basis slot is addressed by dynamic offset, which an automatic layout
+  // never grants, so the two pipelines that use it get explicit layouts.
+  const basisEntry: GPUBindGroupLayoutEntry = {
+    binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true },
+  };
+  const skyLayout = device.createBindGroupLayout({ entries: [basisEntry] });
+  const prefilterLayout = device.createBindGroupLayout({
+    entries: [
+      basisEntry,
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: { viewDimension: 'cube' } },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+    ],
+  });
+  const make = (code: string, label: string, layout?: GPUBindGroupLayout) => {
+    const module = shader(device, code, label);
+    return device.createRenderPipeline({
+      label,
+      layout: layout ? device.createPipelineLayout({ bindGroupLayouts: [layout] }) : 'auto',
+      vertex: { module, entryPoint: 'vsFullscreen' },
+      fragment: { module, entryPoint: 'fsMain', targets: [{ format: FORMAT }] },
+    });
+  };
+  p = {
+    sky: make(SKY, 'env sky', skyLayout),
+    down: make(DOWNSAMPLE, 'env downsample'),
+    prefilter: make(PREFILTER, 'env prefilter', prefilterLayout),
+    brdf: make(BRDF, 'env brdf'),
+    sampler: device.createSampler({
+      magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
+      addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge', addressModeW: 'clamp-to-edge',
+    }),
+  };
+  pipelines.set(device, p);
+  return p;
+}
 
 export function bakeEnvironment(
-  gl: WebGL2RenderingContext,
+  ctx: GpuContext,
   preset: EnvPreset,
-  opts: { size?: number; mips?: number; brdfSize?: number } = {},
+  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number } = {},
 ): Environment {
+  const { device } = ctx;
   const size = opts.size ?? 512;
   const mips = opts.mips ?? 8;
   const brdfSize = opts.brdfSize ?? 128;
+  const sampleSize = opts.sampleSize ?? 64;
+  const pipes = getPipelines(device);
 
-  const canFloat = !!gl.getExtension('EXT_color_buffer_float');
-  const internal = canFloat ? gl.RGBA16F : gl.RGBA8;
-
-  const fbo = gl.createFramebuffer()!;
-  const vao = gl.createVertexArray()!;
-  const skyProgram = compile(gl, FULLSCREEN_VERT, SKY_FRAG);
-  const preProgram = compile(gl, FULLSCREEN_VERT, PREFILTER_FRAG);
-  const brdfProgram = compile(gl, FULLSCREEN_VERT, BRDF_FRAG);
-
-  const prevViewport = gl.getParameter(gl.VIEWPORT) as Int32Array;
-  gl.bindVertexArray(vao);
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.disable(gl.DEPTH_TEST);
-  gl.disable(gl.BLEND);
-  gl.disable(gl.CULL_FACE);
-
-  // --- 1. the environment itself, with its own mip chain for prefiltering ---
+  const cube = (levels: number, label: string) => device.createTexture({
+    label, size: [size, size, 6], format: FORMAT, mipLevelCount: levels,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_SRC,
+  });
   const backgroundMips = Math.floor(Math.log2(size)) + 1;
-  const background = makeCube(gl, size, backgroundMips, internal);
-  gl.useProgram(skyProgram);
-  gl.uniform1i(gl.getUniformLocation(skyProgram, 'uPreset'), PRESET_INDEX[preset]);
-  for (let face = 0; face < 6; face++) {
-    attachFace(gl, fbo, background, face, 0);
-    gl.viewport(0, 0, size, size);
-    setBasis(gl, skyProgram, face);
-    gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const background = cube(backgroundMips, 'env background');
+  const specular = cube(mips, 'env specular');
+  const brdf = device.createTexture({
+    label: 'env brdf', size: [brdfSize, brdfSize], format: FORMAT,
+    usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+  });
+
+  // one uniform buffer with a slot per (face, level) draw, addressed by dynamic offset
+  const slots = 6 + 6 * mips;
+  const basisBuffer = device.createBuffer({ size: slots * BASIS_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const basisData = new Float32Array((slots * BASIS_STRIDE) / 4);
+  const setBasis = (slot: number, face: number, roughness: number) => {
+    const [f, r, u] = FACES[face];
+    basisData.set(
+      [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, PRESET_INDEX[preset], roughness, size, 0],
+      (slot * BASIS_STRIDE) / 4,
+    );
+  };
+  for (let face = 0; face < 6; face++) setBasis(face, face, 0);
+  for (let level = 0; level < mips; level++) {
+    for (let face = 0; face < 6; face++) setBasis(6 + level * 6 + face, face, mips > 1 ? level / (mips - 1) : 0);
   }
-  gl.bindTexture(gl.TEXTURE_CUBE_MAP, background);
-  gl.generateMipmap(gl.TEXTURE_CUBE_MAP);
+  device.queue.writeBuffer(basisBuffer, 0, basisData);
+
+  const faceView = (tex: GPUTexture, face: number, level: number) =>
+    tex.createView({ dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1, baseMipLevel: level, mipLevelCount: 1 });
+  const drawTo = (encoder: GPUCommandEncoder, view: GPUTextureView, pipeline: GPURenderPipeline, bind: GPUBindGroup, offsets?: number[]) => {
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 1 } }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind, offsets);
+    pass.draw(3);
+    pass.end();
+  };
+
+  const encoder = device.createCommandEncoder({ label: 'env bake' });
+
+  // --- 1. the environment itself, then its mip chain one level at a time ---
+  const skyBind = device.createBindGroup({
+    layout: pipes.sky.getBindGroupLayout(0),
+    entries: [{ binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } }],
+  });
+  for (let face = 0; face < 6; face++) {
+    drawTo(encoder, faceView(background, face, 0), pipes.sky, skyBind, [face * BASIS_STRIDE]);
+  }
+  for (let level = 1; level < backgroundMips; level++) {
+    for (let face = 0; face < 6; face++) {
+      const bind = device.createBindGroup({
+        layout: pipes.down.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: faceView(background, face, level - 1) },
+          { binding: 1, resource: pipes.sampler },
+        ],
+      });
+      drawTo(encoder, faceView(background, face, level), pipes.down, bind);
+    }
+  }
 
   // --- 2. GGX prefilter into a second cube, level by level ---
-  // A second texture, not more levels of the first: sampling a texture while
-  // rendering into any level of it is a feedback loop.
-  const specular = makeCube(gl, size, mips, internal);
-  gl.useProgram(preProgram);
-  gl.activeTexture(gl.TEXTURE0);
-  gl.bindTexture(gl.TEXTURE_CUBE_MAP, background);
-  gl.uniform1i(gl.getUniformLocation(preProgram, 'uSource'), 0);
-  gl.uniform1f(gl.getUniformLocation(preProgram, 'uSourceSize'), size);
-  const roughnessLoc = gl.getUniformLocation(preProgram, 'uRoughness');
-
+  const prefilterBind = device.createBindGroup({
+    layout: pipes.prefilter.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
+      { binding: 1, resource: background.createView({ dimension: 'cube' }) },
+      { binding: 2, resource: pipes.sampler },
+    ],
+  });
   for (let level = 0; level < mips; level++) {
-    const levelSize = Math.max(1, size >> level);
-    gl.uniform1f(roughnessLoc, mips > 1 ? level / (mips - 1) : 0);
     for (let face = 0; face < 6; face++) {
-      attachFace(gl, fbo, specular, face, level);
-      gl.viewport(0, 0, levelSize, levelSize);
-      setBasis(gl, preProgram, face);
-      gl.drawArrays(gl.TRIANGLES, 0, 3);
+      drawTo(encoder, faceView(specular, face, level), pipes.prefilter, prefilterBind, [(6 + level * 6 + face) * BASIS_STRIDE]);
     }
   }
 
   // --- 3. split-sum BRDF lookup ---
-  const brdf = gl.createTexture()!;
-  gl.bindTexture(gl.TEXTURE_2D, brdf);
-  gl.texStorage2D(gl.TEXTURE_2D, 1, canFloat ? gl.RGBA16F : gl.RGBA8, brdfSize, brdfSize);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.framebufferTexture2D(gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0, gl.TEXTURE_2D, brdf, 0);
-  gl.viewport(0, 0, brdfSize, brdfSize);
-  gl.useProgram(brdfProgram);
-  gl.drawArrays(gl.TRIANGLES, 0, 3);
+  const brdfBind = device.createBindGroup({ layout: pipes.brdf.getBindGroupLayout(0), entries: [] });
+  drawTo(encoder, brdf.createView(), pipes.brdf, brdfBind);
 
-  // --- self-check: a NaN in a prefiltered mip shows up only as black metal ---
-  const bad = [
-    verifyLevel(gl, fbo, specular, 0, size, 'specular mip 0'),
-    verifyLevel(gl, fbo, specular, mips - 1, Math.max(1, size >> (mips - 1)), `specular mip ${mips - 1}`),
-  ].filter(Boolean);
-  if (bad.length) console.error(`environment bake produced non-finite texels: ${bad.join(', ')}`);
+  device.queue.submit([encoder.finish()]);
 
-  // --- restore ---
-  gl.bindFramebuffer(gl.FRAMEBUFFER, null);
-  gl.bindVertexArray(null);
-  gl.enable(gl.DEPTH_TEST);
-  gl.viewport(prevViewport[0], prevViewport[1], prevViewport[2], prevViewport[3]);
-  gl.deleteFramebuffer(fbo);
-  gl.deleteVertexArray(vao);
-  gl.deleteProgram(skyProgram);
-  gl.deleteProgram(preProgram);
-  gl.deleteProgram(brdfProgram);
+  // --- 4. a small mip of the background, read back for direction sampling ---
+  const sampleLod = Math.max(0, Math.round(Math.log2(size / sampleSize)));
+  const realSize = Math.max(1, size >> sampleLod);
+  const samples = (async () => {
+    const faces: Float32Array[] = [];
+    for (let face = 0; face < 6; face++) {
+      const raw = new Uint16Array(await readbackLayer(device, background, face, sampleLod, realSize, 8));
+      const out = new Float32Array(raw.length);
+      for (let i = 0; i < raw.length; i++) out[i] = halfToFloat(raw[i]);
+      faces.push(out);
+    }
+    return { faces, size: realSize };
+  })();
 
   return {
     background,
@@ -399,88 +410,13 @@ export function bakeEnvironment(
     brdf,
     size,
     mips,
-    highDynamicRange: canFloat,
+    highDynamicRange: true,
+    samples,
     dispose() {
-      gl.deleteTexture(background);
-      gl.deleteTexture(specular);
-      gl.deleteTexture(brdf);
+      background.destroy();
+      specular.destroy();
+      brdf.destroy();
+      basisBuffer.destroy();
     },
   };
-}
-
-/**
- * Read one texel back and check it is finite.
- *
- * Worth the two microseconds: a single NaN mip renders as solid black metal with
- * no error anywhere, and that is a genuinely slow thing to track down from the
- * symptom.
- */
-function verifyLevel(
-  gl: WebGL2RenderingContext,
-  fbo: WebGLFramebuffer,
-  tex: WebGLTexture,
-  level: number,
-  size: number,
-  label: string,
-): string | null {
-  try {
-    attachFace(gl, fbo, tex, 2, level);
-    if (gl.checkFramebufferStatus(gl.FRAMEBUFFER) !== gl.FRAMEBUFFER_COMPLETE) return null;
-    const px = new Float32Array(4);
-    gl.readPixels(size >> 1, size >> 1, 1, 1, gl.RGBA, gl.FLOAT, px);
-    return Number.isFinite(px[0]) && Number.isFinite(px[1]) && Number.isFinite(px[2]) ? null : label;
-  } catch {
-    return null;
-  }
-}
-
-function makeCube(gl: WebGL2RenderingContext, size: number, levels: number, internal: number) {
-  const tex = gl.createTexture()!;
-  gl.bindTexture(gl.TEXTURE_CUBE_MAP, tex);
-  gl.texStorage2D(gl.TEXTURE_CUBE_MAP, levels, internal, size, size);
-  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MIN_FILTER, gl.LINEAR_MIPMAP_LINEAR);
-  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
-  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
-  gl.texParameteri(gl.TEXTURE_CUBE_MAP, gl.TEXTURE_WRAP_R, gl.CLAMP_TO_EDGE);
-  return tex;
-}
-
-function attachFace(gl: WebGL2RenderingContext, fbo: WebGLFramebuffer, tex: WebGLTexture, face: number, level: number) {
-  gl.bindFramebuffer(gl.FRAMEBUFFER, fbo);
-  gl.framebufferTexture2D(
-    gl.FRAMEBUFFER, gl.COLOR_ATTACHMENT0,
-    gl.TEXTURE_CUBE_MAP_POSITIVE_X + face, tex, level,
-  );
-}
-
-function setBasis(gl: WebGL2RenderingContext, program: WebGLProgram, face: number) {
-  const [f, r, u] = FACES[face];
-  gl.uniform3f(gl.getUniformLocation(program, 'uForward'), f[0], f[1], f[2]);
-  gl.uniform3f(gl.getUniformLocation(program, 'uRight'), r[0], r[1], r[2]);
-  gl.uniform3f(gl.getUniformLocation(program, 'uUp'), u[0], u[1], u[2]);
-}
-
-function compile(gl: WebGL2RenderingContext, vertexSrc: string, fragmentSrc: string): WebGLProgram {
-  const make = (type: number, src: string) => {
-    const s = gl.createShader(type)!;
-    gl.shaderSource(s, src);
-    gl.compileShader(s);
-    if (!gl.getShaderParameter(s, gl.COMPILE_STATUS)) {
-      throw new Error(`environment shader failed: ${gl.getShaderInfoLog(s)}`);
-    }
-    return s;
-  };
-  const p = gl.createProgram()!;
-  const vs = make(gl.VERTEX_SHADER, vertexSrc);
-  const fs = make(gl.FRAGMENT_SHADER, fragmentSrc);
-  gl.attachShader(p, vs);
-  gl.attachShader(p, fs);
-  gl.linkProgram(p);
-  if (!gl.getProgramParameter(p, gl.LINK_STATUS)) {
-    throw new Error(`environment program failed: ${gl.getProgramInfoLog(p)}`);
-  }
-  gl.deleteShader(vs);
-  gl.deleteShader(fs);
-  return p;
 }

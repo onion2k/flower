@@ -45,6 +45,8 @@ export interface LeafSpec {
   segments?: number;
   /** Rivet hole at the base, and the anchor that goes with it. */
   bossBore?: number;
+  /** Enamel fired into the top face, by colour name. The bevel stays metal. */
+  enamel?: string;
 }
 
 /**
@@ -136,6 +138,7 @@ export function leaf(spec: LeafSpec): Part {
   const mesh = extrude({
     outline, holes: fitted, thickness: spec.thickness, bevel,
     maxCapEdge: Number.isFinite(limit) ? limit : undefined,
+    enamelTop: !!spec.enamel,
   });
 
   if (spec.cup || spec.curl || spec.twist || fields.relief) {
@@ -147,7 +150,7 @@ export function leaf(spec: LeafSpec): Part {
     }
   }
 
-  return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors };
+  return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }
 
 const halfWidthAt = (width: number, t: number) =>

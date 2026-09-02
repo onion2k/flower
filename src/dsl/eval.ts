@@ -8,6 +8,60 @@ import type { Action, Expr, Placement, Program } from './ast';
 import { parse } from './parser';
 import { Args, BUILTINS, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
 import { DslError, type Span } from './lexer';
+/**
+ * Part geometry survives across compiles. The editor recompiles on every
+ * keystroke and a subject switch compiles from scratch, and a pierced leaf
+ * costs the better part of a second to mesh, so a call with the same arguments
+ * hands back the same mesh. Only arguments that are plain values take part —
+ * numbers, words, points, paths — and each hit is a fresh Part object, since a
+ * sketch writes its material onto the Part it declares.
+ */
+const partMemo = new Map<string, Part>();
+const PART_MEMO_LIMIT = 400;
+
+function memoValue(value: unknown, depth: number): string | null {
+  if (depth > 6) return null;
+  if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
+  if (Array.isArray(value)) {
+    const parts: string[] = [];
+    for (const v of value) {
+      const k = memoValue(v, depth + 1);
+      if (k === null) return null;
+      parts.push(k);
+    }
+    return `[${parts.join(',')}]`;
+  }
+  if (value && typeof value === 'object' && Object.getPrototypeOf(value) === Object.prototype && !('mesh' in value)) {
+    const keys = Object.keys(value).sort();
+    const parts: string[] = [];
+    for (const key of keys) {
+      const k = memoValue((value as Record<string, unknown>)[key], depth + 1);
+      if (k === null) return null;
+      parts.push(`${JSON.stringify(key)}:${k}`);
+    }
+    return `{${parts.join(',')}}`;
+  }
+  return null;
+}
+
+function partMemoKey(callee: string, args: CallArg[]): string | null {
+  const parts: string[] = [];
+  for (const a of args) {
+    const k = memoValue(a.value, 0);
+    if (k === null) return null;
+    parts.push(`${a.name ?? ''}=${k}`);
+  }
+  return `${callee}(${parts.join(';')})`;
+}
+
+function rememberPart(key: string, part: Part) {
+  if (partMemo.size >= PART_MEMO_LIMIT) {
+    const oldest = partMemo.keys().next().value;
+    if (oldest !== undefined) partMemo.delete(oldest);
+  }
+  partMemo.set(key, { ...part, material: undefined });
+}
+
 
 export interface CompileOptions {
   /**
@@ -193,9 +247,14 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
           value: evalExpr(a.value),
           span: a.span,
         }));
+        const memoKey = partMemoKey(expr.callee, args);
+        const memoised = memoKey === null ? undefined : partMemo.get(memoKey);
+        // a hit means this exact call once ran clean, so its arguments need no checking
+        if (memoised) return { ...memoised, material: undefined };
         const reader = new Args(expr.callee, args, expr.span, builtin.known);
         const result = builtin.fn(reader);
         reader.done();
+        if (memoKey !== null && isPart(result)) rememberPart(memoKey, result);
         return result;
       }
     }

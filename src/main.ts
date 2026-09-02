@@ -1,4 +1,4 @@
-import { analyseConnectivity } from './assembly/connectivity';
+import type { ConnectivityRequest, ConnectivityResponse } from './assembly/connectivity.worker';
 import { catalogue, catalogueNames } from './spike/catalogue';
 import { examples, exampleNames } from './dsl/examples';
 import { compile } from './dsl/index';
@@ -9,7 +9,7 @@ import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
 import type { Anchor } from './parts/types';
 import type { Mesh } from './mesh/types';
-import { Viewer } from './render/viewer';
+import { Viewer, type Quality } from './render/viewer';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
@@ -20,7 +20,17 @@ const editor = document.getElementById('editor')!;
 const sourceEl = document.getElementById('source') as HTMLTextAreaElement;
 const diagnosticEl = document.getElementById('diagnostic')!;
 
-const viewer = new Viewer(stage);
+let viewer: Viewer;
+try {
+  viewer = await Viewer.create(stage, (info) => {
+    diagnosticEl.textContent = `GPU device lost (${info.reason}): ${info.message || 'the GPU timed out'} — reload the page`;
+    diagnosticEl.classList.add('bad');
+  });
+} catch (err) {
+  diagnosticEl.textContent = `renderer unavailable: ${(err as Error).message}`;
+  diagnosticEl.classList.add('bad');
+  throw err;
+}
 
 const state = {
   subject: formNames[0],
@@ -32,11 +42,14 @@ const state = {
   envSpin: 0,
   debug: 0,
   showAnchors: false,
+  reflections: false,
+  renderScale: 1,
+  quality: 'draft' as Quality,
 };
 
 let framed = '';
 
-function toggle(label: string, key: 'showAnchors', onChange: () => void) {
+function toggle(label: string, key: 'showAnchors' | 'reflections', onChange: () => void) {
   const wrap = document.createElement('label');
   wrap.className = 'check';
   const input = document.createElement('input');
@@ -178,10 +191,19 @@ const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brd
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
 viewSet.append(
+  picker('quality', ['draft', 'final'], state.quality, (v) => {
+    state.quality = v as Quality;
+    viewer.setQuality(state.quality);
+  }),
   picker('debug', DEBUG_MODES, 'shaded', (v) => {
     state.debug = DEBUG_MODES.indexOf(v);
     viewer.setDebug(state.debug);
   }),
+  slider('render scale', 0.5, 1, 0.05, state.renderScale, (v) => `${Math.round(v * 100)}%`, (v) => {
+    state.renderScale = v;
+    viewer.setRenderScale(v);
+  }),
+  toggle('reflections', 'reflections', () => viewer.setReflections(state.reflections)),
   toggle('show anchors', 'showAnchors', () => build()),
 );
 
@@ -189,11 +211,11 @@ controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string }>();
+  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string }>();
   for (const p of assembly.placements) {
     let group = byMesh.get(p.part.mesh);
     if (!group) {
-      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish };
+      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel };
       byMesh.set(p.part.mesh, group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -203,6 +225,7 @@ function groupByMesh(assembly: Assembly) {
     matrices: new Float32Array(g.matrices),
     metal: g.metal,
     finish: g.finish,
+    enamel: g.enamel,
   }));
 }
 
@@ -262,10 +285,47 @@ function build() {
 
 /**
  * Counting bodies is the slowest thing in the panel — seconds on a dense form —
- * so it runs after the frame rather than in it, and a token drops the answer if
- * the subject changed while it was working.
+ * so it runs in a worker, and a token drops the answer if the subject changed
+ * while it was working.
  */
 let connectivityToken = 0;
+const connectivityWorker = new Worker(new URL('./assembly/connectivity.worker.ts', import.meta.url), { type: 'module' });
+let onConnectivity: ((r: ConnectivityResponse) => void) | null = null;
+// one request in flight; while it runs, only the latest edit waits behind it
+let connectivityBusy = false;
+let connectivityPending: ConnectivityRequest | null = null;
+connectivityWorker.addEventListener('message', (e: MessageEvent<ConnectivityResponse>) => {
+  connectivityBusy = false;
+  if (connectivityPending) {
+    const next = connectivityPending;
+    connectivityPending = null;
+    connectivityBusy = true;
+    connectivityWorker.postMessage(next);
+  }
+  onConnectivity?.(e.data);
+});
+
+function requestConnectivity(assembly: Assembly, token: number) {
+  const meshes: Mesh[] = [];
+  const index = new Map<Mesh, number>();
+  const placements = assembly.placements.map((p) => {
+    let i = index.get(p.part.mesh);
+    if (i === undefined) {
+      i = meshes.length;
+      index.set(p.part.mesh, i);
+      meshes.push(p.part.mesh);
+    }
+    return { mesh: i, matrix: p.matrix };
+  });
+  const request: ConnectivityRequest = {
+    token,
+    meshes: meshes.map((m) => ({ positions: m.positions, indices: m.indices })),
+    placements,
+  };
+  if (connectivityBusy) { connectivityPending = request; return; }
+  connectivityBusy = true;
+  connectivityWorker.postMessage(request);
+}
 
 function report(assembly: Assembly, ms: number, span: number) {
   const s = assembly.stats();
@@ -291,16 +351,16 @@ function report(assembly: Assembly, ms: number, span: number) {
   draw();
 
   const token = ++connectivityToken;
-  setTimeout(() => {
-    if (token !== connectivityToken) return;
-    const { bodies, floating } = analyseConnectivity(assembly);
+  onConnectivity = ({ token: answered, bodies, floating }) => {
+    if (answered !== connectivityToken) return;
     rows[rows.length - 1] = [
       'bodies',
       bodies === 1 ? '1' : `${bodies}${floating ? ` (${floating} loose)` : ''}`,
       bodies === 1 ? 'hi' : 'warn',
     ];
     draw();
-  }, 0);
+  };
+  requestConnectivity(assembly, token);
 
   const ratio = s.drawnTriangles / Math.max(s.uniqueTriangles, 1);
   budgetEl.innerHTML =

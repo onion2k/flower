@@ -29,6 +29,8 @@ export interface Part {
   anchors: Anchor[];
   /** Optional override, so one form can mix metals the way real work does. */
   material?: { metal?: string; finish?: string };
+  /** Enamel colour name, for a part whose mesh marks an enamelled face. */
+  enamel?: string;
 }
 
 export const findAnchor = (part: Part, name: string): Anchor => {

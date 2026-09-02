@@ -40,6 +40,8 @@ export interface PetalSpec {
   segments?: number;
   /** Rivet hole at the claw, and the anchor that goes with it. */
   bossBore?: number;
+  /** Enamel fired into the top face, by colour name. The bevel stays metal. */
+  enamel?: string;
 }
 
 /**
@@ -113,6 +115,7 @@ export function petal(spec: PetalSpec): Part {
   const mesh = extrude({
     outline, holes: fitted, thickness: spec.thickness, bevel,
     maxCapEdge: Number.isFinite(limit) ? limit : undefined,
+    enamelTop: !!spec.enamel,
   });
   deform(mesh, fields);
 
@@ -124,5 +127,5 @@ export function petal(spec: PetalSpec): Part {
     boss.axis = moved.axis;
   }
 
-  return { name: spec.name ?? 'petal', mesh, bounds: meshBounds(mesh), anchors };
+  return { name: spec.name ?? 'petal', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }

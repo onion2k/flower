@@ -4,6 +4,12 @@ export interface Mesh {
   /** u runs along the sweep or around the revolve, v across it. Drives brushed finishes. */
   uvs: Float32Array;
   indices: Uint32Array;
+  /**
+   * Where the surface is enamelled, 0 or 1 per vertex. Absent on a plain
+   * metal part. A plate carries it on its top cap: the cell the enamel is
+   * fired into, with the bevel and walls left as the metal rim.
+   */
+  enamel?: Float32Array;
 }
 
 export type Vec2 = [number, number];
@@ -105,15 +111,17 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
   const normals = new Float32Array(verts * 3);
   const uvs = new Float32Array(verts * 2);
   const indices = new Uint32Array(tris);
+  const enamel = meshes.some((m) => m.enamel) ? new Float32Array(verts) : undefined;
 
   let vo = 0, io = 0;
   for (const m of meshes) {
     positions.set(m.positions, vo * 3);
     normals.set(m.normals, vo * 3);
     uvs.set(m.uvs, vo * 2);
+    if (enamel && m.enamel) enamel.set(m.enamel, vo);
     for (let i = 0; i < m.indices.length; i++) indices[io + i] = m.indices[i] + vo;
     vo += m.positions.length / 3;
     io += m.indices.length;
   }
-  return { positions, normals, uvs, indices };
+  return enamel ? { positions, normals, uvs, indices, enamel } : { positions, normals, uvs, indices };
 }
