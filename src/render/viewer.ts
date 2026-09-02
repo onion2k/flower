@@ -18,7 +18,8 @@ import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } fr
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap } from './post';
-import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL } from './shaders';
+import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
+import { buildScene, type SceneInstance } from './bvh';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -71,6 +72,7 @@ export class Viewer {
   private frameLayout: GPUBindGroupLayout;
   private materialLayout: GPUBindGroupLayout;
   private groundLayout: GPUBindGroupLayout;
+  private prepassPipeline: GPURenderPipeline;
   private pbrPipeline: GPURenderPipeline;
   private groundPipeline: GPURenderPipeline;
   private anchorPipeline: GPURenderPipeline;
@@ -92,6 +94,14 @@ export class Viewer {
   private groups: GpuGroup[] = [];
   private materialBuffer: GPUBuffer | null = null;
   private materialBind: GPUBindGroup | null = null;
+
+  private traceLayout: GPUBindGroupLayout;
+  private traceBind: GPUBindGroup | null = null;
+  private traceBuffers: GPUBuffer[] = [];
+  private traceParams: GPUBuffer;
+  private reflections = true;
+  private traceInstances = 0;
+  private traceEps = 0.01;
 
   private occlusion: Occlusion | null = null;
   private groundBuffer: GPUBuffer;
@@ -155,16 +165,42 @@ export class Viewer {
       ],
     });
 
+    const ro = (binding: number): GPUBindGroupLayoutEntry =>
+      ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } });
+    this.traceLayout = device.createBindGroupLayout({
+      label: 'trace',
+      entries: [ro(0), ro(1), ro(2), ro(3), ro(4), { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+    });
+    this.traceParams = device.createBuffer({ label: 'trace params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+
     const target: GPUColorTargetState = { format: this.post.colourFormat };
     const multisample = { count: this.post.sampleCount };
     const depth = (write: boolean): GPUDepthStencilState => ({
       format: this.post.depthFormat, depthWriteEnabled: write, depthCompare: write ? 'less' : 'always',
     });
 
+    const instanceLayout: GPUVertexBufferLayout = {
+      arrayStride: 64, stepMode: 'instance',
+      attributes: [4, 5, 6, 7].map((loc, k) => ({ shaderLocation: loc, offset: k * 16, format: 'float32x4' as GPUVertexFormat })),
+    };
+    const prepass = shader(device, PREPASS_WGSL, 'prepass');
+    this.prepassPipeline = device.createRenderPipeline({
+      label: 'prepass',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
+      vertex: {
+        module: prepass, entryPoint: 'vsMain',
+        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, instanceLayout],
+      },
+      fragment: { module: prepass, entryPoint: 'fsMain', targets: [{ format: this.post.colourFormat, writeMask: 0 }] },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: depth(true),
+      multisample,
+    });
+
     const pbr = shader(device, PBR_WGSL, 'pbr');
     this.pbrPipeline = device.createRenderPipeline({
       label: 'pbr',
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout, this.traceLayout] }),
       vertex: {
         module: pbr, entryPoint: 'vsMain',
         buffers: [
@@ -172,15 +208,13 @@ export class Viewer {
           { arrayStride: 12, attributes: [{ shaderLocation: 1, offset: 0, format: 'float32x3' }] },
           { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] },
           { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32' }] },
-          {
-            arrayStride: 64, stepMode: 'instance',
-            attributes: [4, 5, 6, 7].map((loc, k) => ({ shaderLocation: loc, offset: k * 16, format: 'float32x4' as GPUVertexFormat })),
-          },
+          instanceLayout,
         ],
       },
       fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
-      depthStencil: depth(true),
+      // the prepass has written depth; only the visible surface passes here
+      depthStencil: { format: this.post.depthFormat, depthWriteEnabled: false, depthCompare: 'less-equal' },
       multisample,
     });
 
@@ -266,6 +300,12 @@ export class Viewer {
   /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
   setDebug(mode: number) { this.debugMode = mode; }
 
+  /** Trace reflected rays against the other parts, or reflect only the room. */
+  setReflections(on: boolean) {
+    this.reflections = on;
+    this.writeTraceParams();
+  }
+
   /** One draw per distinct part mesh, however many times it is placed. */
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
@@ -289,16 +329,85 @@ export class Viewer {
     this.materialBuffer?.destroy();
     this.materialBuffer = device.createBuffer({
       label: 'materials', size: Math.max(1, this.groups.length) * MATERIAL_STRIDE,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
       entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: 64 } }],
     });
 
+    this.buildTrace();
     if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
+  }
+
+  /** Occlusion entries are laid out group by group, placement by placement. */
+  private occlusionBases(): number[] {
+    const bases: number[] = [];
+    let total = 0;
+    for (const g of this.groups) {
+      bases.push(total);
+      total += g.vertexCount * g.instanceCount;
+    }
+    return bases;
+  }
+
+  /** The scene as the reflection tracer sees it: hierarchies per mesh, a list of placements. */
+  private buildTrace() {
+    const { device } = this.ctx;
+    for (const b of this.traceBuffers) b.destroy();
+    this.traceBuffers = [];
+
+    const bases = this.occlusionBases();
+    const instances: SceneInstance[] = [];
+    let radius = 0;
+    this.groups.forEach((g, k) => {
+      for (let i = 0; i < g.instanceCount; i++) {
+        instances.push({
+          mesh: g.source.mesh,
+          matrix: g.source.matrices.subarray(i * 16, i * 16 + 16),
+          group: k,
+          occlusionBase: bases[k] + i * g.vertexCount,
+        });
+      }
+      const b = g.source.mesh;
+      for (let i = 0; i < b.positions.length; i += 3) {
+        radius = Math.max(radius, Math.abs(b.positions[i]), Math.abs(b.positions[i + 1]), Math.abs(b.positions[i + 2]));
+      }
+    });
+    const scene = buildScene(instances);
+    this.traceInstances = scene.instanceCount;
+    // a ray starts a hair off its surface: enough to clear the triangle it
+    // left, small against the thinnest sheet in the piece
+    this.traceEps = Math.max(1e-3, radius * 4e-4);
+
+    const storage = GPUBufferUsage.STORAGE;
+    const nodes = bufferFrom(device, new Uint8Array(scene.nodes), storage, 'bvh nodes');
+    const tris = bufferFrom(device, scene.tris, storage, 'bvh triangles');
+    const triIdx = bufferFrom(device, scene.triIdx, storage, 'bvh indices');
+    const inst = bufferFrom(device, new Uint8Array(scene.instances), storage, 'bvh instances');
+    this.traceBuffers = [nodes, tris, triIdx, inst];
+    this.traceBind = device.createBindGroup({
+      label: 'trace',
+      layout: this.traceLayout,
+      entries: [
+        { binding: 0, resource: { buffer: nodes } },
+        { binding: 1, resource: { buffer: tris } },
+        { binding: 2, resource: { buffer: triIdx } },
+        { binding: 3, resource: { buffer: inst } },
+        { binding: 4, resource: { buffer: this.materialBuffer! } },
+        { binding: 5, resource: { buffer: this.traceParams } },
+      ],
+    });
+    this.writeTraceParams();
+  }
+
+  private writeTraceParams() {
+    const data = new ArrayBuffer(16);
+    new Uint32Array(data).set([this.traceInstances, this.reflections ? 1 : 0], 0);
+    new Float32Array(data).set([this.traceEps, 0], 2);
+    this.ctx.device.queue.writeBuffer(this.traceParams, 0, data);
   }
 
   setMesh(data: PartMesh) {
@@ -393,6 +502,16 @@ export class Viewer {
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
     pass.setBindGroup(0, this.frameBind);
 
+    if (this.groups.length) {
+      pass.setPipeline(this.prepassPipeline);
+      for (const g of this.groups) {
+        pass.setVertexBuffer(0, g.position);
+        pass.setVertexBuffer(1, g.instance);
+        pass.setIndexBuffer(g.index, 'uint32');
+        pass.drawIndexed(g.indexCount, g.instanceCount);
+      }
+    }
+
     if (this.occlusion && this.groundBind) {
       pass.setPipeline(this.groundPipeline);
       pass.setBindGroup(1, this.groundBind);
@@ -401,8 +520,9 @@ export class Viewer {
       pass.drawIndexed(this.discCount);
     }
 
-    if (this.groups.length && this.materialBind) {
+    if (this.groups.length && this.materialBind && this.traceBind) {
       pass.setPipeline(this.pbrPipeline);
+      pass.setBindGroup(2, this.traceBind);
       this.groups.forEach((g, k) => {
         pass.setBindGroup(1, this.materialBind!, [k * MATERIAL_STRIDE]);
         pass.setVertexBuffer(0, g.position);
@@ -451,12 +571,13 @@ export class Viewer {
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
+    const bases = this.occlusionBases();
     this.groups.forEach((g, k) => {
       const m = metals[g.source.metal ?? ''] ?? this.metal;
       const f = finishes[g.source.finish ?? ''] ?? this.finish;
       const o = (k * MATERIAL_STRIDE) / 4;
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
-      u32.set([this.occlusion?.bases[k] ?? 0, g.vertexCount, 0, 0], o + 12);
+      u32.set([bases[k], g.vertexCount, 0, 0], o + 12);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }
