@@ -63,18 +63,46 @@ vec3 rectLight(vec3 d, vec3 centre, vec3 right, vec3 up, vec2 halfSize, vec3 col
   vec3 local = d * t - centre;
   vec2 q = vec2(dot(local, normalize(right)), dot(local, normalize(up)));
   vec2 e = smoothstep(halfSize + softness, halfSize - softness, abs(q));
-  return colour * e.x * e.y;
+  // brighter in the middle than at the frame, as diffusion fabric is
+  vec2 f = q / halfSize;
+  float middle = 1.0 - 0.3 * clamp(dot(f, f), 0.0, 1.0);
+  return colour * e.x * e.y * middle;
+}
+
+/** Where a downward ray meets the floor, one unit below the eye. */
+vec2 floorHit(vec3 d) {
+  return d.xy * (-1.0 / min(d.z, -1e-3));
 }
 
 vec3 studio(vec3 d) {
-  // cool dark room, warm key overhead, cool fill, cold rim behind
-  float h = d.z * 0.5 + 0.5;
-  vec3 col = mix(vec3(0.012, 0.013, 0.016), vec3(0.05, 0.056, 0.07), smoothstep(0.0, 1.0, h));
-  col += vec3(0.02, 0.019, 0.017) * smoothstep(0.5, 0.0, h);
+  // A dark room: walls that lift slightly toward the ceiling, a table below with
+  // the key's pool of light on it. The floor matters more than it seems — it is
+  // what the underside of every petal reflects, and a room with no floor makes
+  // metal look like it is hanging in a void.
+  float h = d.z;
+  vec3 wall = mix(vec3(0.016, 0.017, 0.02), vec3(0.05, 0.056, 0.07), smoothstep(-0.2, 1.0, h));
+  wall += vec3(0.014, 0.012, 0.01) * smoothstep(0.35, -0.1, h); // warm bounce low on the walls
 
+  vec3 col = wall;
+  if (h < 0.0) {
+    vec2 hit = floorHit(d);
+    vec2 toPool = hit - vec2(0.45, -0.75);
+    float pool = exp(-dot(toPool, toPool) * 0.3);
+    vec3 floorCol = vec3(0.022, 0.022, 0.025) + vec3(0.11, 0.105, 0.098) * pool;
+    col = mix(floorCol, wall, smoothstep(-0.1, 0.0, h)); // the far floor meets the wall softly
+  }
+
+  // warm key overhead, cool fill, cold rim behind
   col += rectLight(d, vec3(0.9, -1.5, 2.6), vec3(2.4, 0.0, 0.0), vec3(0.0, 1.5, 0.9), vec2(1.5, 1.0), vec3(22.0, 21.0, 19.5), 0.35);
   col += rectLight(d, vec3(-2.6, 0.6, 0.5), vec3(0.0, 1.8, 0.0), vec3(0.0, 0.0, 1.8), vec2(1.1, 1.4), vec3(2.4, 2.8, 3.6), 0.5);
   col += rectLight(d, vec3(1.4, 2.8, 0.9), vec3(1.6, -0.8, 0.0), vec3(0.0, 0.0, 1.4), vec2(0.9, 0.7), vec3(5.5, 4.4, 3.2), 0.4);
+
+  // a strip light: long and thin, which is what draws a single bright line down a
+  // curved stem or across a cupped petal instead of a blob
+  col += rectLight(d, vec3(-0.6, 1.4, 2.3), vec3(3.0, 0.9, 0.0), vec3(0.0, -0.5, 1.6), vec2(2.4, 0.09), vec3(9.0, 9.2, 9.8), 0.05);
+
+  // a large dim top light: broad, soft, and what keeps the shadows from going black
+  col += rectLight(d, vec3(0.0, 0.0, 3.6), vec3(3.0, 0.0, 0.0), vec3(0.0, 3.0, 0.0), vec2(2.6, 2.6), vec3(0.9, 0.93, 1.0), 1.4);
   return col;
 }
 
@@ -96,6 +124,14 @@ vec3 dusk(vec3 d) {
 vec3 gallery(vec3 d) {
   float h = d.z * 0.5 + 0.5;
   vec3 col = mix(vec3(0.10, 0.10, 0.105), vec3(0.30, 0.31, 0.33), smoothstep(0.1, 0.95, h));
+
+  // a pale concrete floor, meeting the wall at a soft line
+  if (d.z < 0.0) {
+    vec2 hit = floorHit(d);
+    float near = exp(-dot(hit, hit) * 0.08);
+    vec3 floorCol = vec3(0.13, 0.128, 0.125) + vec3(0.07, 0.068, 0.065) * near;
+    col = mix(floorCol, col, smoothstep(-0.08, 0.0, d.z));
+  }
 
   // a row of ceiling panels: repeated hard-edged sources read as a real room
   for (int i = -1; i <= 1; i++) {
@@ -270,8 +306,8 @@ export function bakeEnvironment(
   preset: EnvPreset,
   opts: { size?: number; mips?: number; brdfSize?: number } = {},
 ): Environment {
-  const size = opts.size ?? 128;
-  const mips = opts.mips ?? 6;
+  const size = opts.size ?? 512;
+  const mips = opts.mips ?? 8;
   const brdfSize = opts.brdfSize ?? 128;
 
   const canFloat = !!gl.getExtension('EXT_color_buffer_float');

@@ -286,11 +286,12 @@ export class Viewer {
     const env = this.environment;
     let occ: Occlusion | null = null;
     try {
-      // Directions are drawn from the sharp background cube at a small mip: the
+      // Directions are drawn from the background cube at a 64-pixel mip: the
       // distribution only has to know where the light is, not its exact edges.
+      const lod = Math.max(0, Math.round(Math.log2(env ? env.size / 64 : 1)));
       occ = bakeOcclusion(raw, groups, {
         env: env && env.highDynamicRange
-          ? { cube: env.background, size: env.size, lod: 2, spin: this.program.uniforms.uEnvSpin.value as number }
+          ? { cube: env.background, size: env.size, lod, spin: this.program.uniforms.uEnvSpin.value as number }
           : undefined,
       });
     } catch (err) {

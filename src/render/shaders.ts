@@ -183,7 +183,16 @@ void main() {
   float ndv = clamp(dot(n, v), 0.001, 1.0);
 
   mat3 spin = spinZ(uEnvSpin);
-  vec3 prefiltered = textureLod(uSpecular, spin * r, roughness * uMaxLod).rgb;
+
+  // Never sample the environment sharper than the pixel can show. A polished
+  // surface curving away compresses the whole room into a few pixels, and an
+  // explicit lod of zero there is pure aliasing; the footprint of the reflected
+  // ray across the pixel gives the mip that just resolves it.
+  float envSize = float(textureSize(uSpecular, 0).x);
+  float footprint = max(length(dFdx(r)), length(dFdy(r)));
+  float footLod = log2(max(footprint * envSize * 0.5, 1.0));
+  float lod = max(roughness * uMaxLod, footLod);
+  vec3 prefiltered = textureLod(uSpecular, spin * r, lod).rgb;
   vec2 ab = texture(uBrdf, vec2(ndv, roughness)).rg;
 
   // Baked visibility darkens the diffuse term directly. A mirror is a different
