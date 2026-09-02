@@ -57,9 +57,15 @@ export function extrude(opts: ExtrudeOptions): Mesh {
     }
     let tri = earcut(flat, holeIndices, 2);
     let points = flat;
-    if (opts.maxCapEdge) {
+    // A cap always gets some interior points, however flat it is. Per-vertex
+    // shading — baked occlusion, curvature wear — interpolates across whatever
+    // triangles exist, and a fan of slivers from rim to rim smears an edge value
+    // over the whole face. Twenty or so points across the span is enough, and
+    // still reaches the bars of a pierced leaf.
+    const spacing = Math.min(opts.maxCapEdge ?? Infinity, Math.max(span.width, span.height) * 0.05);
+    if (Number.isFinite(spacing) && spacing > 0) {
       ({ points, tris: tri } =
-        tessellateCap(points, tri, insets, boundaryEdges(insets), opts.maxCapEdge));
+        tessellateCap(points, tri, insets, boundaryEdges(insets), spacing));
     }
     const base = mb.vertexCount;
     for (let i = 0; i < points.length; i += 2) {

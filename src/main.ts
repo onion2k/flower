@@ -168,7 +168,7 @@ const hdrNote = document.createElement('div');
 hdrNote.className = 'note';
 lightSet.append(hdrNote);
 
-const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf', 'occlusion'];
+const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf', 'occlusion', 'wear'];
 
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';

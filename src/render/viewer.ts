@@ -9,8 +9,20 @@ import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { GROUND_FRAG, GROUND_VERT, PBR_FRAG, PBR_VERT } from './shaders';
 import { bakeOcclusion, type Occlusion } from './occlusion';
+import { computeWear } from '../mesh/wear';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
+
+/** Wear belongs to the mesh, so it is computed once however often the mesh is placed. */
+const wearCache = new WeakMap<PartMesh, Float32Array>();
+function wearOf(mesh: PartMesh) {
+  let w = wearCache.get(mesh);
+  if (!w) {
+    w = computeWear(mesh);
+    wearCache.set(mesh, w);
+  }
+  return w;
+}
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -115,6 +127,7 @@ export class Viewer {
         uHammer: { value: this.finish.hammer },
         uPatina: { value: this.finish.patina },
         uPatinaColour: { value: patinaColour('gold') },
+        uWear: { value: 1 },
         uExposure: { value: 1 },
         uEnvSpin: { value: 0 },
         uDebug: { value: 0 },
@@ -206,7 +219,7 @@ export class Viewer {
     if (this.groups.length) this.bakeOcclusion(this.groups);
   }
 
-  /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion. */
+  /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
   setDebug(mode: number) {
     this.program.uniforms.uDebug.value = mode;
     this.groundProgram.uniforms.uDebug.value = mode;
@@ -240,6 +253,7 @@ export class Viewer {
         position: { size: 3, data: g.mesh.positions },
         normal: { size: 3, data: g.mesh.normals },
         uv: { size: 2, data: g.mesh.uvs },
+        wear: { size: 1, data: wearOf(g.mesh) },
         index: { data: g.mesh.indices },
         im0: { size: 4, data: col(0), instanced: 1 },
         im1: { size: 4, data: col(1), instanced: 1 },

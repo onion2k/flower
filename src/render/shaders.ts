@@ -2,6 +2,7 @@ export const PBR_VERT = `#version 300 es
 in vec3 position;
 in vec3 normal;
 in vec2 uv;
+in float wear;   // signed curvature, +1 exposed edge .. -1 crease; see mesh/wear.ts
 
 // one transform per placement: a form is a few meshes and a lot of matrices
 in vec4 im0;
@@ -25,6 +26,7 @@ out vec3 vWorld;
 out vec3 vObject;
 out vec2 vUv;
 out float vAo;
+out float vWear;
 
 void main() {
   mat4 inst = mat4(im0, im1, im2, im3);
@@ -42,6 +44,7 @@ void main() {
   vWorld = world.xyz;
   vObject = position;
   vUv = uv;
+  vWear = wear;
 
   gl_Position = projectionMatrix * viewMatrix * world;
 }`;
@@ -54,6 +57,7 @@ in vec3 vWorld;
 in vec3 vObject;
 in vec2 vUv;
 in float vAo;
+in float vWear;
 
 out vec4 fragColor;
 
@@ -67,11 +71,12 @@ uniform float uAnisotropy;
 uniform float uHammer;
 uniform float uPatina;
 uniform vec3 uPatinaColour;
+uniform float uWear;
 
 uniform vec3 cameraPosition;
 uniform float uExposure;
 uniform float uEnvSpin;
-uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion
+uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear
 
 const float PI = 3.14159265359;
 
@@ -168,6 +173,19 @@ void main() {
     roughness = mix(roughness, min(roughness + 0.35, 0.95), mask * uPatina);
   }
 
+  // --- wear: edges handled bright, creases left dull ---
+  // Convex edges are buffed: smoother than the field, and a touch of the finish's
+  // texture rubbed off. Concave creases hold residue: rougher, and the metal
+  // itself reads a little darker and less pure there, which is what tarnish is.
+  float edge = smoothstep(0.05, 0.8, vWear) * uWear;
+  float crease = smoothstep(0.05, 0.8, -vWear) * uWear;
+  // grain drifts across the crease so the tarnish line is not a clean band
+  crease *= 0.7 + 0.6 * noise3(vObject * 1.7);
+  roughness = mix(roughness, roughness * 0.45, edge);
+  roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
+  f0 = mix(f0, f0 * 0.55, crease * 0.8);
+  metallic = mix(metallic, metallic * 0.6, crease * 0.6);
+
   roughness = clamp(roughness, 0.03, 1.0);
 
   // --- anisotropy: bend the reflection vector along the brush direction ---
@@ -214,7 +232,8 @@ void main() {
   vec3 colour = specular + diffuse;
   colour *= uExposure;
 
-  if (uDebug > 5.5) colour = vec3(ao);
+  if (uDebug > 6.5) colour = vWear > 0.0 ? vec3(0.3 + vWear * 0.7) : vec3(0.3, 0.3 * (1.0 + vWear), 0.3 * (1.0 + vWear));
+  else if (uDebug > 5.5) colour = vec3(ao);
   else if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
   else if (uDebug > 3.5) colour = prefiltered;
   else if (uDebug > 2.5) colour = vec3(roughness);
@@ -280,7 +299,7 @@ void main() {
 
   float fade = 1.0 - smoothstep(0.3, 1.0, length(vLocal));
   vec3 colour = mix(uBackground, lit, fade);
-  if (uDebug > 5.5) colour = vec3(ao);
+  if (uDebug > 5.5 && uDebug < 6.5) colour = vec3(ao);
   else if (uDebug > 0.5) colour = uBackground;
   fragColor = vec4(colour, 1.0);
 }`;
