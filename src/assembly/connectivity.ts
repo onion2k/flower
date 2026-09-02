@@ -1,5 +1,10 @@
-import { transformPoint } from '../geom/transform';
-import type { Assembly } from './assembly';
+import { transformPoint, type Mat4 } from '../geom/transform';
+import type { Mesh } from '../mesh/types';
+
+/** What the analysis reads: placed meshes. An Assembly is one; so is a worker's copy of one. */
+export interface PlacedMeshes {
+  placements: ReadonlyArray<{ part: { mesh: Pick<Mesh, 'positions' | 'indices'> }; matrix: Mat4 }>;
+}
 
 export interface ConnectivityOptions {
   /**
@@ -57,7 +62,7 @@ export interface ConnectivityReport {
  * because it only has to run on the placements nothing else has claimed.
  */
 export function analyseConnectivity(
-  assembly: Assembly,
+  assembly: PlacedMeshes,
   opts: ConnectivityOptions = {},
 ): ConnectivityReport {
   const t0 = performance.now();

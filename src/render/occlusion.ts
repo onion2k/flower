@@ -50,6 +50,10 @@ export interface Occlusion {
   ground: GPUTexture;
   groundCentre: [number, number, number];
   groundRadius: number;
+  /** Fires after each chunk of directions lands, so the scene can redraw with what it has. */
+  onProgress?: () => void;
+  /** Resolves when every direction has been accumulated, or the bake was cancelled. */
+  done: Promise<void>;
   dispose(): void;
 }
 
@@ -66,6 +70,8 @@ export const OCCLUSION_SCALE = 1024;
 
 const DIR_STRIDE = 256;
 const WORKGROUP = 64;
+/** Triangle-draws per submitted chunk of the bake; a comfortable fraction of a second on a small GPU. */
+const TRIANGLE_BUDGET = 12_000_000;
 
 const DIR_STRUCT = `
 struct Dir { viewProj: mat4x4f, dir: vec3f, _p: f32 };
@@ -332,9 +338,19 @@ export function bakeOcclusion(ctx: GpuContext, groups: OcclusionGroup[], opts: O
   });
 
   // --- the bake: for every direction, depth, then splat, then ground ---
-  const encoder = device.createCommandEncoder({ label: 'occlusion bake' });
+  //
+  // Submitted in chunks rather than as one command buffer. The GPU driver
+  // kills any command buffer that runs longer than a second or two, and takes
+  // the whole device with it; a dense piece drawn from a few hundred directions
+  // at this resolution is well past that. Each chunk is sized to a budget of
+  // triangle-draws, the sums are additive so every landed chunk is already a
+  // usable answer, and a bake that is superseded stops at the next chunk.
+  const drawnTriangles = groups.reduce((n, g) => n + (g.mesh.indices.length / 3) * (g.matrices.length / 16), 0);
+  const chunk = Math.max(1, Math.min(32, Math.floor(TRIANGLE_BUDGET / Math.max(drawnTriangles, 1))));
   const groundView = ground.createView();
-  for (let i = 0; i < directions; i++) {
+  let cancelled = false;
+
+  const encodeDirection = (encoder: GPUCommandEncoder, i: number) => {
     const d = dirs[i];
     const offset = [i * DIR_STRIDE];
 
@@ -378,29 +394,47 @@ export function bakeOcclusion(ctx: GpuContext, groups: OcclusionGroup[], opts: O
       pass.draw(3);
       pass.end();
     }
-  }
-  device.queue.submit([encoder.finish()]);
+  };
 
-  // scratch resources are safe to destroy once submitted: the queue holds them
-  depthTex.destroy();
-  discPosition.destroy();
-  discIndex.destroy();
-  discInstance.destroy();
-  dirBuffer.destroy();
-  groundParams.destroy();
-  for (const b of paramBuffers) b.destroy();
+  const releaseScratch = () => {
+    depthTex.destroy();
+    discPosition.destroy();
+    discIndex.destroy();
+    discInstance.destroy();
+    dirBuffer.destroy();
+    groundParams.destroy();
+    for (const b of paramBuffers) b.destroy();
+  };
 
-  return {
+  const occlusion: Occlusion = {
     lookup,
     bases,
     ground,
     groundCentre,
     groundRadius,
+    done: Promise.resolve(),
     dispose() {
+      cancelled = true;
       lookup.destroy();
       ground.destroy();
     },
   };
+
+  occlusion.done = (async () => {
+    for (let first = 0; first < directions && !cancelled; first += chunk) {
+      const encoder = device.createCommandEncoder({ label: 'occlusion bake' });
+      for (let i = first; i < Math.min(first + chunk, directions); i++) encodeDirection(encoder, i);
+      device.queue.submit([encoder.finish()]);
+      // one chunk in flight at a time: the queue never holds more than a budget's worth
+      await device.queue.onSubmittedWorkDone();
+      if (!cancelled) occlusion.onProgress?.();
+    }
+    // scratch resources are safe to destroy once the last submit is done; a
+    // cancelled bake has nothing queued either
+    releaseScratch();
+  })();
+
+  return occlusion;
 }
 
 function discMesh(centre: [number, number, number], radius: number, segments: number) {

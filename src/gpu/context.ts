@@ -16,7 +16,7 @@ export interface GpuContext {
   format: GPUTextureFormat;
 }
 
-export async function createContext(canvas: HTMLCanvasElement): Promise<GpuContext> {
+export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<GpuContext> {
   if (!navigator.gpu) {
     throw new Error('WebGPU is not available in this browser');
   }
@@ -25,6 +25,13 @@ export async function createContext(canvas: HTMLCanvasElement): Promise<GpuConte
   const device = await adapter.requestDevice();
   device.addEventListener('uncapturederror', (e) => {
     console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message);
+  });
+  // A lost device is silent otherwise: the canvas goes magenta and every call
+  // after it is a no-op. Say so, loudly, with the reason the browser gives.
+  device.lost.then((info) => {
+    if (info.reason === 'destroyed') return;
+    console.error(`WebGPU device lost (${info.reason}): ${info.message}`);
+    onLost?.(info);
   });
   const context = canvas.getContext('webgpu');
   if (!context) throw new Error('WebGPU: no canvas context');

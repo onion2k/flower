@@ -64,8 +64,7 @@ export function extrude(opts: ExtrudeOptions): Mesh {
     // still reaches the bars of a pierced leaf.
     const spacing = Math.min(opts.maxCapEdge ?? Infinity, Math.max(span.width, span.height) * 0.05);
     if (Number.isFinite(spacing) && spacing > 0) {
-      ({ points, tris: tri } =
-        tessellateCap(points, tri, insets, boundaryEdges(insets), spacing));
+      ({ points, tris: tri } = tessellateCap(points, tri, insets, spacing));
     }
     const base = mb.vertexCount;
     for (let i = 0; i < points.length; i += 2) {
@@ -99,21 +98,6 @@ export function extrude(opts: ExtrudeOptions): Mesh {
   return mb.build();
 }
 
-const edgeKey = (a: number, b: number) => (a < b ? a * 4294967296 + b : b * 4294967296 + a);
-
-/** The cap's own boundary, which tessellation must leave alone or it parts from the bevel. */
-function boundaryEdges(loops: Vec2[][]): Set<number> {
-  const out = new Set<number>();
-  let base = 0;
-  for (const loop of loops) {
-    for (let i = 0; i < loop.length; i++) {
-      out.add(edgeKey(base + i, base + ((i + 1) % loop.length)));
-    }
-    base += loop.length;
-  }
-  return out;
-}
-
 /**
  * Give the cap interior vertices, then make its triangles well shaped.
  *
@@ -133,10 +117,10 @@ function boundaryEdges(loops: Vec2[][]): Set<number> {
  * the boundary is never touched, so the cap still matches the bevel exactly.
  */
 function tessellateCap(
-  flat: number[], tris: number[], loops: Vec2[][], boundary: Set<number>, spacing: number,
+  flat: number[], tris: number[], loops: Vec2[][], spacing: number,
 ): { points: number[]; tris: number[] } {
   const points = [...flat];
-  let faces = [...tris];
+  const faces = [...tris];
   const boundaryVertices = flat.length / 2;
 
   const px = (i: number) => points[i * 2];
@@ -145,66 +129,162 @@ function tessellateCap(
     (px(b) - px(a)) * (py(c) - py(a)) - (px(c) - px(a)) * (py(b) - py(a));
 
   // --- interior points, on a staggered lattice, clear of every boundary ---
-  const inserted: Array<[number, number]> = [];
+  const inserted: number[] = [];
   {
-    let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
-    for (const [x, y] of loops[0]) {
-      minX = Math.min(minX, x); maxX = Math.max(maxX, x);
-      minY = Math.min(minY, y); maxY = Math.max(maxY, y);
-    }
-    const dy = spacing * Math.sqrt(3) / 2;
+    const outer = flatLoop(loops[0]);
+    const holes = loops.slice(1).map(flatLoop);
     const clear = spacing * 0.62;
-    for (let j = 0, y = minY + dy; y < maxY; j++, y += dy) {
-      for (let x = minX + (j % 2 ? spacing / 2 : 0); x < maxX; x += spacing) {
-        if (!inside([x, y], loops[0])) continue;
-        if (distanceToLoop([x, y], loops[0]) < clear) continue;
+    const clear2 = clear * clear;
+    const dy = spacing * Math.sqrt(3) / 2;
+    for (let j = 0, y = outer.minY + dy; y < outer.maxY; j++, y += dy) {
+      for (let x = outer.minX + (j % 2 ? spacing / 2 : 0); x < outer.maxX; x += spacing) {
+        if (!insideFlat(x, y, outer)) continue;
+        if (distance2Flat(x, y, outer) < clear2) continue;
         let ok = true;
-        for (let h = 1; h < loops.length && ok; h++) {
-          if (inside([x, y], loops[h]) || distanceToLoop([x, y], loops[h]) < clear) ok = false;
+        for (const h of holes) {
+          // a hole only matters to points near its box
+          if (x < h.minX - clear || x > h.maxX + clear || y < h.minY - clear || y > h.maxY + clear) continue;
+          if (insideFlat(x, y, h) || distance2Flat(x, y, h) < clear2) { ok = false; break; }
         }
-        if (ok) inserted.push([x, y]);
+        if (ok) inserted.push(x, y);
       }
     }
   }
   if (!inserted.length) return { points, tris: faces };
+  const stride = boundaryVertices + inserted.length / 2 + 1;
 
   // --- split the containing triangle three ways for each new point ---
-  for (const [x, y] of inserted) {
-    let target = -1;
+  //
+  // Finding that triangle is the whole cost of the step. Lattice points come
+  // row by row, so each is a few triangles from the last, and a walk across
+  // shared edges gets there in a handful of steps. The walk keeps a neighbour
+  // per edge, patched at every split. It stops at the boundary, which a row
+  // that crosses a piercing or a bay in the outline does; then, and only then,
+  // every triangle is scanned.
+  const adj: number[] = new Array(faces.length).fill(-1);
+  {
+    // an edge as one small integer, so the Map stays on its fast path
+    const edgeKey = (a: number, b: number, stride: number) => (a < b ? a * stride + b : b * stride + a);
+    const half = new Map<number, number>();
     for (let t = 0; t < faces.length; t += 3) {
-      const [a, b, c] = [faces[t], faces[t + 1], faces[t + 2]];
-      const s = Math.sign(area2(a, b, c)) || 1;
-      const d0 = ((px(b) - px(a)) * (y - py(a)) - (x - px(a)) * (py(b) - py(a))) * s;
-      const d1 = ((px(c) - px(b)) * (y - py(b)) - (x - px(b)) * (py(c) - py(b))) * s;
-      const d2 = ((px(a) - px(c)) * (y - py(c)) - (x - px(c)) * (py(a) - py(c))) * s;
-      if (d0 >= 0 && d1 >= 0 && d2 >= 0) { target = t; break; }
+      for (let i = 0; i < 3; i++) {
+        const k = edgeKey(faces[t + i], faces[t + ((i + 1) % 3)], stride);
+        const other = half.get(k);
+        if (other === undefined) { half.set(k, t + i); continue; }
+        adj[t + i] = other - (other % 3);
+        adj[other] = t;
+      }
     }
+  }
+  const side = (a: number, b: number, x: number, y: number) =>
+    (px(b) - px(a)) * (y - py(a)) - (x - px(a)) * (py(b) - py(a));
+  const locate = (from: number, x: number, y: number): number => {
+    let t = from;
+    const limit = faces.length / 3 + 8;
+    for (let step = 0; step < limit; step++) {
+      const a = faces[t], b = faces[t + 1], c = faces[t + 2];
+      const s = Math.sign(area2(a, b, c)) || 1;
+      const d0 = side(a, b, x, y) * s, d1 = side(b, c, x, y) * s, d2 = side(c, a, x, y) * s;
+      if (d0 >= 0 && d1 >= 0 && d2 >= 0) return t;
+      const i = d0 < d1 ? (d0 < d2 ? 0 : 2) : (d1 < d2 ? 1 : 2);
+      const next = adj[t + i];
+      if (next < 0) break;
+      t = next;
+    }
+    for (let u = 0; u < faces.length; u += 3) {
+      const a = faces[u], b = faces[u + 1], c = faces[u + 2];
+      const s = Math.sign(area2(a, b, c)) || 1;
+      if (side(a, b, x, y) * s >= 0 && side(b, c, x, y) * s >= 0 && side(c, a, x, y) * s >= 0) return u;
+    }
+    return -1;
+  };
+  const relink = (n: number, was: number, now: number) => {
+    if (n < 0) return;
+    if (adj[n] === was) adj[n] = now;
+    else if (adj[n + 1] === was) adj[n + 1] = now;
+    else if (adj[n + 2] === was) adj[n + 2] = now;
+  };
+
+  let start = 0;
+  for (let k = 0; k < inserted.length; k += 2) {
+    const x = inserted[k], y = inserted[k + 1];
+    const target = locate(start, x, y);
     // a lattice point can miss every triangle where the inset outline has folded
     // over itself at a narrow tip; dropping it is right, it has nowhere to go
     if (target < 0) continue;
     const id = points.length / 2;
     points.push(x, y);
-    const [a, b, c] = [faces[target], faces[target + 1], faces[target + 2]];
-    faces[target] = a; faces[target + 1] = b; faces[target + 2] = id;
+    const a = faces[target], b = faces[target + 1], c = faces[target + 2];
+    const n1 = adj[target + 1], n2 = adj[target + 2];
+    const t2 = faces.length, t3 = faces.length + 3;
+    faces[target + 2] = id;
     faces.push(b, c, id, c, a, id);
+    adj.push(n1, t3, target, n2, target, t2);
+    adj[target + 1] = t2;
+    adj[target + 2] = t3;
+    relink(n1, target, t2);
+    relink(n2, target, t3);
+    start = target;
   }
 
   // --- flip toward Delaunay, relax the interior, repeat ---
+  // the loops' own edges have no neighbour across them, which is what keeps
+  // the flips off the boundary: the cap must still match the bevel exactly
   for (let pass = 0; pass < 4; pass++) {
-    flipToDelaunay(points, faces, boundary);
+    flipToDelaunay(points, faces, adj);
     relaxInterior(points, faces, boundaryVertices);
   }
-  flipToDelaunay(points, faces, boundary);
+  flipToDelaunay(points, faces, adj);
 
   return { points, tris: faces };
+}
+
+interface FlatLoop { x: Float64Array; y: Float64Array; minX: number; minY: number; maxX: number; maxY: number }
+
+function flatLoop(loop: Vec2[]): FlatLoop {
+  const x = new Float64Array(loop.length), y = new Float64Array(loop.length);
+  let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;
+  loop.forEach(([lx, ly], i) => {
+    x[i] = lx; y[i] = ly;
+    if (lx < minX) minX = lx; if (lx > maxX) maxX = lx;
+    if (ly < minY) minY = ly; if (ly > maxY) maxY = ly;
+  });
+  return { x, y, minX, minY, maxX, maxY };
+}
+
+function insideFlat(x: number, y: number, L: FlatLoop): boolean {
+  let hit = false;
+  const n = L.x.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const xi = L.x[i], yi = L.y[i], xj = L.x[j], yj = L.y[j];
+    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
+  }
+  return hit;
+}
+
+function distance2Flat(x: number, y: number, L: FlatLoop): number {
+  let best = Infinity;
+  const n = L.x.length;
+  for (let i = 0, j = n - 1; i < n; j = i++) {
+    const ax = L.x[j], ay = L.y[j];
+    const dx = L.x[i] - ax, dy = L.y[i] - ay;
+    const len2 = dx * dx + dy * dy;
+    let t = len2 > 0 ? ((x - ax) * dx + (y - ay) * dy) / len2 : 0;
+    t = t < 0 ? 0 : t > 1 ? 1 : t;
+    const ex = x - (ax + dx * t), ey = y - (ay + dy * t);
+    const d2 = ex * ex + ey * ey;
+    if (d2 < best) best = d2;
+  }
+  return best;
 }
 
 /**
  * Flip every interior edge whose opposite vertex falls inside the other
  * triangle's circumcircle. Delaunay maximises the smallest angle, which is
- * exactly the property a sliver lacks.
+ * exactly the property a sliver lacks. Works on the triangle adjacency, three
+ * neighbours per triangle, and keeps it right through every flip.
  */
-function flipToDelaunay(points: number[], faces: number[], boundary: Set<number>) {
+function flipToDelaunay(points: number[], faces: number[], adj: number[]) {
   const px = (i: number) => points[i * 2];
   const py = (i: number) => points[i * 2 + 1];
   const area2 = (a: number, b: number, c: number) =>
@@ -220,39 +300,39 @@ function flipToDelaunay(points: number[], faces: number[], boundary: Set<number>
       (cx * cx + cy * cy) * (ax * by - ay * bx)
     );
   };
+  const slotOf = (n: number, t: number) => (adj[n] === t ? 0 : adj[n + 1] === t ? 1 : 2);
 
+  const dirty = new Uint8Array(faces.length / 3);
   for (let sweep = 0; sweep < 12; sweep++) {
-    const owner = new Map<number, number[]>();
-    for (let t = 0; t < faces.length; t += 3) {
-      for (let i = 0; i < 3; i++) {
-        const k = edgeKey(faces[t + i], faces[t + ((i + 1) % 3)]);
-        const list = owner.get(k);
-        if (list) list.push(t); else owner.set(k, [t]);
-      }
-    }
-
     let flips = 0;
-    const dirty = new Set<number>();
-    for (const [key, ts] of owner) {
-      if (ts.length !== 2 || boundary.has(key)) continue;
-      const [t1, t2] = ts;
-      if (dirty.has(t1) || dirty.has(t2)) continue;
+    dirty.fill(0);
+    for (let t1 = 0; t1 < faces.length; t1 += 3) {
+      if (dirty[t1 / 3]) continue;
+      for (let i1 = 0; i1 < 3; i1++) {
+        const t2 = adj[t1 + i1];
+        // each interior edge once, from its lower triangle; a boundary edge has no t2
+        if (t2 < t1 || dirty[t2 / 3]) continue;
+        const i2 = slotOf(t2, t1);
+        // t1 carries the edge u -> v, so t2 carries v -> u
+        const u = faces[t1 + i1], v = faces[t1 + ((i1 + 1) % 3)], p = faces[t1 + ((i1 + 2) % 3)];
+        const q = faces[t2 + ((i2 + 2) % 3)];
 
-      // orient: t1 carries the edge u -> v, so t2 carries v -> u
-      const tri1 = [faces[t1], faces[t1 + 1], faces[t1 + 2]];
-      const tri2 = [faces[t2], faces[t2 + 1], faces[t2 + 2]];
-      const i1 = [0, 1, 2].find((i) => edgeKey(tri1[i], tri1[(i + 1) % 3]) === key)!;
-      const u = tri1[i1], v = tri1[(i1 + 1) % 3], p = tri1[(i1 + 2) % 3];
-      const q = tri2.find((x) => x !== u && x !== v)!;
+        // both halves of the flipped quad must stay wound the right way round
+        if (area2(u, q, p) <= 1e-12 || area2(q, v, p) <= 1e-12) continue;
+        if (inCircle(u, v, p, q) <= 0) continue;
 
-      // both halves of the flipped quad must stay wound the right way round
-      if (area2(u, q, p) <= 1e-12 || area2(q, v, p) <= 1e-12) continue;
-      if (inCircle(u, v, p, q) <= 0) continue;
-
-      faces[t1] = u; faces[t1 + 1] = q; faces[t1 + 2] = p;
-      faces[t2] = q; faces[t2 + 1] = v; faces[t2 + 2] = p;
-      dirty.add(t1); dirty.add(t2);
-      flips++;
+        const A = adj[t1 + ((i1 + 1) % 3)], B = adj[t1 + ((i1 + 2) % 3)];
+        const C = adj[t2 + ((i2 + 1) % 3)], D = adj[t2 + ((i2 + 2) % 3)];
+        faces[t1] = u; faces[t1 + 1] = q; faces[t1 + 2] = p;
+        adj[t1] = C; adj[t1 + 1] = t2; adj[t1 + 2] = B;
+        faces[t2] = q; faces[t2 + 1] = v; faces[t2 + 2] = p;
+        adj[t2] = D; adj[t2 + 1] = A; adj[t2 + 2] = t1;
+        if (C >= 0) adj[C + slotOf(C, t2)] = t1;
+        if (A >= 0) adj[A + slotOf(A, t1)] = t2;
+        dirty[t1 / 3] = 1; dirty[t2 / 3] = 1;
+        flips++;
+        break;
+      }
     }
     if (!flips) break;
   }
@@ -266,14 +346,18 @@ function flipToDelaunay(points: number[], faces: number[], boundary: Set<number>
  */
 function relaxInterior(points: number[], faces: number[], boundaryVertices: number) {
   const count = points.length / 2;
-  const neighbours: Array<Set<number>> = Array.from({ length: count }, () => new Set<number>());
-  const incident: Array<number[]> = Array.from({ length: count }, () => []);
+  // neighbour sums and counts, with a triangle list per vertex; no sets
+  const degree = new Int32Array(count);
+  const incidentCount = new Int32Array(count);
+  for (let t = 0; t < faces.length; t++) incidentCount[faces[t]]++;
+  const incidentStart = new Int32Array(count + 1);
+  for (let v = 0; v < count; v++) incidentStart[v + 1] = incidentStart[v] + incidentCount[v];
+  const incident = new Int32Array(faces.length);
+  const fill = new Int32Array(count);
   for (let t = 0; t < faces.length; t += 3) {
     for (let i = 0; i < 3; i++) {
       const a = faces[t + i];
-      neighbours[a].add(faces[t + ((i + 1) % 3)]);
-      neighbours[a].add(faces[t + ((i + 2) % 3)]);
-      incident[a].push(t);
+      incident[incidentStart[a] + fill[a]++] = t;
     }
   }
 
@@ -283,42 +367,27 @@ function relaxInterior(points: number[], faces: number[], boundaryVertices: numb
     (px(b) - px(a)) * (py(c) - py(a)) - (px(c) - px(a)) * (py(b) - py(a));
 
   for (let v = boundaryVertices; v < count; v++) {
-    if (!neighbours[v].size) continue;
+    const s0 = incidentStart[v], s1 = incidentStart[v + 1];
+    if (s0 === s1) continue;
+    // every triangle round an interior vertex contributes the vertex across
+    // from it once: the neighbour after v in that triangle's winding
     let sx = 0, sy = 0;
-    for (const n of neighbours[v]) { sx += px(n); sy += py(n); }
+    degree[v] = 0;
+    for (let k = s0; k < s1; k++) {
+      const t = incident[k];
+      const n = faces[t] === v ? faces[t + 1] : faces[t + 1] === v ? faces[t + 2] : faces[t];
+      sx += px(n); sy += py(n); degree[v]++;
+    }
     const ox = px(v), oy = py(v);
-    points[v * 2] = sx / neighbours[v].size;
-    points[v * 2 + 1] = sy / neighbours[v].size;
-    for (const t of incident[v]) {
+    points[v * 2] = sx / degree[v];
+    points[v * 2 + 1] = sy / degree[v];
+    for (let k = s0; k < s1; k++) {
+      const t = incident[k];
       if (area2(faces[t], faces[t + 1], faces[t + 2]) > 1e-12) continue;
       points[v * 2] = ox; points[v * 2 + 1] = oy;
       break;
     }
   }
-}
-
-function inside([x, y]: Vec2, loop: Vec2[]): boolean {
-  let hit = false;
-  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
-    const [xi, yi] = loop[i];
-    const [xj, yj] = loop[j];
-    if ((yi > y) !== (yj > y) && x < ((xj - xi) * (y - yi)) / (yj - yi) + xi) hit = !hit;
-  }
-  return hit;
-}
-
-function distanceToLoop([x, y]: Vec2, loop: Vec2[]): number {
-  let best = Infinity;
-  for (let i = 0, j = loop.length - 1; i < loop.length; j = i++) {
-    const [ax, ay] = loop[j];
-    const [bx, by] = loop[i];
-    const dx = bx - ax, dy = by - ay;
-    const len2 = dx * dx + dy * dy;
-    let t = len2 > 0 ? ((x - ax) * dx + (y - ay) * dy) / len2 : 0;
-    t = t < 0 ? 0 : t > 1 ? 1 : t;
-    best = Math.min(best, Math.hypot(x - (ax + dx * t), y - (ay + dy * t)));
-  }
-  return best;
 }
 
 /** A sloped ring-to-ring band; `dir` is +1 for the upper bevel, -1 for the lower. */

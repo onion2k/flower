@@ -103,6 +103,10 @@ export class Viewer {
   private reflections = false;
   private traceInstances = 0;
   private traceEps = 0.01;
+  /** Reflection bounces this frame: two at rest, one while the camera moves. */
+  private bounces = 2;
+  /** An occlusion bake asked for since the last frame; coalesced so a dragged slider bakes once a frame, not once an event. */
+  private bakeQueued = false;
 
   /** A frame is drawn only when something has changed: the scene, a setting, or the camera. */
   private dirty = true;
@@ -116,6 +120,8 @@ export class Viewer {
   private autoScale = 1;
   private lastFrameAt = 0;
   private frameMs = 16;
+  /** When the scale last stepped: each step reallocates the render targets, so steps are rationed. */
+  private lastScaleStep = 0;
   /** Ask for a frame on the next tick. */
   requestRender() { this.dirty = true; }
   private renderScale = 1;
@@ -131,12 +137,12 @@ export class Viewer {
   private anchorColour: GPUBuffer | null = null;
   private anchorCount = 0;
 
-  static async create(host: HTMLElement): Promise<Viewer> {
+  static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<Viewer> {
     const canvas = document.createElement('canvas');
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.display = 'block';
-    const ctx = await createContext(canvas);
+    const ctx = await createContext(canvas, onLost);
     return new Viewer(ctx, host);
   }
 
@@ -322,7 +328,7 @@ export class Viewer {
 
   setEnvSpin(radians: number) {
     this.envSpin = radians;
-    if (this.groups.length && this.envSamples) this.bakeOcclusion();
+    if (this.groups.length && this.envSamples) this.bakeQueued = true;
     this.dirty = true;
   }
 
@@ -439,7 +445,8 @@ export class Viewer {
   private writeTraceParams() {
     const data = new ArrayBuffer(16);
     new Uint32Array(data).set([this.traceInstances, this.reflections ? 1 : 0], 0);
-    new Float32Array(data).set([this.traceEps, 0], 2);
+    new Float32Array(data).set([this.traceEps], 2);
+    new Uint32Array(data).set([this.bounces], 3);
     this.ctx.device.queue.writeBuffer(this.traceParams, 0, data);
   }
 
@@ -538,6 +545,17 @@ export class Viewer {
     this.controls.update();
     this.camera.update();
     if (!this.frameBind) return;
+    if (this.bakeQueued) {
+      this.bakeQueued = false;
+      this.bakeOcclusion();
+    }
+    // the second bounce is the costlier half of a traced frame; it waits for the camera to settle
+    const bounces = moving ? 1 : 2;
+    if (bounces !== this.bounces) {
+      this.bounces = bounces;
+      this.writeTraceParams();
+      this.dirty = true;
+    }
     // nothing to draw when nothing has changed: the GPU idles and the page stays responsive
     if (!this.dirty && !moving) return;
     this.dirty = false;
@@ -614,13 +632,18 @@ export class Viewer {
     // only consecutive frames say anything; a gap after an idle spell does not
     if (!moving || gap > 250) return;
     this.frameMs = this.frameMs * 0.8 + gap * 0.2;
+    // a step swaps a few hundred megabytes of targets, so at most a few a second
+    if (now - this.lastScaleStep < 300) return;
     if (this.frameMs > 36 && this.autoScale > 0.5) {
-      this.autoScale = Math.max(0.5, this.autoScale * 0.85);
+      // step by how far over budget the frame is, so a very slow frame drops straight to the floor
+      this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(33 / this.frameMs)));
       this.frameMs = 16;
+      this.lastScaleStep = now;
       this.resize();
     } else if (this.frameMs < 14 && this.autoScale < 1) {
       this.autoScale = Math.min(1, this.autoScale / 0.85);
       this.frameMs = 16;
+      this.lastScaleStep = now;
       this.resize();
     }
   }
@@ -675,7 +698,9 @@ export class Viewer {
       { env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined },
     );
     this.occlusion = occ;
+    // a superseded bake stops at its next chunk; this one redraws as each chunk lands
     previous?.dispose();
+    if (occ) occ.onProgress = () => { this.dirty = true; };
     this.rebuildFrameBind();
     this.writeMaterials();
     if (!occ) { this.groundBind = null; return; }

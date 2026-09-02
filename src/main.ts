@@ -1,4 +1,4 @@
-import { analyseConnectivity } from './assembly/connectivity';
+import type { ConnectivityRequest, ConnectivityResponse } from './assembly/connectivity.worker';
 import { catalogue, catalogueNames } from './spike/catalogue';
 import { examples, exampleNames } from './dsl/examples';
 import { compile } from './dsl/index';
@@ -22,7 +22,10 @@ const diagnosticEl = document.getElementById('diagnostic')!;
 
 let viewer: Viewer;
 try {
-  viewer = await Viewer.create(stage);
+  viewer = await Viewer.create(stage, (info) => {
+    diagnosticEl.textContent = `GPU device lost (${info.reason}): ${info.message || 'the GPU timed out'} — reload the page`;
+    diagnosticEl.classList.add('bad');
+  });
 } catch (err) {
   diagnosticEl.textContent = `renderer unavailable: ${(err as Error).message}`;
   diagnosticEl.classList.add('bad');
@@ -276,10 +279,33 @@ function build() {
 
 /**
  * Counting bodies is the slowest thing in the panel — seconds on a dense form —
- * so it runs after the frame rather than in it, and a token drops the answer if
- * the subject changed while it was working.
+ * so it runs in a worker, and a token drops the answer if the subject changed
+ * while it was working.
  */
 let connectivityToken = 0;
+const connectivityWorker = new Worker(new URL('./assembly/connectivity.worker.ts', import.meta.url), { type: 'module' });
+let onConnectivity: ((r: ConnectivityResponse) => void) | null = null;
+connectivityWorker.addEventListener('message', (e: MessageEvent<ConnectivityResponse>) => onConnectivity?.(e.data));
+
+function requestConnectivity(assembly: Assembly, token: number) {
+  const meshes: Mesh[] = [];
+  const index = new Map<Mesh, number>();
+  const placements = assembly.placements.map((p) => {
+    let i = index.get(p.part.mesh);
+    if (i === undefined) {
+      i = meshes.length;
+      index.set(p.part.mesh, i);
+      meshes.push(p.part.mesh);
+    }
+    return { mesh: i, matrix: p.matrix };
+  });
+  const request: ConnectivityRequest = {
+    token,
+    meshes: meshes.map((m) => ({ positions: m.positions, indices: m.indices })),
+    placements,
+  };
+  connectivityWorker.postMessage(request);
+}
 
 function report(assembly: Assembly, ms: number, span: number) {
   const s = assembly.stats();
@@ -305,16 +331,16 @@ function report(assembly: Assembly, ms: number, span: number) {
   draw();
 
   const token = ++connectivityToken;
-  setTimeout(() => {
-    if (token !== connectivityToken) return;
-    const { bodies, floating } = analyseConnectivity(assembly);
+  onConnectivity = ({ token: answered, bodies, floating }) => {
+    if (answered !== connectivityToken) return;
     rows[rows.length - 1] = [
       'bodies',
       bodies === 1 ? '1' : `${bodies}${floating ? ` (${floating} loose)` : ''}`,
       bodies === 1 ? 'hi' : 'warn',
     ];
     draw();
-  }, 0);
+  };
+  requestConnectivity(assembly, token);
 
   const ratio = s.drawnTriangles / Math.max(s.uniqueTriangles, 1);
   budgetEl.innerHTML =

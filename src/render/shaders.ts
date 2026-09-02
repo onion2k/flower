@@ -87,7 +87,7 @@ struct MaterialRec {
   baseColour: vec3f, orient: f32,
   _fill: array<vec4f, 11>,
 };
-struct Trace { instanceCount: u32, enabled: u32, eps: f32, _p: f32 };
+struct Trace { instanceCount: u32, enabled: u32, eps: f32, bounces: u32 };
 @group(2) @binding(0) var<storage, read> nodes: array<Node>;
 @group(2) @binding(1) var<storage, read> tris: array<vec4f>;      // 6 per triangle: v0 v1 v2 n0 n1 n2
 @group(2) @binding(2) var<storage, read> triIdx: array<vec4u>;    // i0 i1 i2, for the occlusion lookup
@@ -163,6 +163,8 @@ fn planish(p: vec3f) -> f32 {
 // ---- ray tracing against the placed parts ----
 
 const NO_HIT: u32 = 0xffffffffu;
+const MAX_BLAS_STEPS: u32 = 512u;
+const MAX_TLAS_STEPS: u32 = 256u;
 
 /** Slab test: the entry distance, or a large number when the ray misses or the box is beyond tMax. */
 fn rayBox(o: vec3f, invD: vec3f, bmin: vec3f, bmax: vec3f, tMax: f32) -> f32 {
@@ -204,14 +206,15 @@ fn traceInstance(i: u32, o: vec3f, d: vec3f, tMin: f32, hit: ptr<function, Hit>)
   let oo = (inst.worldToObject * vec4f(o, 1.0)).xyz;
   let od = safeDir((inst.worldToObject * vec4f(d, 0.0)).xyz);
   let oinv = 1.0 / od;
-  var stack: array<u32, 32>;
-  var stackT: array<f32, 32>;
+  var stack: array<u32, 20>;
   var sp = 1u;
   stack[0] = inst.nodeOffset;
-  stackT[0] = 0.0;
-  while (sp > 0u) {
+  // a ceiling on the walk: no tree here needs it, but a command buffer that
+  // runs on is a lost device, and this keeps the worst case bounded
+  var steps = 0u;
+  while (sp > 0u && steps < MAX_BLAS_STEPS) {
     sp--;
-    if (stackT[sp] >= (*hit).t) { continue; }
+    steps++;
     let node = nodes[stack[sp]];
     if ((node.count & 0x80000000u) != 0u) {
       let li = inst.nodeOffset + node.left;
@@ -222,9 +225,9 @@ fn traceInstance(i: u32, o: vec3f, d: vec3f, tMin: f32, hit: ptr<function, Hit>)
       var tr = rayBox(oo, oinv, rn.bmin, rn.bmax, (*hit).t);
       var near = li; var far = ri;
       if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
-      if (sp + 2u <= 32u) {
-        if (tr < (*hit).t) { stack[sp] = far; stackT[sp] = tr; sp++; }
-        if (tl < (*hit).t) { stack[sp] = near; stackT[sp] = tl; sp++; }
+      if (sp + 2u <= 20u) {
+        if (tr < (*hit).t) { stack[sp] = far; sp++; }
+        if (tl < (*hit).t) { stack[sp] = near; sp++; }
       }
       continue;
     }
@@ -252,14 +255,13 @@ fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
   if (trace.instanceCount == 0u) { return hit; }
   let d = safeDir(dIn);
   let invD = 1.0 / d;
-  var stack: array<u32, 24>;
-  var stackT: array<f32, 24>;
+  var stack: array<u32, 16>;
   var sp = 1u;
   stack[0] = 0u;
-  stackT[0] = 0.0;
-  while (sp > 0u) {
+  var steps = 0u;
+  while (sp > 0u && steps < MAX_TLAS_STEPS) {
     sp--;
-    if (stackT[sp] >= hit.t) { continue; }
+    steps++;
     let node = tlas[stack[sp]];
     if ((node.count & 0x80000000u) != 0u) {
       let li = node.left;
@@ -270,9 +272,9 @@ fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
       var tr = rayBox(o, invD, rn.bmin, rn.bmax, hit.t);
       var near = li; var far = ri;
       if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
-      if (sp + 2u <= 24u) {
-        if (tr < hit.t) { stack[sp] = far; stackT[sp] = tr; sp++; }
-        if (tl < hit.t) { stack[sp] = near; stackT[sp] = tl; sp++; }
+      if (sp + 2u <= 16u) {
+        if (tr < hit.t) { stack[sp] = far; sp++; }
+        if (tl < hit.t) { stack[sp] = near; sp++; }
       }
       continue;
     }
@@ -371,7 +373,9 @@ fn shadeHit(o: vec3f, hit: Hit, d: vec3f) -> vec3f {
   let r = reflect(d, s.n);
   let roughness = select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u);
   var reflected = envAt(r, roughness);
-  if (roughness < 0.45) {
+  // the second bounce is dropped while the camera moves: it is the costlier
+  // half of the trace and the least visible in motion
+  if (roughness < 0.45 && trace.bounces > 1u) {
     let hit2 = traceRay(p + s.n * trace.eps, r, trace.eps);
     if (hit2.inst != NO_HIT) {
       reflected = mix(reflected, shadeHit2(hit2, r), 1.0 - smoothstep(0.12, 0.45, roughness));
