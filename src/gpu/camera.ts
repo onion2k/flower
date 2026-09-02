@@ -104,6 +104,16 @@ export class Orbit {
     this.element.addEventListener('contextmenu', this.onContextMenu);
   }
 
+  /** True while the camera is still easing toward where the user sent it. */
+  get moving(): boolean {
+    return Math.abs(this.spinDelta.azimuth) > 1e-6 || Math.abs(this.spinDelta.polar) > 1e-6
+      || Math.abs(this.dolly - 1) > 1e-9
+      || Math.hypot(this.panDelta[0], this.panDelta[1], this.panDelta[2]) > 1e-6
+      || Math.abs(this.toAzimuth - this.azimuth) > 1e-5
+      || Math.abs(this.toPolar - this.polar) > 1e-5
+      || Math.abs(this.toRadius - this.radius) > this.radius * 1e-5;
+  }
+
   /** Adopt whatever position the camera has been moved to, without easing. */
   forcePosition() {
     this.readFromCamera();

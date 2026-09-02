@@ -66,6 +66,7 @@ export class Viewer {
   private host: HTMLElement;
   private controls: Orbit;
   private post: PostChain;
+  private observer: ResizeObserver;
   private raf = 0;
   private background: [number, number, number];
 
@@ -99,9 +100,25 @@ export class Viewer {
   private traceBind: GPUBindGroup | null = null;
   private traceBuffers: GPUBuffer[] = [];
   private traceParams: GPUBuffer;
-  private reflections = true;
+  private reflections = false;
   private traceInstances = 0;
   private traceEps = 0.01;
+
+  /** A frame is drawn only when something has changed: the scene, a setting, or the camera. */
+  private dirty = true;
+  /** Frames actually drawn, for measuring. */
+  frameCount = 0;
+  /**
+   * Adaptive resolution. While the camera moves, frames are timed; if they
+   * cannot keep 30 a second the internal scale steps down, and steps back up
+   * when there is headroom. The user's render-scale slider is the ceiling.
+   */
+  private autoScale = 1;
+  private lastFrameAt = 0;
+  private frameMs = 16;
+  /** Ask for a frame on the next tick. */
+  requestRender() { this.dirty = true; }
+  private renderScale = 1;
 
   private occlusion: Occlusion | null = null;
   private groundBuffer: GPUBuffer;
@@ -169,7 +186,7 @@ export class Viewer {
       ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } });
     this.traceLayout = device.createBindGroupLayout({
       label: 'trace',
-      entries: [ro(0), ro(1), ro(2), ro(3), ro(4), { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }],
+      entries: [ro(0), ro(1), ro(2), ro(3), ro(4), { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, ro(6)],
     });
     this.traceParams = device.createBuffer({ label: 'trace params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
@@ -261,7 +278,10 @@ export class Viewer {
 
     this.setEnvironment('studio');
 
-    window.addEventListener('resize', this.resize);
+    // the host, not the window: a pane that is laid out after load, or shown
+    // after being hidden, changes size without a window resize event
+    this.observer = new ResizeObserver(() => this.resize());
+    this.observer.observe(host);
     this.resize();
     this.loop();
   }
@@ -273,12 +293,14 @@ export class Viewer {
     this.envSamples = null;
     this.rebuildFrameBind();
     previous?.dispose();
+    this.dirty = true;
 
     // shadows follow the light, once its radiance has been read back
     env.samples.then((samples) => {
       if (this.environment !== env) return;
       this.envSamples = samples;
       if (this.groups.length) this.bakeOcclusion();
+      this.dirty = true;
     });
     return env;
   }
@@ -289,21 +311,29 @@ export class Viewer {
     this.writeMaterials();
   }
 
-  setBloom(v: number) { this.bloom = v; }
-  setExposure(v: number) { this.exposure = v; }
+  setBloom(v: number) { this.bloom = v; this.dirty = true; }
+  setExposure(v: number) { this.exposure = v; this.dirty = true; }
+
+  /** Fraction of device resolution to render at, below the pixel budget. */
+  setRenderScale(v: number) {
+    this.renderScale = Math.min(Math.max(v, 0.25), 1);
+    this.resize();
+  }
 
   setEnvSpin(radians: number) {
     this.envSpin = radians;
     if (this.groups.length && this.envSamples) this.bakeOcclusion();
+    this.dirty = true;
   }
 
   /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
-  setDebug(mode: number) { this.debugMode = mode; }
+  setDebug(mode: number) { this.debugMode = mode; this.dirty = true; }
 
   /** Trace reflected rays against the other parts, or reflect only the room. */
   setReflections(on: boolean) {
     this.reflections = on;
     this.writeTraceParams();
+    this.dirty = true;
   }
 
   /** One draw per distinct part mesh, however many times it is placed. */
@@ -340,6 +370,7 @@ export class Viewer {
     if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
+    this.dirty = true;
   }
 
   /** Occlusion entries are laid out group by group, placement by placement. */
@@ -387,7 +418,8 @@ export class Viewer {
     const tris = bufferFrom(device, scene.tris, storage, 'bvh triangles');
     const triIdx = bufferFrom(device, scene.triIdx, storage, 'bvh indices');
     const inst = bufferFrom(device, new Uint8Array(scene.instances), storage, 'bvh instances');
-    this.traceBuffers = [nodes, tris, triIdx, inst];
+    const tlas = bufferFrom(device, new Uint8Array(scene.tlas), storage, 'bvh tlas');
+    this.traceBuffers = [nodes, tris, triIdx, inst, tlas];
     this.traceBind = device.createBindGroup({
       label: 'trace',
       layout: this.traceLayout,
@@ -398,6 +430,7 @@ export class Viewer {
         { binding: 3, resource: { buffer: inst } },
         { binding: 4, resource: { buffer: this.materialBuffer! } },
         { binding: 5, resource: { buffer: this.traceParams } },
+        { binding: 6, resource: { buffer: tlas } },
       ],
     });
     this.writeTraceParams();
@@ -420,6 +453,7 @@ export class Viewer {
     this.anchorColour?.destroy();
     this.anchorPosition = this.anchorColour = null;
     this.anchorCount = 0;
+    this.dirty = true;
     if (!anchors.length) return;
 
     const position = new Float32Array(anchors.length * 12);
@@ -462,11 +496,12 @@ export class Viewer {
     this.camera.near = Math.max(radius * 0.01, 0.01);
     this.camera.far = dist + radius * 12;
     this.controls.forcePosition();
+    this.dirty = true;
   }
 
   dispose() {
     cancelAnimationFrame(this.raf);
-    window.removeEventListener('resize', this.resize);
+    this.observer.disconnect();
     this.controls.remove();
     this.environment?.dispose();
     this.occlusion?.dispose();
@@ -475,21 +510,39 @@ export class Viewer {
 
   // ---- internals ----
 
+  /**
+   * Pixels the scene pass is allowed. Every one is shaded four times for the
+   * multisampling and carried in float, so this is the single biggest lever on
+   * frame time; 3.2 million is a little under a retina laptop screen.
+   */
+  static readonly PIXEL_BUDGET = 3_200_000;
+
   private resize = () => {
-    const dpr = Math.min(window.devicePixelRatio, 2);
-    const w = Math.max(1, Math.floor(this.host.clientWidth * dpr));
-    const h = Math.max(1, Math.floor(this.host.clientHeight * dpr));
+    // Render at device resolution up to a budget, then scale down. A retina
+    // canvas the size of a laptop screen sits just inside it; a tall pane or a
+    // large monitor comes down to the same cost rather than crawling.
+    const cw = Math.max(1, this.host.clientWidth), ch = Math.max(1, this.host.clientHeight);
+    const dpr = Math.min(window.devicePixelRatio, 2, Math.sqrt(Viewer.PIXEL_BUDGET / (cw * ch))) * this.renderScale * this.autoScale;
+    const w = Math.max(1, Math.floor(cw * dpr));
+    const h = Math.max(1, Math.floor(ch * dpr));
     this.ctx.canvas.width = w;
     this.ctx.canvas.height = h;
     this.camera.aspect = w / h;
     this.post.resize(w, h);
+    this.dirty = true;
   };
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    const moving = this.controls.moving;
     this.controls.update();
     this.camera.update();
     if (!this.frameBind) return;
+    // nothing to draw when nothing has changed: the GPU idles and the page stays responsive
+    if (!this.dirty && !moving) return;
+    this.dirty = false;
+    this.frameCount++;
+    this.pace(moving);
     const { device } = this.ctx;
 
     const frame = new Float32Array(FRAME_SIZE / 4);
@@ -548,6 +601,29 @@ export class Viewer {
     });
     device.queue.submit([encoder.finish()]);
   };
+
+  /**
+   * Time consecutive frames during interaction and move the internal scale to
+   * hold 30 a second. Measured at the tick, which is the frame rate the user
+   * feels: a slow GPU backs the ticks up just as surely as slow script would.
+   */
+  private pace(moving: boolean) {
+    const now = performance.now();
+    const gap = now - this.lastFrameAt;
+    this.lastFrameAt = now;
+    // only consecutive frames say anything; a gap after an idle spell does not
+    if (!moving || gap > 250) return;
+    this.frameMs = this.frameMs * 0.8 + gap * 0.2;
+    if (this.frameMs > 36 && this.autoScale > 0.5) {
+      this.autoScale = Math.max(0.5, this.autoScale * 0.85);
+      this.frameMs = 16;
+      this.resize();
+    } else if (this.frameMs < 14 && this.autoScale < 1) {
+      this.autoScale = Math.min(1, this.autoScale / 0.85);
+      this.frameMs = 16;
+      this.resize();
+    }
+  }
 
   private rebuildFrameBind() {
     const env = this.environment;

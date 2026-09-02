@@ -94,6 +94,7 @@ struct Trace { instanceCount: u32, enabled: u32, eps: f32, _p: f32 };
 @group(2) @binding(3) var<storage, read> instances: array<Inst>;
 @group(2) @binding(4) var<storage, read> materials: array<MaterialRec>;
 @group(2) @binding(5) var<uniform> trace: Trace;
+@group(2) @binding(6) var<storage, read> tlas: array<Node>;
 
 struct VsIn {
   @location(0) position: vec3f,
@@ -197,59 +198,86 @@ fn safeDir(d: vec3f) -> vec3f {
   return select(d, vec3f(1e-6), abs(d) < vec3f(1e-6));
 }
 
+/** Walk one mesh's hierarchy in its own space, front to back, tightening the hit. */
+fn traceInstance(i: u32, o: vec3f, d: vec3f, tMin: f32, hit: ptr<function, Hit>) {
+  let inst = instances[i];
+  let oo = (inst.worldToObject * vec4f(o, 1.0)).xyz;
+  let od = safeDir((inst.worldToObject * vec4f(d, 0.0)).xyz);
+  let oinv = 1.0 / od;
+  var stack: array<u32, 32>;
+  var stackT: array<f32, 32>;
+  var sp = 1u;
+  stack[0] = inst.nodeOffset;
+  stackT[0] = 0.0;
+  while (sp > 0u) {
+    sp--;
+    if (stackT[sp] >= (*hit).t) { continue; }
+    let node = nodes[stack[sp]];
+    if ((node.count & 0x80000000u) != 0u) {
+      let li = inst.nodeOffset + node.left;
+      let ri = inst.nodeOffset + (node.count & 0x7fffffffu);
+      let ln = nodes[li];
+      let rn = nodes[ri];
+      var tl = rayBox(oo, oinv, ln.bmin, ln.bmax, (*hit).t);
+      var tr = rayBox(oo, oinv, rn.bmin, rn.bmax, (*hit).t);
+      var near = li; var far = ri;
+      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
+      if (sp + 2u <= 32u) {
+        if (tr < (*hit).t) { stack[sp] = far; stackT[sp] = tr; sp++; }
+        if (tl < (*hit).t) { stack[sp] = near; stackT[sp] = tl; sp++; }
+      }
+      continue;
+    }
+    let first = inst.triOffset + node.left;
+    for (var k = 0u; k < node.count; k++) {
+      let b = (first + k) * 6u;
+      let r = rayTri(oo, od, tris[b].xyz, tris[b + 1u].xyz, tris[b + 2u].xyz);
+      if (r.x > tMin && r.x < (*hit).t) {
+        (*hit).t = r.x; (*hit).inst = i; (*hit).tri = first + k; (*hit).u = r.y; (*hit).v = r.z;
+      }
+    }
+  }
+}
+
 /**
- * Closest hit along a world-space ray. Instances are tested in turn against
- * their world boxes; each survivor takes the ray into its mesh's space and walks
- * that mesh's hierarchy. The direction is not renormalised after the transform,
- * so t stays in world units throughout and the nearest hit is the nearest hit.
+ * Closest hit along a world-space ray. The hierarchy over placements finds the
+ * few this ray can touch, nearest first; each takes the ray into its mesh's
+ * space and walks that mesh's tree. Directions are never renormalised after a
+ * transform, so t stays in world units and the nearest hit is the nearest hit.
  */
 fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
   var hit: Hit;
   hit.t = 1e30;
   hit.inst = NO_HIT;
+  if (trace.instanceCount == 0u) { return hit; }
   let d = safeDir(dIn);
   let invD = 1.0 / d;
-  var stack: array<u32, 32>;
-  var stackT: array<f32, 32>;
-  for (var i = 0u; i < trace.instanceCount; i++) {
-    let inst = instances[i];
-    if (rayBox(o, invD, inst.bmin, inst.bmax, hit.t) >= hit.t) { continue; }
-    let oo = (inst.worldToObject * vec4f(o, 1.0)).xyz;
-    let od = safeDir((inst.worldToObject * vec4f(d, 0.0)).xyz);
-    let oinv = 1.0 / od;
-    var sp = 1u;
-    stack[0] = inst.nodeOffset;
-    stackT[0] = 0.0;
-    while (sp > 0u) {
-      sp--;
-      // a box queued before a nearer hit was found may no longer matter
-      if (stackT[sp] >= hit.t) { continue; }
-      let node = nodes[stack[sp]];
-      if ((node.count & 0x80000000u) != 0u) {
-        // interior: test both children and visit the nearer first, so the hit it
-        // yields prunes the farther one
-        let li = inst.nodeOffset + node.left;
-        let ri = inst.nodeOffset + (node.count & 0x7fffffffu);
-        let ln = nodes[li];
-        let rn = nodes[ri];
-        var tl = rayBox(oo, oinv, ln.bmin, ln.bmax, hit.t);
-        var tr = rayBox(oo, oinv, rn.bmin, rn.bmax, hit.t);
-        var near = li; var far = ri;
-        if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
-        if (sp + 2u <= 32u) {
-          if (tr < hit.t) { stack[sp] = far; stackT[sp] = tr; sp++; }
-          if (tl < hit.t) { stack[sp] = near; stackT[sp] = tl; sp++; }
-        }
-        continue;
+  var stack: array<u32, 24>;
+  var stackT: array<f32, 24>;
+  var sp = 1u;
+  stack[0] = 0u;
+  stackT[0] = 0.0;
+  while (sp > 0u) {
+    sp--;
+    if (stackT[sp] >= hit.t) { continue; }
+    let node = tlas[stack[sp]];
+    if ((node.count & 0x80000000u) != 0u) {
+      let li = node.left;
+      let ri = node.count & 0x7fffffffu;
+      let ln = tlas[li];
+      let rn = tlas[ri];
+      var tl = rayBox(o, invD, ln.bmin, ln.bmax, hit.t);
+      var tr = rayBox(o, invD, rn.bmin, rn.bmax, hit.t);
+      var near = li; var far = ri;
+      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
+      if (sp + 2u <= 24u) {
+        if (tr < hit.t) { stack[sp] = far; stackT[sp] = tr; sp++; }
+        if (tl < hit.t) { stack[sp] = near; stackT[sp] = tl; sp++; }
       }
-      let first = inst.triOffset + node.left;
-      for (var k = 0u; k < node.count; k++) {
-        let b = (first + k) * 6u;
-        let r = rayTri(oo, od, tris[b].xyz, tris[b + 1u].xyz, tris[b + 2u].xyz);
-        if (r.x > tMin && r.x < hit.t) {
-          hit.t = r.x; hit.inst = i; hit.tri = first + k; hit.u = r.y; hit.v = r.z;
-        }
-      }
+      continue;
+    }
+    for (var k = 0u; k < node.count; k++) {
+      traceInstance(node.left + k, o, d, tMin, &hit);
     }
   }
   return hit;
@@ -397,7 +425,8 @@ fn occlusionAt(index: u32) -> f32 {
   let wearOn = select(material.wear, 0.0, nacre);
   let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
   var crease = smoothstep(0.05, 0.8, -in.wear) * wearOn;
-  crease *= 0.7 + 0.6 * noise3(in.object * 1.7);
+  // the grain only matters where there is a crease, and most of a surface has none
+  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(in.object * 1.7); }
   roughness = mix(roughness, roughness * 0.45, edge);
   roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
   f0 = mix(f0, f0 * 0.55, crease * 0.8);

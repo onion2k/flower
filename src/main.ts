@@ -39,7 +39,8 @@ const state = {
   envSpin: 0,
   debug: 0,
   showAnchors: false,
-  reflections: true,
+  reflections: false,
+  renderScale: 1,
 };
 
 let framed = '';
@@ -189,6 +190,10 @@ viewSet.append(
   picker('debug', DEBUG_MODES, 'shaded', (v) => {
     state.debug = DEBUG_MODES.indexOf(v);
     viewer.setDebug(state.debug);
+  }),
+  slider('render scale', 0.5, 1, 0.05, state.renderScale, (v) => `${Math.round(v * 100)}%`, (v) => {
+    state.renderScale = v;
+    viewer.setRenderScale(v);
   }),
   toggle('reflections', 'reflections', () => viewer.setReflections(state.reflections)),
   toggle('show anchors', 'showAnchors', () => build()),
