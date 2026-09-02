@@ -39,6 +39,9 @@ export interface LeafSpec {
   curlBias?: number;
   /** Turns of twist about the midrib, in radians. */
   twist?: number;
+  /** Height of chased veins in relief. Defaults to a quarter of the thickness; 0 for a plain plate. */
+  relief?: number;
+  reliefVeins?: number;
   segments?: number;
   /** Rivet hole at the base, and the anchor that goes with it. */
   bossBore?: number;
@@ -123,6 +126,9 @@ export function leaf(spec: LeafSpec): Part {
     midline: spec.lobes
       ? undefined
       : (x: number) => Math.sin(Math.PI * Math.min(Math.max(x / spec.length, 0), 1)) * droop * spec.length,
+    // a palmate leaf has no single midrib to chase
+    relief: spec.lobes ? 0 : spec.relief ?? spec.thickness * 0.25,
+    reliefVeins: spec.reliefVeins ?? 5,
   };
   // A flat cap can be a fan of long triangles; a bent one cannot, so the plate is
   // refined while it is still planar and cheap to cut.
@@ -132,7 +138,7 @@ export function leaf(spec: LeafSpec): Part {
     maxCapEdge: Number.isFinite(limit) ? limit : undefined,
   });
 
-  if (spec.cup || spec.curl || spec.twist) {
+  if (spec.cup || spec.curl || spec.twist || fields.relief) {
     deform(mesh, fields);
     for (const anchor of anchors) {
       const moved = deformAnchor(anchor.position, anchor.axis, fields);

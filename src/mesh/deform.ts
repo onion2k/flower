@@ -39,6 +39,13 @@ export interface DeformOptions {
   /** Waves along the margin. A frill: the edge waves, the midrib does not. */
   ruffle?: number;
   ruffleWaves?: number;
+  /**
+   * Height of chased veins: a ridge down the midrib and angled laterals off it,
+   * raised on one face and sunk on the other, as repoussé work is.
+   */
+  relief?: number;
+  /** Pairs of lateral veins. */
+  reliefVeins?: number;
   /** Extents used to normalise the fields. Taken from the mesh if omitted. */
   length?: number;
   halfWidth?: number;
@@ -79,6 +86,8 @@ export function deform(mesh: Mesh, opts: DeformOptions): Mesh {
   const origin = opts.origin ?? minX;
 
   const midline = opts.midline ?? (() => 0);
+  // relief first: it is drawn on the flat plate, and everything after bends it
+  if (opts.relief) veinField(mesh, opts.relief, opts.reliefVeins ?? 5, origin, length, halfWidth, midline);
   if (opts.cup) cupField(mesh, opts.cup, opts.keel ?? 0, halfWidth, midline);
   if (opts.ruffle) {
     ruffleField(mesh, opts.ruffle, opts.ruffleWaves ?? 5, origin, length, halfWidth, midline);
@@ -225,6 +234,63 @@ function ruffleField(
 }
 
 /**
+ * Chased veins: a midrib ridge tapering to the tip, and lateral ridges angled
+ * forward from it, fading before the margin. Like the ruffle, a shear along Z,
+ * with the normal corrected from the height field's gradient — taken by central
+ * differences here, since the field is a sum of gaussians and not worth
+ * differentiating by hand.
+ */
+function veinField(
+  mesh: Mesh, relief: number, veins: number,
+  minX: number, length: number, halfWidth: number,
+  midline: (x: number) => number,
+) {
+  const { positions, normals } = mesh;
+  const wm = halfWidth * 0.16;   // midrib half-width
+  const wl = halfWidth * 0.11;   // lateral half-width
+  const angle = 0.9;             // laterals leave the midrib at about 50°
+  const ca = Math.cos(angle), sa = Math.sin(angle);
+  const smooth = (a: number, b: number, x: number) => {
+    const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
+    return t * t * (3 - 2 * t);
+  };
+
+  const height = (x: number, y: number) => {
+    const u = Math.min(Math.max((x - minX) / length, 0), 1);
+    const yy = y - midline(x);
+    const ay = Math.abs(yy);
+    const taper = Math.pow(1 - u, 0.7) * smooth(0, 0.1, u);
+    let h = relief * Math.exp(-(yy * yy) / (wm * wm)) * taper;
+
+    const margin = 1 - smooth(0.7, 1.0, ay / halfWidth);
+    let lateral = 0;
+    for (let i = 0; i < veins; i++) {
+      const ui = 0.14 + (0.68 * i) / Math.max(veins - 1, 1);
+      const dx = x - (minX + ui * length);
+      const t = dx * ca + ay * sa;      // along the vein
+      const d = -dx * sa + ay * ca;     // across it
+      const along = smooth(0, wl * 2, t) * Math.exp(-(t * t) / (halfWidth * halfWidth * 1.4));
+      lateral = Math.max(lateral, Math.exp(-(d * d) / (wl * wl)) * along);
+    }
+    h += relief * 0.55 * lateral * margin * Math.pow(1 - u, 0.4);
+    return h;
+  };
+
+  const eps = halfWidth * 1e-3;
+  for (let i = 0; i < positions.length; i += 3) {
+    const x = positions[i], y = positions[i + 1];
+    positions[i + 2] += height(x, y);
+    const fx = (height(x + eps, y) - height(x - eps, y)) / (2 * eps);
+    const fy = (height(x, y + eps) - height(x, y - eps)) / (2 * eps);
+    const nz = normals[i + 2];
+    const nx = normals[i] - fx * nz;
+    const ny = normals[i + 1] - fy * nz;
+    const l = Math.hypot(nx, ny, nz) || 1;
+    normals[i] = nx / l; normals[i + 1] = ny / l; normals[i + 2] = nz / l;
+  }
+}
+
+/**
  * Put an anchor through the same fields as the surface it sits on.
  *
  * An anchor is a promise that a rivet lands on the metal, so it has to ride the
@@ -280,6 +346,11 @@ export function chordLimit(opts: DeformOptions, tolerance: number): number {
     const w = (Math.PI * 2 * (opts.ruffleWaves ?? 5)) / length;
     k = Math.max(k, Math.abs(opts.ruffle) * w * w);
   }
-  if (k <= 0) return Infinity;
-  return Math.sqrt((8 * tolerance) / k);
+  let limit = k > 0 ? Math.sqrt((8 * tolerance) / k) : Infinity;
+  if (opts.relief) {
+    // A ridge needs several vertices across it or it comes out as a row of
+    // bumps rather than a line. The laterals are the narrower of the two.
+    limit = Math.min(limit, halfWidth * 0.11 * 0.8);
+  }
+  return limit;
 }

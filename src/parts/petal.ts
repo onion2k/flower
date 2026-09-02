@@ -34,6 +34,9 @@ export interface PetalSpec {
   ruffle?: number;
   ruffleWaves?: number;
   droop?: number;
+  /** Height of chased veins in relief. Defaults to a fifth of the thickness; 0 for a plain plate. */
+  relief?: number;
+  reliefVeins?: number;
   segments?: number;
   /** Rivet hole at the claw, and the anchor that goes with it. */
   bossBore?: number;
@@ -103,6 +106,8 @@ export function petal(spec: PetalSpec): Part {
     origin: 0,
     midline: (x: number) =>
       Math.sin(Math.PI * Math.min(Math.max(x / spec.length, 0), 1)) * (spec.droop ?? 0) * spec.length,
+    relief: spec.relief ?? spec.thickness * 0.2,
+    reliefVeins: spec.reliefVeins ?? 4,
   };
   const limit = chordLimit(fields, spec.length * 0.004);
   const mesh = extrude({

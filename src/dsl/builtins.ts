@@ -197,12 +197,15 @@ const CURVES = {
   }),
 };
 
+/** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
+const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
+
 /** Parts. Each call makes real geometry, so results are cached by the caller. */
 const PARTS = {
   leaf: define(
     ['length', 'width', 'thickness', 'shape', 'bevel', 'piercings', 'veins', 'teeth',
      'toothDepth', 'lobes', 'spread', 'droop', 'cup', 'keel', 'curl', 'curlBias', 'twist',
-     'boss', 'segments'],
+     'relief', 'reliefVeins', 'boss', 'segments'],
     (a) => leaf({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -221,6 +224,8 @@ const PARTS = {
       curl: a.num('curl', -1, 0) || undefined,
       curlBias: a.num('curlBias', -1, 1),
       twist: a.num('twist', -1, 0) || undefined,
+      relief: optional(a.num('relief', -1, NaN)),
+      reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 64),
     })),
@@ -301,7 +306,7 @@ const PARTS = {
   petal: define(
     ['length', 'width', 'thickness', 'shape', 'edge', 'edgeDepth', 'edgeCount', 'bevel',
      'veins', 'cup', 'keel', 'curl', 'curlBias', 'twist', 'ruffle', 'ruffleWaves',
-     'droop', 'boss', 'segments'],
+     'droop', 'relief', 'reliefVeins', 'boss', 'segments'],
     (a) => petal({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -320,6 +325,8 @@ const PARTS = {
       ruffle: a.num('ruffle', -1, 0) || undefined,
       ruffleWaves: a.num('ruffleWaves', -1, 5),
       droop: a.num('droop', -1, 0),
+      relief: optional(a.num('relief', -1, NaN)),
+      reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 72),
     })),

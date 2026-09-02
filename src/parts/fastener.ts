@@ -45,13 +45,23 @@ export function rivet(spec: RivetSpec): Part {
     at(sr, -spec.grip + sr * 0.1, true);
   }
   at(sr, 0, true);
-  at(hr, 0, true);
 
-  // circular cap: base radius hr at the seat, apex at z = hh
-  const r = (hr * hr + hh * hh) / (2 * hh);
+  // A meniscus where the head meets the sheet: a small concave quarter-round
+  // flaring out from the rim onto the seat. A head that meets the plate at a
+  // hard right angle floats on it; one that sweeps into it is set.
+  const fillet = hr * 0.14;
+  at(hr + fillet, 0, true);
+  for (let i = 1; i <= 3; i++) {
+    const a = (i / 3) * (Math.PI / 2);
+    at(hr + fillet - fillet * Math.sin(a), fillet - fillet * Math.cos(a), i === 3);
+  }
+
+  // circular cap: base radius hr where the fillet ends, apex at z = hh
+  const rise = hh - fillet;
+  const r = (hr * hr + rise * rise) / (2 * rise);
   const zc = hh - r;
   for (let i = 1; i <= domeSegments; i++) {
-    const z = (i / domeSegments) * hh;
+    const z = fillet + (i / domeSegments) * rise;
     at(Math.sqrt(Math.max(r * r - (z - zc) * (z - zc), 0)), z);
   }
 

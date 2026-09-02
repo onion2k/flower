@@ -89,8 +89,8 @@ export function extrude(opts: ExtrudeOptions): Mesh {
     const perimeter = perimeterParam(loop);
 
     if (bevel > 0) {
-      band(mb, insetLoopPts, hz, loop, inner, outward, perimeter, 1);
-      band(mb, loop, -inner, insetLoopPts, -hz, outward, perimeter, -1);
+      band(mb, insetLoopPts, loop, hz, inner, outward, perimeter, 1);
+      band(mb, insetLoopPts, loop, hz, inner, outward, perimeter, -1);
     }
     // the straight wall between the two bevels
     wall(mb, loop, inner, -inner, outward, perimeter);
@@ -322,28 +322,43 @@ function distanceToLoop([x, y]: Vec2, loop: Vec2[]): number {
 }
 
 /** A sloped ring-to-ring band; `dir` is +1 for the upper bevel, -1 for the lower. */
+/**
+ * The edge break, as a quarter-round rather than a chamfer.
+ *
+ * A single 45° facet reads as machined: one flat glint, then nothing. A rounded
+ * edge carries a highlight that slides as the piece turns, which is what a filed
+ * and polished edge does, and the curvature-driven wear sees a smooth convex
+ * band rather than two creases. Three steps are enough at these sizes.
+ */
 function band(
   mb: MeshBuilder,
-  a: Vec2[], az: number,
-  b: Vec2[], bz: number,
+  cap: Vec2[], wallLoop: Vec2[],
+  hz: number, inner: number,
   outward: Vec2[],
   perimeter: number[],
   dir: number,
+  steps = 3,
 ) {
-  const n = a.length;
+  const n = cap.length;
   const base = mb.vertexCount;
-  const k = Math.SQRT1_2;
-  for (let i = 0; i < n; i++) {
-    const [ox, oy] = outward[i];
-    mb.vertex(a[i][0], a[i][1], az, ox * k, oy * k, dir * k, perimeter[i], 0);
+  for (let k = 0; k <= steps; k++) {
+    const theta = (k / steps) * (Math.PI / 2);
+    const s = Math.sin(theta), c = Math.cos(theta);
+    const z = dir * (inner + (hz - inner) * c);
+    for (let i = 0; i < n; i++) {
+      const [ox, oy] = outward[i];
+      const x = cap[i][0] + (wallLoop[i][0] - cap[i][0]) * s;
+      const y = cap[i][1] + (wallLoop[i][1] - cap[i][1]) * s;
+      mb.vertex(x, y, z, ox * s, oy * s, dir * c, perimeter[i], k / steps);
+    }
   }
-  for (let i = 0; i < n; i++) {
-    const [ox, oy] = outward[i];
-    mb.vertex(b[i][0], b[i][1], bz, ox * k, oy * k, dir * k, perimeter[i], 1);
-  }
-  for (let i = 0; i < n; i++) {
-    const j = (i + 1) % n;
-    mb.quad(base + i, base + n + i, base + n + j, base + j);
+  for (let k = 0; k < steps; k++) {
+    const r0 = base + k * n, r1 = base + (k + 1) * n;
+    for (let i = 0; i < n; i++) {
+      const j = (i + 1) % n;
+      if (dir > 0) mb.quad(r0 + i, r1 + i, r1 + j, r0 + j);
+      else mb.quad(r0 + i, r0 + j, r1 + j, r1 + i);
+    }
   }
 }
 
