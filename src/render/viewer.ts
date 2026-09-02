@@ -10,6 +10,7 @@ import { finishes, metals, patinaColour, type Finish, type Metal } from './mater
 import { GROUND_FRAG, GROUND_VERT, PBR_FRAG, PBR_VERT } from './shaders';
 import { bakeOcclusion, type Occlusion } from './occlusion';
 import { computeWear } from '../mesh/wear';
+import { PostChain, inverseTonemap } from './post';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 
@@ -77,6 +78,12 @@ export class Viewer {
   private groundProgram: Program;
   private groundMesh: Mesh | null = null;
 
+  /** HDR output with bloom; null where the context cannot render to float. */
+  private post: PostChain | null = null;
+  private debugMode = 0;
+  /** Bloom strength: a halo on the brightest reflections, not a glow on the piece. */
+  bloom = 0.018;
+
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
 
@@ -106,7 +113,11 @@ export class Viewer {
     // lights the metal — it is only no longer drawn behind it. A room painted
     // across the background competes with the piece instead of appearing in it,
     // which is what it is for.
-    gl.clearColor(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 1);
+    // With the post chain, the scene is linear HDR until the composite pass, so
+    // the clear colour is whatever tonemaps to the page colour.
+    this.post = PostChain.create(raw);
+    const background = this.post ? inverseTonemap(BACKGROUND) : BACKGROUND;
+    gl.clearColor(background[0], background[1], background[2], 1);
 
     // Raw GL textures from the bakes, wrapped so ogl still manages texture units.
     this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
@@ -135,6 +146,7 @@ export class Viewer {
         uOcclusionBase: { value: 0 },
         uVertexCount: { value: 1 },
         uOcclusionOn: { value: 0 },
+        uLinearOut: { value: this.post ? 1 : 0 },
       },
       cullFace: null,
     });
@@ -148,7 +160,8 @@ export class Viewer {
         uMaxLod: { value: 5 },
         uExposure: { value: 1 },
         uEnvSpin: { value: 0 },
-        uBackground: { value: BACKGROUND },
+        uBackground: { value: background },
+        uLinearOut: { value: this.post ? 1 : 0 },
         // a dark matte table: enough to pool a little light, not enough to compete
         uAlbedo: { value: [0.04, 0.04, 0.043] },
         uCentre: { value: [0, 0, 0] },
@@ -208,6 +221,10 @@ export class Viewer {
     this.program.uniforms.uPatinaColour.value = patinaColour(this.metal.name);
   }
 
+  setBloom(v: number) {
+    this.bloom = v;
+  }
+
   setExposure(v: number) {
     this.program.uniforms.uExposure.value = v;
     this.groundProgram.uniforms.uExposure.value = v;
@@ -221,6 +238,7 @@ export class Viewer {
 
   /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
   setDebug(mode: number) {
+    this.debugMode = mode;
     this.program.uniforms.uDebug.value = mode;
     this.groundProgram.uniforms.uDebug.value = mode;
   }
@@ -414,6 +432,7 @@ export class Viewer {
     const host = (gl.canvas as HTMLCanvasElement).parentElement as HTMLElement;
     this.renderer.setSize(host.clientWidth, host.clientHeight);
     this.camera.perspective({ aspect: host.clientWidth / host.clientHeight });
+    this.post?.resize(host.clientWidth * this.renderer.dpr, host.clientHeight * this.renderer.dpr);
   };
 
   private loop = () => {
@@ -421,7 +440,14 @@ export class Viewer {
     this.controls.update();
 
     this.camera.updateMatrixWorld();
-    this.renderer.render({ scene: this.scene, camera: this.camera });
+    if (this.post) {
+      this.renderer.render({ scene: this.scene, camera: this.camera, target: this.post.target as never });
+      this.post.finish({ bloom: this.bloom, raw: this.debugMode > 0 });
+      // the chain drove raw GL; ogl's cache describes a state that no longer holds
+      invalidateRendererState(this.renderer, this.renderer.gl as unknown as WebGL2RenderingContext);
+    } else {
+      this.renderer.render({ scene: this.scene, camera: this.camera });
+    }
   };
 
   dispose() {
@@ -430,6 +456,7 @@ export class Viewer {
     this.controls.remove();
     this.environment?.dispose();
     this.occlusion?.dispose();
+    this.post?.dispose();
   }
 }
 

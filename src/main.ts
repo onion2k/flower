@@ -28,6 +28,7 @@ const state = {
   finish: 'polished',
   environment: 'studio' as EnvPreset,
   exposure: 1,
+  bloom: 0.018,
   envSpin: 0,
   debug: 0,
   showAnchors: false,
@@ -158,6 +159,10 @@ lightSet.append(
   slider('exposure', 0.15, 4, 0.05, state.exposure, (v) => `${v.toFixed(2)}×`, (v) => {
     state.exposure = v;
     viewer.setExposure(v);
+  }),
+  slider('bloom', 0, 0.08, 0.002, state.bloom, (v) => v.toFixed(3), (v) => {
+    state.bloom = v;
+    viewer.setBloom(v);
   }),
   slider('rotate env', 0, 6.283, 0.02, state.envSpin, (v) => `${Math.round((v * 180) / Math.PI)}°`, (v) => {
     state.envSpin = v;

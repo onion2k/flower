@@ -72,6 +72,7 @@ uniform float uHammer;
 uniform float uPatina;
 uniform vec3 uPatinaColour;
 uniform float uWear;
+uniform float uLinearOut;   // 1: leave linear HDR for the post chain; 0: tonemap here
 
 uniform vec3 cameraPosition;
 uniform float uExposure;
@@ -186,6 +187,19 @@ void main() {
   f0 = mix(f0, f0 * 0.55, crease * 0.8);
   metallic = mix(metallic, metallic * 0.6, crease * 0.6);
 
+  // --- specular anti-aliasing ---
+  // Where the normal changes faster than the pixel grid can follow — hammered
+  // dimples, thin wires, a rim seen edge-on — a mirror-sharp lobe just shimmers.
+  // Widening the lobe by the normal's variance across the pixel (Tokuyoshi and
+  // Kaplanyan) turns that shimmer into the blur it would have had anyway.
+  {
+    vec3 dnx = dFdx(n), dny = dFdy(n);
+    float variance = 0.25 * (dot(dnx, dnx) + dot(dny, dny));
+    float kernel = min(2.0 * variance, 0.18);
+    float alpha = roughness * roughness;
+    roughness = sqrt(sqrt(alpha * alpha + kernel));
+  }
+
   roughness = clamp(roughness, 0.03, 1.0);
 
   // --- anisotropy: bend the reflection vector along the brush direction ---
@@ -239,9 +253,10 @@ void main() {
   else if (uDebug > 2.5) colour = vec3(roughness);
   else if (uDebug > 1.5) colour = vec3(vUv, 0.35);
   else if (uDebug > 0.5) colour = n * 0.5 + 0.5;
-  else colour = tonemap(colour);
+  else if (uLinearOut < 0.5) colour = tonemap(colour);
 
-  fragColor = vec4(pow(colour, vec3(1.0 / 2.2)), 1.0);
+  if (uLinearOut > 0.5) fragColor = vec4(colour, 1.0);
+  else fragColor = vec4(pow(colour, vec3(1.0 / 2.2)), 1.0);
 }`;
 
 /**
@@ -276,9 +291,10 @@ uniform samplerCube uSpecular;
 uniform float uMaxLod;
 uniform float uExposure;
 uniform float uEnvSpin;
-uniform vec3 uBackground;
+uniform vec3 uBackground;   // display colour when tonemapping here, linear when not
 uniform vec3 uAlbedo;
 uniform float uDebug;
+uniform float uLinearOut;
 
 mat3 spinZ(float a) {
   float c = cos(a), s = sin(a);
@@ -295,7 +311,8 @@ void main() {
   float ao = acc.g > 0.0 ? clamp(acc.r / acc.g, 0.0, 1.0) : 1.0;
 
   vec3 irradiance = textureLod(uSpecular, spinZ(uEnvSpin) * vec3(0.0, 0.0, 1.0), uMaxLod).rgb;
-  vec3 lit = pow(tonemap(irradiance * uAlbedo * ao * uExposure), vec3(1.0 / 2.2));
+  vec3 hdr = irradiance * uAlbedo * ao * uExposure;
+  vec3 lit = uLinearOut > 0.5 ? hdr : pow(tonemap(hdr), vec3(1.0 / 2.2));
 
   float fade = 1.0 - smoothstep(0.3, 1.0, length(vLocal));
   vec3 colour = mix(uBackground, lit, fade);
