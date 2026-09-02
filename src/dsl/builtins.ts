@@ -4,6 +4,7 @@ import { leaf } from '../parts/leaf';
 import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
 import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
+import { pearl } from '../parts/pearl';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -269,6 +270,13 @@ const PARTS = {
       point: a.num('point', 1, NaN) || undefined,
       bore: a.num('bore', -1, 0) || undefined,
       segments: a.num('segments', -1, 24),
+    })),
+
+  pearl: define(['radius', 'oblate', 'segments'], (a) =>
+    pearl({
+      radius: a.num('radius', 0),
+      oblate: a.num('oblate', -1, 0) || undefined,
+      segments: a.num('segments', -1, 48),
     })),
 
   band: define(['radius', 'width', 'thickness', 'segments'], (a) =>

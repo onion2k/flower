@@ -63,7 +63,10 @@ struct Material {
   _pad: f32,
   occlusionBase: u32,
   vertexCount: u32,
-  _pad2: vec2u,
+  model: u32,          // 0 metal, 1 nacre
+  _pad2: u32,
+  baseColour: vec3f,
+  orient: f32,
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -80,8 +83,9 @@ struct MaterialRec {
   f0: vec3f, roughness: f32,
   anisotropy: f32, hammer: f32, patina: f32, wear: f32,
   patinaColour: vec3f, _pad: f32,
-  occlusionBase: u32, vertexCount: u32, _pad2: vec2u,
-  _fill: array<vec4f, 12>,
+  occlusionBase: u32, vertexCount: u32, model: u32, _pad2: u32,
+  baseColour: vec3f, orient: f32,
+  _fill: array<vec4f, 11>,
 };
 struct Trace { instanceCount: u32, enabled: u32, eps: f32, _p: f32 };
 @group(2) @binding(0) var<storage, read> nodes: array<Node>;
@@ -252,36 +256,100 @@ fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
 }
 
 /**
- * Shade the point a reflected ray landed on: environment lighting through that
- * surface's own material, so a rose-gold rivet reflected in a gold leaf still
- * reads as rose gold. One bounce; what this point reflects is the environment.
+ * Nacre: light gets under the surface and comes back out diffused, so the
+ * body is lit by a broad, wrapped irradiance rather than the normal's alone,
+ * with a little bleeding through from behind at the rim. Over it sits a soft
+ * dielectric lustre, and an iridescent sheen — the trade calls it orient —
+ * that shifts hue as the view turns across the plates.
  */
-fn shadeHit(hit: Hit, d: vec3f) -> vec3f {
+fn orientTint(ndv: f32, strength: f32) -> vec3f {
+  let phase = ndv * 1.3;
+  return vec3f(1.0) + strength * vec3f(
+    sin(6.2832 * phase), sin(6.2832 * (phase + 0.33)), sin(6.2832 * (phase + 0.67)));
+}
+
+fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
+  let spin = spinZ(frame.envSpin);
+  let irrN = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+  let irrWrap = textureSampleLevel(envSpecular, linearSampler, spin * normalize(n + v), frame.maxLod).rgb;
+  let irrBack = textureSampleLevel(envSpecular, linearSampler, spin * (-n), frame.maxLod).rgb;
+  let scattered = irrN * 0.7 + irrWrap * 0.3;
+  let rim = pow(1.0 - ndv, 2.5) * 0.35;
+  // multiple scattering loses some light on every pass through the plates:
+  // nacre returns about half of what falls on it, not all of it
+  return base * (scattered + irrBack * rim) * ao * 0.55;
+}
+
+struct Surface { n: vec3f, ao: f32, m: MaterialRec };
+
+/** Normal, occlusion and material at a hit, facing the ray. */
+fn surfaceAt(hit: Hit, d: vec3f) -> Surface {
   let inst = instances[hit.inst];
-  let m = materials[inst.group];
   let b = hit.tri * 6u;
   let w0 = 1.0 - hit.u - hit.v;
   let nObj = tris[b + 3u].xyz * w0 + tris[b + 4u].xyz * hit.u + tris[b + 5u].xyz * hit.v;
   var n = normalize((inst.objectToWorld * vec4f(nObj, 0.0)).xyz);
   if (dot(n, d) > 0.0) { n = -n; }
-  let v = -d;
-
   let idx = triIdx[hit.tri];
   let base = inst.occlusionBase;
-  let ao = occlusionAt(base + idx.x) * w0 + occlusionAt(base + idx.y) * hit.u + occlusionAt(base + idx.z) * hit.v;
+  var s: Surface;
+  s.n = n;
+  s.ao = occlusionAt(base + idx.x) * w0 + occlusionAt(base + idx.y) * hit.u + occlusionAt(base + idx.z) * hit.v;
+  s.m = materials[inst.group];
+  return s;
+}
 
-  let roughness = clamp(m.roughness, 0.03, 1.0);
-  let ndv = clamp(dot(n, v), 0.001, 1.0);
+/** Lighting at a surface given what its reflection ray sees. */
+fn shadeSurface(s: Surface, d: vec3f, reflected: vec3f) -> vec3f {
+  let v = -d;
+  let ndv = clamp(dot(s.n, v), 0.001, 1.0);
   let spin = spinZ(frame.envSpin);
-  let r = reflect(d, n);
-  let prefiltered = textureSampleLevel(envSpecular, linearSampler, spin * r, roughness * frame.maxLod).rgb;
+  if (s.m.model == 1u) {
+    let roughness = max(s.m.roughness, 0.18);
+    let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
+    let fresnel = s.m.f0 * ab.x + ab.y;
+    return nacreBody(s.n, v, ndv, s.m.baseColour, s.ao) * (1.0 - fresnel) + reflected * fresnel * orientTint(ndv, s.m.orient);
+  }
+  let roughness = clamp(s.m.roughness, 0.03, 1.0);
   let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
-  let specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
-  let specular = prefiltered * (m.f0 * ab.x + ab.y) * specOcclusion;
-  // patina's diffuse share, where there is any
-  let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
-  let diffuse = irradiance * m.patinaColour * m.patina * 0.5 * ao;
+  let specOcclusion = clamp(pow(ndv + s.ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + s.ao, 0.0, 1.0);
+  let specular = reflected * (s.m.f0 * ab.x + ab.y) * specOcclusion;
+  let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * s.n, frame.maxLod).rgb;
+  let diffuse = irradiance * s.m.patinaColour * s.m.patina * 0.5 * s.ao;
   return specular + diffuse;
+}
+
+fn envAt(dir: vec3f, roughness: f32) -> vec3f {
+  return textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * dir, roughness * frame.maxLod).rgb;
+}
+
+/** The last bounce: what this surface reflects is the environment. */
+fn shadeHit2(hit: Hit, d: vec3f) -> vec3f {
+  let s = surfaceAt(hit, d);
+  let r = reflect(d, s.n);
+  return shadeSurface(s, d, envAt(r, select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u)));
+}
+
+/**
+ * Shade the point a reflected ray landed on, through that surface's own
+ * material, so a rose-gold rivet reflected in a gold leaf still reads as rose
+ * gold. Two bounces: this surface's reflection is traced once more, which is
+ * what lights the deep folds of a cup, where a petal reflects a petal that
+ * reflects the room.
+ */
+fn shadeHit(o: vec3f, hit: Hit, d: vec3f) -> vec3f {
+  let s = surfaceAt(hit, d);
+  let p = o + d * hit.t;
+  let r = reflect(d, s.n);
+  let roughness = select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u);
+  var reflected = envAt(r, roughness);
+  if (roughness < 0.45) {
+    let hit2 = traceRay(p + s.n * trace.eps, r, trace.eps);
+    if (hit2.inst != NO_HIT) {
+      reflected = mix(reflected, shadeHit2(hit2, r), 1.0 - smoothstep(0.12, 0.45, roughness));
+    }
+  }
+  return shadeSurface(s, d, reflected);
 }
 
 fn occlusionAt(index: u32) -> f32 {
@@ -300,9 +368,13 @@ fn occlusionAt(index: u32) -> f32 {
   var roughness = material.roughness;
   var f0 = material.f0;
   var metallic = 1.0;
+  // nacre has a soft lustre whatever finish the sketch asked for, and no
+  // planishing, patina or wear: those are things done to metal
+  let nacre = material.model == 1u;
+  if (nacre) { roughness = max(roughness, 0.18); }
 
   // --- planishing: perturb the normal by the gradient of a height field ---
-  if (material.hammer > 0.0) {
+  if (material.hammer > 0.0 && !nacre) {
     let p = in.object * 0.55;
     let eps = 0.35;
     let h0 = planish(p);
@@ -313,7 +385,7 @@ fn occlusionAt(index: u32) -> f32 {
   }
 
   // --- patina: an oxide fraction that is not metal any more ---
-  if (material.patina > 0.0) {
+  if (material.patina > 0.0 && !nacre) {
     let blotch = noise3(in.object * 0.32) * 0.65 + noise3(in.object * 0.9) * 0.35;
     let mask = smoothstep(0.62 - material.patina * 0.55, 0.78 - material.patina * 0.3, blotch);
     metallic = mix(1.0, 0.0, mask * material.patina);
@@ -322,8 +394,9 @@ fn occlusionAt(index: u32) -> f32 {
   }
 
   // --- wear: edges handled bright, creases left dull ---
-  let edge = smoothstep(0.05, 0.8, in.wear) * material.wear;
-  var crease = smoothstep(0.05, 0.8, -in.wear) * material.wear;
+  let wearOn = select(material.wear, 0.0, nacre);
+  let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
+  var crease = smoothstep(0.05, 0.8, -in.wear) * wearOn;
   crease *= 0.7 + 0.6 * noise3(in.object * 1.7);
   roughness = mix(roughness, roughness * 0.45, edge);
   roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
@@ -376,18 +449,28 @@ fn occlusionAt(index: u32) -> f32 {
   if (trace.enabled != 0u) {
     let traceWeight = 1.0 - smoothstep(0.12, 0.45, roughness);
     if (traceWeight > 0.001) {
-      let hit = traceRay(in.world + n * trace.eps, r, trace.eps);
-      let traced = select(prefiltered, shadeHit(hit, r), hit.inst != NO_HIT);
+      let origin = in.world + n * trace.eps;
+      let hit = traceRay(origin, r, trace.eps);
+      var traced = prefiltered;
+      if (hit.inst != NO_HIT) { traced = shadeHit(origin, hit, r); }
       reflected = mix(reflected, traced, traceWeight);
     }
   }
-  let specular = reflected * (f0 * ab.x + ab.y);
 
-  // metal has no diffuse lobe, so this only shows where patina has taken hold
-  let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
-  let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
-
-  var colour = (specular + diffuse) * frame.exposure;
+  var colour: vec3f;
+  if (material.model == 1u) {
+    // nacre: a lustre over a scattering body, with the sheen on the lustre
+    let fresnel = f0 * ab.x + ab.y;
+    let tint = orientTint(ndv, material.orient);
+    let body = nacreBody(n, v, ndv, material.baseColour, ao);
+    colour = (body * (1.0 - fresnel) * mix(vec3f(1.0), tint, 0.3) + reflected * fresnel * tint) * frame.exposure;
+  } else {
+    let specular = reflected * (f0 * ab.x + ab.y);
+    // metal has no diffuse lobe, so this only shows where patina has taken hold
+    let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+    let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
+    colour = (specular + diffuse) * frame.exposure;
+  }
 
   let d = frame.debug;
   if (d > 6.5) {

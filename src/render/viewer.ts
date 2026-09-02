@@ -333,7 +333,7 @@ export class Viewer {
     });
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
-      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: 64 } }],
+      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: 80 } }],
     });
 
     this.buildTrace();
@@ -565,7 +565,7 @@ export class Viewer {
     });
   }
 
-  /** Per-group material and occlusion slice, 64 bytes at a 256-byte stride. */
+  /** Per-group material and occlusion slice, 80 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
@@ -577,7 +577,8 @@ export class Viewer {
       const f = finishes[g.source.finish ?? ''] ?? this.finish;
       const o = (k * MATERIAL_STRIDE) / 4;
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
-      u32.set([bases[k], g.vertexCount, 0, 0], o + 12);
+      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : 0, 0], o + 12);
+      f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }
