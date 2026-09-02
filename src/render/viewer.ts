@@ -7,7 +7,10 @@ import type { Anchor } from '../parts/types';
 import type { Box3 } from '../geom/types';
 import { bakeEnvironment, type Environment, type EnvPreset } from './env';
 import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
-import { PBR_FRAG, PBR_VERT } from './shaders';
+import { GROUND_FRAG, GROUND_VERT, PBR_FRAG, PBR_VERT } from './shaders';
+import { bakeOcclusion, type Occlusion } from './occlusion';
+
+const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 
@@ -54,6 +57,14 @@ export class Viewer {
   private specularTexture: Texture;
   private brdfTexture: Texture;
 
+  private occlusion: Occlusion | null = null;
+  /** The last scene given, kept so the bake can be redone when the light moves. */
+  private groups: InstanceGroup[] = [];
+  private occlusionTexture: Texture;
+  private shadowTexture: Texture;
+  private groundProgram: Program;
+  private groundMesh: Mesh | null = null;
+
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
 
@@ -83,11 +94,13 @@ export class Viewer {
     // lights the metal — it is only no longer drawn behind it. A room painted
     // across the background competes with the piece instead of appearing in it,
     // which is what it is for.
-    gl.clearColor(0.043, 0.047, 0.055, 1);
+    gl.clearColor(BACKGROUND[0], BACKGROUND[1], BACKGROUND[2], 1);
 
-    // Raw GL textures from the bake, wrapped so ogl still manages texture units.
+    // Raw GL textures from the bakes, wrapped so ogl still manages texture units.
     this.specularTexture = wrapTexture(gl, raw.TEXTURE_CUBE_MAP);
     this.brdfTexture = wrapTexture(gl, raw.TEXTURE_2D);
+    this.occlusionTexture = wrapTexture(gl, raw.TEXTURE_2D);
+    this.shadowTexture = wrapTexture(gl, raw.TEXTURE_2D);
 
     this.program = new Program(gl, {
       vertex: PBR_VERT,
@@ -105,8 +118,32 @@ export class Viewer {
         uExposure: { value: 1 },
         uEnvSpin: { value: 0 },
         uDebug: { value: 0 },
+        uOcclusion: { value: this.occlusionTexture },
+        uOcclusionBase: { value: 0 },
+        uVertexCount: { value: 1 },
+        uOcclusionOn: { value: 0 },
       },
       cullFace: null,
+    });
+
+    this.groundProgram = new Program(gl, {
+      vertex: GROUND_VERT,
+      fragment: GROUND_FRAG,
+      uniforms: {
+        uShadow: { value: this.shadowTexture },
+        uSpecular: { value: this.specularTexture },
+        uMaxLod: { value: 5 },
+        uExposure: { value: 1 },
+        uEnvSpin: { value: 0 },
+        uBackground: { value: BACKGROUND },
+        // a dark matte table: enough to pool a little light, not enough to compete
+        uAlbedo: { value: [0.04, 0.04, 0.043] },
+        uCentre: { value: [0, 0, 0] },
+        uRadius: { value: 1 },
+        uDebug: { value: 0 },
+      },
+      // seen from underneath, the table should not hide the piece
+      cullFace: raw.BACK,
     });
 
 
@@ -137,9 +174,13 @@ export class Viewer {
     adoptTexture(this.specularTexture, env.specular);
     adoptTexture(this.brdfTexture, env.brdf);
     this.program.uniforms.uMaxLod.value = env.mips - 1;
+    this.groundProgram.uniforms.uMaxLod.value = env.mips - 1;
 
     this.environment = env;
     previous?.dispose();
+
+    // shadows follow the light
+    if (this.groups.length) this.bakeOcclusion(this.groups);
     return env;
   }
 
@@ -156,15 +197,19 @@ export class Viewer {
 
   setExposure(v: number) {
     this.program.uniforms.uExposure.value = v;
+    this.groundProgram.uniforms.uExposure.value = v;
   }
 
   setEnvSpin(radians: number) {
     this.program.uniforms.uEnvSpin.value = radians;
+    this.groundProgram.uniforms.uEnvSpin.value = radians;
+    if (this.groups.length) this.bakeOcclusion(this.groups);
   }
 
-  /** 0 shaded, 1 normals, 2 uv, 3 roughness. */
+  /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion. */
   setDebug(mode: number) {
     this.program.uniforms.uDebug.value = mode;
+    this.groundProgram.uniforms.uDebug.value = mode;
   }
 
   /** One draw call per distinct part mesh, however many times it is placed. */
@@ -176,7 +221,10 @@ export class Viewer {
     }
     this.meshes.length = 0;
 
-    for (const g of groups) {
+    this.groups = groups;
+    this.bakeOcclusion(groups);
+
+    groups.forEach((g, k) => {
       const count = g.matrices.length / 16;
       const col = (k: number) => {
         const out = new Float32Array(count * 4);
@@ -200,29 +248,78 @@ export class Viewer {
       });
       const mesh = new Mesh(gl, { geometry, program: this.program });
 
-      // Per-group material without a program per material: ogl applies uniforms
-      // during program.use(), which runs after this hook.
-      if (g.metal || g.finish) {
-        const metal = metals[g.metal ?? ''] ?? null;
-        const finish = finishes[g.finish ?? ''] ?? null;
-        mesh.onBeforeRender(() => {
-          const u = this.program.uniforms;
-          const m = metal ?? this.metal;
-          const f = finish ?? this.finish;
-          u.uF0.value = m.f0;
-          u.uRoughness.value = f.roughness;
-          u.uAnisotropy.value = f.anisotropy;
-          u.uHammer.value = f.hammer;
-          u.uPatina.value = f.patina;
-          u.uPatinaColour.value = patinaColour(m.name);
-        });
-      } else {
-        mesh.onBeforeRender(() => this.setMaterial(this.metal.name, this.finish.name));
-      }
+      // Per-group material and occlusion slice without a program per group: ogl
+      // applies uniforms during program.use(), which runs after this hook.
+      const metal = metals[g.metal ?? ''] ?? null;
+      const finish = finishes[g.finish ?? ''] ?? null;
+      const base = this.occlusion?.bases[k] ?? 0;
+      const vertexCount = g.mesh.positions.length / 3;
+      mesh.onBeforeRender(() => {
+        const u = this.program.uniforms;
+        const m = metal ?? this.metal;
+        const f = finish ?? this.finish;
+        u.uF0.value = m.f0;
+        u.uRoughness.value = f.roughness;
+        u.uAnisotropy.value = f.anisotropy;
+        u.uHammer.value = f.hammer;
+        u.uPatina.value = f.patina;
+        u.uPatinaColour.value = patinaColour(m.name);
+        u.uOcclusionBase.value = base;
+        u.uVertexCount.value = vertexCount;
+      });
 
       mesh.setParent(this.scene);
       this.meshes.push(mesh);
+    });
+  }
+
+  /**
+   * Visibility for every placed vertex, and a shadow for the table under them.
+   * Runs on the GPU in a few tens of milliseconds, so it simply happens whenever
+   * the scene does.
+   */
+  private bakeOcclusion(groups: InstanceGroup[]) {
+    const gl = this.renderer.gl;
+    const raw = gl as unknown as WebGL2RenderingContext;
+
+    const previous = this.occlusion;
+    const env = this.environment;
+    let occ: Occlusion | null = null;
+    try {
+      // Directions are drawn from the sharp background cube at a small mip: the
+      // distribution only has to know where the light is, not its exact edges.
+      occ = bakeOcclusion(raw, groups, {
+        env: env && env.highDynamicRange
+          ? { cube: env.background, size: env.size, lod: 2, spin: this.program.uniforms.uEnvSpin.value as number }
+          : undefined,
+      });
+    } catch (err) {
+      console.error('occlusion bake failed; rendering unoccluded', err);
     }
+    invalidateRendererState(this.renderer, raw);
+    this.occlusion = occ;
+    previous?.dispose();
+
+    if (this.groundMesh) {
+      this.groundMesh.setParent(null);
+      this.groundMesh.geometry.remove();
+      this.groundMesh = null;
+    }
+
+    if (!occ) {
+      this.program.uniforms.uOcclusionOn.value = 0;
+      return;
+    }
+
+    adoptTexture(this.occlusionTexture, occ.lookup);
+    adoptTexture(this.shadowTexture, occ.ground);
+    this.program.uniforms.uOcclusionOn.value = 1;
+
+    this.groundProgram.uniforms.uCentre.value = occ.groundCentre;
+    this.groundProgram.uniforms.uRadius.value = occ.groundRadius;
+    this.groundMesh = new Mesh(gl, { geometry: unitDisc(gl, 96), program: this.groundProgram });
+    this.groundMesh.renderOrder = -1;
+    this.groundMesh.setParent(this.scene);
   }
 
   setMesh(data: PartMesh) {
@@ -317,7 +414,28 @@ export class Viewer {
     window.removeEventListener('resize', this.resize);
     this.controls.remove();
     this.environment?.dispose();
+    this.occlusion?.dispose();
   }
+}
+
+/** A unit disc in the XY plane, wound counter-clockwise seen from +Z. */
+function unitDisc(gl: ConstructorParameters<typeof Geometry>[0], segments: number): Geometry {
+  const position = new Float32Array((segments + 1) * 3);
+  for (let i = 0; i < segments; i++) {
+    const a = (i / segments) * Math.PI * 2;
+    position[(i + 1) * 3] = Math.cos(a);
+    position[(i + 1) * 3 + 1] = Math.sin(a);
+  }
+  const index = new Uint16Array(segments * 3);
+  for (let i = 0; i < segments; i++) {
+    index[i * 3] = 0;
+    index[i * 3 + 1] = i + 1;
+    index[i * 3 + 2] = ((i + 1) % segments) + 1;
+  }
+  return new Geometry(gl, {
+    position: { size: 3, data: position },
+    index: { data: index },
+  });
 }
 
 /**

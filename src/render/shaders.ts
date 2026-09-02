@@ -14,14 +14,27 @@ uniform mat4 projectionMatrix;
 uniform mat4 viewMatrix;
 uniform vec3 cameraPosition;
 
+// Baked visibility, one texel per (placement, vertex): R = sum(vis * w), G = sum(w).
+uniform sampler2D uOcclusion;
+uniform int uOcclusionBase;
+uniform int uVertexCount;
+uniform float uOcclusionOn;
+
 out vec3 vNormal;
 out vec3 vWorld;
 out vec3 vObject;
 out vec2 vUv;
+out float vAo;
 
 void main() {
   mat4 inst = mat4(im0, im1, im2, im3);
   vec4 world = inst * vec4(position, 1.0);
+
+  int index = uOcclusionBase + gl_InstanceID * uVertexCount + gl_VertexID;
+  int width = textureSize(uOcclusion, 0).x;
+  vec2 acc = texelFetch(uOcclusion, ivec2(index % width, index / width), 0).rg;
+  float ao = acc.g > 0.0 ? clamp(acc.r / acc.g, 0.0, 1.0) : 1.0;
+  vAo = mix(1.0, ao, uOcclusionOn);
 
   // placements are rigid with uniform scale, mirrors included, so rotating the
   // authored normal and renormalising is exact — no inverse transpose needed
@@ -40,6 +53,7 @@ in vec3 vNormal;
 in vec3 vWorld;
 in vec3 vObject;
 in vec2 vUv;
+in float vAo;
 
 out vec4 fragColor;
 
@@ -57,7 +71,7 @@ uniform vec3 uPatinaColour;
 uniform vec3 cameraPosition;
 uniform float uExposure;
 uniform float uEnvSpin;
-uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf
+uniform float uDebug;   // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion
 
 const float PI = 3.14159265359;
 
@@ -172,18 +186,27 @@ void main() {
   vec3 prefiltered = textureLod(uSpecular, spin * r, roughness * uMaxLod).rgb;
   vec2 ab = texture(uBrdf, vec2(ndv, roughness)).rg;
 
-  vec3 specular = prefiltered * (f0 * ab.x + ab.y);
+  // Baked visibility darkens the diffuse term directly. A mirror is a different
+  // matter: what it reflects is whatever lies along one ray, not the hemisphere
+  // average, so a polished surface keeps more of its reflection than its ambient
+  // occlusion suggests. Lagarde's fit bends the term toward that as roughness
+  // falls and the view grazes.
+  float ao = vAo;
+  float specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
+
+  vec3 specular = prefiltered * (f0 * ab.x + ab.y) * specOcclusion;
 
   // Metal has no diffuse lobe, so this contributes only where patina has taken
   // hold. The roughest prefiltered mip stands in for an irradiance map — close
   // enough for a dull oxide, and it saves a whole convolution pass.
   vec3 irradiance = textureLod(uSpecular, spin * n, uMaxLod).rgb;
-  vec3 diffuse = irradiance * uPatinaColour * (1.0 - metallic);
+  vec3 diffuse = irradiance * uPatinaColour * (1.0 - metallic) * ao;
 
   vec3 colour = specular + diffuse;
   colour *= uExposure;
 
-  if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
+  if (uDebug > 5.5) colour = vec3(ao);
+  else if (uDebug > 4.5) colour = vec3(ab, 0.0) * 4.0;
   else if (uDebug > 3.5) colour = prefiltered;
   else if (uDebug > 2.5) colour = vec3(roughness);
   else if (uDebug > 1.5) colour = vec3(vUv, 0.35);
@@ -191,4 +214,64 @@ void main() {
   else colour = tonemap(colour);
 
   fragColor = vec4(pow(colour, vec3(1.0 / 2.2)), 1.0);
+}`;
+
+/**
+ * The ground: a matte disc under the piece, lit by the environment's downward
+ * irradiance and darkened by the baked shadow, fading into the page colour at its
+ * rim so it never reads as an object in its own right.
+ */
+export const GROUND_VERT = `#version 300 es
+in vec3 position;   // unit disc in the XY plane
+
+uniform mat4 viewMatrix;
+uniform mat4 projectionMatrix;
+uniform vec3 uCentre;
+uniform float uRadius;
+
+out vec2 vLocal;
+
+void main() {
+  vLocal = position.xy;
+  vec3 world = uCentre + vec3(position.xy * uRadius, 0.0);
+  gl_Position = projectionMatrix * viewMatrix * vec4(world, 1.0);
+}`;
+
+export const GROUND_FRAG = `#version 300 es
+precision highp float;
+
+in vec2 vLocal;
+out vec4 fragColor;
+
+uniform sampler2D uShadow;
+uniform samplerCube uSpecular;
+uniform float uMaxLod;
+uniform float uExposure;
+uniform float uEnvSpin;
+uniform vec3 uBackground;
+uniform vec3 uAlbedo;
+uniform float uDebug;
+
+mat3 spinZ(float a) {
+  float c = cos(a), s = sin(a);
+  return mat3(c, -s, 0.0, s, c, 0.0, 0.0, 0.0, 1.0);
+}
+
+vec3 tonemap(vec3 x) {
+  const float a = 2.51, b = 0.03, c = 2.43, d = 0.59, e = 0.14;
+  return clamp((x * (a * x + b)) / (x * (c * x + d) + e), 0.0, 1.0);
+}
+
+void main() {
+  vec2 acc = texture(uShadow, vLocal * 0.5 + 0.5).rg;
+  float ao = acc.g > 0.0 ? clamp(acc.r / acc.g, 0.0, 1.0) : 1.0;
+
+  vec3 irradiance = textureLod(uSpecular, spinZ(uEnvSpin) * vec3(0.0, 0.0, 1.0), uMaxLod).rgb;
+  vec3 lit = pow(tonemap(irradiance * uAlbedo * ao * uExposure), vec3(1.0 / 2.2));
+
+  float fade = 1.0 - smoothstep(0.3, 1.0, length(vLocal));
+  vec3 colour = mix(uBackground, lit, fade);
+  if (uDebug > 5.5) colour = vec3(ao);
+  else if (uDebug > 0.5) colour = uBackground;
+  fragColor = vec4(colour, 1.0);
 }`;

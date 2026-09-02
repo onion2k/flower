@@ -20,6 +20,8 @@ export interface Environment {
   specular: WebGLTexture;
   /** Split-sum lookup: scale and bias for F0, by (NdotV, roughness). */
   brdf: WebGLTexture;
+  /** Face size of mip 0. */
+  size: number;
   mips: number;
   /** False when the context cannot render to float, so the bake ran at 8 bits. */
   highDynamicRange: boolean;
@@ -359,6 +361,7 @@ export function bakeEnvironment(
     background,
     specular,
     brdf,
+    size,
     mips,
     highDynamicRange: canFloat,
     dispose() {
