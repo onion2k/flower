@@ -26,6 +26,8 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 256;
 const FRAME_SIZE = 96;
 
+export type Quality = 'draft' | 'final';
+
 export interface InstanceGroup {
   mesh: PartMesh;
   matrices: Float32Array;
@@ -101,6 +103,8 @@ export class Viewer {
   private traceBuffers: GPUBuffer[] = [];
   private traceParams: GPUBuffer;
   private reflections = false;
+  /** The reflection scene is built only when something will trace against it. */
+  private traceStale = true;
   private traceInstances = 0;
   private traceEps = 0.01;
   /** Reflection bounces this frame: two at rest, one while the camera moves. */
@@ -338,9 +342,23 @@ export class Viewer {
   /** Trace reflected rays against the other parts, or reflect only the room. */
   setReflections(on: boolean) {
     this.reflections = on;
+    if (on && this.traceStale && this.groups.length) this.buildTrace();
     this.writeTraceParams();
     this.dirty = true;
   }
+
+  /**
+   * Draft is for working: a lighter shadow bake and fewer pixels, so an edit
+   * shows in a fraction of a second on a dense form. Final is for looking.
+   */
+  setQuality(q: Quality) {
+    if (q === this.quality) return;
+    this.quality = q;
+    this.resize();
+    if (this.groups.length && this.envSamples) this.bakeQueued = true;
+    this.dirty = true;
+  }
+  private quality: Quality = 'draft';
 
   /** One draw per distinct part mesh, however many times it is placed. */
   setInstanced(groups: InstanceGroup[]) {
@@ -372,7 +390,10 @@ export class Viewer {
       entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: 80 } }],
     });
 
-    this.buildTrace();
+    // the reflection scene costs a hierarchy build and five uploads; without
+    // reflections the shader needs only a bind group that resolves
+    if (this.reflections) this.buildTrace();
+    else this.buildTrace(true);
     if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
@@ -390,16 +411,21 @@ export class Viewer {
     return bases;
   }
 
-  /** The scene as the reflection tracer sees it: hierarchies per mesh, a list of placements. */
-  private buildTrace() {
+  /**
+   * The scene as the reflection tracer sees it: hierarchies per mesh, a list
+   * of placements. `empty` binds a scene with nothing in it, for when nothing
+   * traces; the real one is built the moment reflections are switched on.
+   */
+  private buildTrace(empty = false) {
     const { device } = this.ctx;
     for (const b of this.traceBuffers) b.destroy();
     this.traceBuffers = [];
+    this.traceStale = empty;
 
     const bases = this.occlusionBases();
     const instances: SceneInstance[] = [];
     let radius = 0;
-    this.groups.forEach((g, k) => {
+    if (!empty) this.groups.forEach((g, k) => {
       for (let i = 0; i < g.instanceCount; i++) {
         instances.push({
           mesh: g.source.mesh,
@@ -523,13 +549,16 @@ export class Viewer {
    * frame time; 3.2 million is a little under a retina laptop screen.
    */
   static readonly PIXEL_BUDGET = 3_200_000;
+  /** Draft keeps to a laptop screen's worth of pixels at 1x. */
+  static readonly DRAFT_PIXEL_BUDGET = 1_800_000;
 
   private resize = () => {
     // Render at device resolution up to a budget, then scale down. A retina
     // canvas the size of a laptop screen sits just inside it; a tall pane or a
     // large monitor comes down to the same cost rather than crawling.
     const cw = Math.max(1, this.host.clientWidth), ch = Math.max(1, this.host.clientHeight);
-    const dpr = Math.min(window.devicePixelRatio, 2, Math.sqrt(Viewer.PIXEL_BUDGET / (cw * ch))) * this.renderScale * this.autoScale;
+    const budget = this.quality === 'final' ? Viewer.PIXEL_BUDGET : Viewer.DRAFT_PIXEL_BUDGET;
+    const dpr = Math.min(window.devicePixelRatio, 2, Math.sqrt(budget / (cw * ch))) * this.renderScale * this.autoScale;
     const w = Math.max(1, Math.floor(cw * dpr));
     const h = Math.max(1, Math.floor(ch * dpr));
     this.ctx.canvas.width = w;
@@ -695,7 +724,13 @@ export class Viewer {
         mesh: g.source.mesh, matrices: g.source.matrices,
         position: g.position, normal: g.normal, instance: g.instance, index: g.index,
       })),
-      { env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined },
+      {
+        env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined,
+        // a quarter of the directions at half the resolution is a tenth of the
+        // work, and soft shadows on a working model do not need more
+        directions: this.quality === 'final' ? 256 : 64,
+        depthSize: this.quality === 'final' ? 2048 : 1024,
+      },
     );
     this.occlusion = occ;
     // a superseded bake stops at its next chunk; this one redraws as each chunk lands

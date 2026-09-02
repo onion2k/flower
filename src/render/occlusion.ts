@@ -421,9 +421,10 @@ export function bakeOcclusion(ctx: GpuContext, groups: OcclusionGroup[], opts: O
   };
 
   occlusion.done = (async () => {
-    for (let first = 0; first < directions && !cancelled; first += chunk) {
+    // the first chunk is small, so a shadowed frame is on screen before the rest lands
+    for (let first = 0, size = Math.min(chunk, 8); first < directions && !cancelled; first += size, size = chunk) {
       const encoder = device.createCommandEncoder({ label: 'occlusion bake' });
-      for (let i = first; i < Math.min(first + chunk, directions); i++) encodeDirection(encoder, i);
+      for (let i = first; i < Math.min(first + size, directions); i++) encodeDirection(encoder, i);
       device.queue.submit([encoder.finish()]);
       // one chunk in flight at a time: the queue never holds more than a budget's worth
       await device.queue.onSubmittedWorkDone();

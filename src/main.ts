@@ -9,7 +9,7 @@ import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
 import type { Anchor } from './parts/types';
 import type { Mesh } from './mesh/types';
-import { Viewer } from './render/viewer';
+import { Viewer, type Quality } from './render/viewer';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
@@ -44,6 +44,7 @@ const state = {
   showAnchors: false,
   reflections: false,
   renderScale: 1,
+  quality: 'draft' as Quality,
 };
 
 let framed = '';
@@ -190,6 +191,10 @@ const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brd
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
 viewSet.append(
+  picker('quality', ['draft', 'final'], state.quality, (v) => {
+    state.quality = v as Quality;
+    viewer.setQuality(state.quality);
+  }),
   picker('debug', DEBUG_MODES, 'shaded', (v) => {
     state.debug = DEBUG_MODES.indexOf(v);
     viewer.setDebug(state.debug);
@@ -285,7 +290,19 @@ function build() {
 let connectivityToken = 0;
 const connectivityWorker = new Worker(new URL('./assembly/connectivity.worker.ts', import.meta.url), { type: 'module' });
 let onConnectivity: ((r: ConnectivityResponse) => void) | null = null;
-connectivityWorker.addEventListener('message', (e: MessageEvent<ConnectivityResponse>) => onConnectivity?.(e.data));
+// one request in flight; while it runs, only the latest edit waits behind it
+let connectivityBusy = false;
+let connectivityPending: ConnectivityRequest | null = null;
+connectivityWorker.addEventListener('message', (e: MessageEvent<ConnectivityResponse>) => {
+  connectivityBusy = false;
+  if (connectivityPending) {
+    const next = connectivityPending;
+    connectivityPending = null;
+    connectivityBusy = true;
+    connectivityWorker.postMessage(next);
+  }
+  onConnectivity?.(e.data);
+});
 
 function requestConnectivity(assembly: Assembly, token: number) {
   const meshes: Mesh[] = [];
@@ -304,6 +321,8 @@ function requestConnectivity(assembly: Assembly, token: number) {
     meshes: meshes.map((m) => ({ positions: m.positions, indices: m.indices })),
     placements,
   };
+  if (connectivityBusy) { connectivityPending = request; return; }
+  connectivityBusy = true;
   connectivityWorker.postMessage(request);
 }
 
