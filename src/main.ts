@@ -211,11 +211,11 @@ controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string }>();
+  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string }>();
   for (const p of assembly.placements) {
     let group = byMesh.get(p.part.mesh);
     if (!group) {
-      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish };
+      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel };
       byMesh.set(p.part.mesh, group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -225,6 +225,7 @@ function groupByMesh(assembly: Assembly) {
     matrices: new Float32Array(g.matrices),
     metal: g.metal,
     finish: g.finish,
+    enamel: g.enamel,
   }));
 }
 

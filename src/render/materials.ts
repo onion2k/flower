@@ -85,3 +85,41 @@ export function patinaColour(metal: string): [number, number, number] {
       return [0.2, 0.17, 0.14];
   }
 }
+
+/**
+ * Enamels: glass fired onto the metal. Each is a body colour in linear RGB and
+ * an opacity. A transparent enamel — the jeweller's word is translucent — shows
+ * the metal beneath it, which is why it is fired over a bright foil and glows;
+ * an opaque one is a coloured skin with a glassy surface. Colours are the
+ * trade's names, chosen by eye rather than measured.
+ */
+export interface Enamel {
+  name: string;
+  /**
+   * Linear RGB. For a transparent enamel this is what comes back out of the
+   * glass after the round trip to the metal beneath, so it runs bright; for an
+   * opaque one it is the body's own albedo.
+   */
+  colour: [number, number, number];
+  /** Fraction scattered by the body: 1 hides the metal entirely, low values glow with it. */
+  opacity: number;
+}
+
+export const enamels: Record<string, Enamel> = {
+  // transparent: fired over polished metal, and lit by its reflection
+  cobalt: { name: 'cobalt', colour: [0.04, 0.10, 0.70], opacity: 0.30 },
+  peacock: { name: 'peacock', colour: [0.03, 0.42, 0.48], opacity: 0.32 },
+  emerald: { name: 'emerald', colour: [0.04, 0.46, 0.13], opacity: 0.32 },
+  ruby: { name: 'ruby', colour: [0.66, 0.03, 0.06], opacity: 0.32 },
+  amber: { name: 'amber', colour: [0.82, 0.46, 0.07], opacity: 0.28 },
+  // opaque: a coloured skin under a glassy surface
+  turquoise: { name: 'turquoise', colour: [0.06, 0.48, 0.48], opacity: 0.95 },
+  moss: { name: 'moss', colour: [0.12, 0.26, 0.07], opacity: 0.92 },
+  coral: { name: 'coral', colour: [0.80, 0.24, 0.16], opacity: 0.95 },
+  lilac: { name: 'lilac', colour: [0.50, 0.38, 0.62], opacity: 0.95 },
+  ivory: { name: 'ivory', colour: [0.84, 0.76, 0.58], opacity: 0.98 },
+  white: { name: 'white', colour: [0.88, 0.88, 0.86], opacity: 0.98 },
+  black: { name: 'black', colour: [0.012, 0.012, 0.014], opacity: 1 },
+};
+
+export const enamelNames = Object.keys(enamels);

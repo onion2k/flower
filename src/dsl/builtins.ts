@@ -1,6 +1,7 @@
 import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
+import { enamels, enamelNames } from '../render/materials';
 import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
 import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
@@ -201,12 +202,22 @@ const CURVES = {
 /** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
 const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
 
+/** An enamel colour by its trade name, checked here so a misspelling names the choices. */
+function enamelName(a: Args): string | undefined {
+  const name = a.word('enamel', -1, '');
+  if (!name) return undefined;
+  if (!enamels[name]) {
+    throw new DslError(`there is no enamel called "${name}" — try ${enamelNames.join(', ')}`, a.span);
+  }
+  return name;
+}
+
 /** Parts. Each call makes real geometry, so results are cached by the caller. */
 const PARTS = {
   leaf: define(
     ['length', 'width', 'thickness', 'shape', 'bevel', 'piercings', 'veins', 'teeth',
      'toothDepth', 'lobes', 'spread', 'droop', 'cup', 'keel', 'curl', 'curlBias', 'twist',
-     'relief', 'reliefVeins', 'boss', 'segments'],
+     'relief', 'reliefVeins', 'boss', 'segments', 'enamel'],
     (a) => leaf({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -229,6 +240,7 @@ const PARTS = {
       reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 64),
+      enamel: enamelName(a),
     })),
 
   wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
@@ -314,7 +326,7 @@ const PARTS = {
   petal: define(
     ['length', 'width', 'thickness', 'shape', 'edge', 'edgeDepth', 'edgeCount', 'bevel',
      'veins', 'cup', 'keel', 'curl', 'curlBias', 'twist', 'ruffle', 'ruffleWaves',
-     'droop', 'relief', 'reliefVeins', 'boss', 'segments'],
+     'droop', 'relief', 'reliefVeins', 'boss', 'segments', 'enamel'],
     (a) => petal({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -337,6 +349,7 @@ const PARTS = {
       reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 72),
+      enamel: enamelName(a),
     })),
 
   stem: define(['path', 'radius', 'tip', 'nodes', 'swell', 'from', 'to', 'sections', 'sides'], (a) =>

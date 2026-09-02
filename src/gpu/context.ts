@@ -36,7 +36,8 @@ export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: G
   const context = canvas.getContext('webgpu');
   if (!context) throw new Error('WebGPU: no canvas context');
   const format = navigator.gpu.getPreferredCanvasFormat();
-  context.configure({ device, format, alphaMode: 'opaque' });
+  // COPY_SRC so a frame can be read back for a capture; it costs nothing otherwise
+  context.configure({ device, format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   return { device, queue: device.queue, canvas, context, format };
 }
 

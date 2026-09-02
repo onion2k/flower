@@ -24,6 +24,11 @@ export interface ExtrudeOptions {
    * frays the highlight. Left undefined the cap is triangulated as before.
    */
   maxCapEdge?: number;
+  /**
+   * Enamel the top face. The cap inside the bevel is the cell; the bevel and
+   * the walls stay metal, which is the rim a fired enamel always has.
+   */
+  enamelTop?: boolean;
 }
 
 /**
@@ -44,6 +49,7 @@ export function extrude(opts: ExtrudeOptions): Mesh {
 
   const mb = new MeshBuilder();
   const span = boundsOf(opts.outline);
+  let topCap: [number, number] = [0, 0];
 
   // --- caps, from the inset outline so the bevel has somewhere to sit ---
   for (const top of [true, false]) {
@@ -71,6 +77,7 @@ export function extrude(opts: ExtrudeOptions): Mesh {
       const x = points[i], y = points[i + 1];
       mb.vertex(x, y, z, 0, 0, nz, (x - span.minX) / span.width, (y - span.minY) / span.height);
     }
+    if (top) topCap = [base, mb.vertexCount];
     for (let i = 0; i < tri.length; i += 3) {
       // Every triangle is kept, including the occasional sliver earcut leaves
       // where an outline is nearly collinear. They are invisible, but they carry
@@ -95,7 +102,12 @@ export function extrude(opts: ExtrudeOptions): Mesh {
     wall(mb, loop, inner, -inner, outward, perimeter);
   }
 
-  return mb.build();
+  const mesh = mb.build();
+  if (opts.enamelTop) {
+    mesh.enamel = new Float32Array(mesh.positions.length / 3);
+    mesh.enamel.fill(1, topCap[0], topCap[1]);
+  }
+  return mesh;
 }
 
 /**

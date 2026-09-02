@@ -67,6 +67,8 @@ struct Material {
   _pad2: u32,
   baseColour: vec3f,
   orient: f32,
+  enamelColour: vec3f,
+  enamelOpacity: f32,   // 0: no enamel on this part
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -85,7 +87,8 @@ struct MaterialRec {
   patinaColour: vec3f, _pad: f32,
   occlusionBase: u32, vertexCount: u32, model: u32, _pad2: u32,
   baseColour: vec3f, orient: f32,
-  _fill: array<vec4f, 11>,
+  enamelColour: vec3f, enamelOpacity: f32,
+  _fill: array<vec4f, 10>,
 };
 struct Trace { instanceCount: u32, enabled: u32, eps: f32, bounces: u32 };
 @group(2) @binding(0) var<storage, read> nodes: array<Node>;
@@ -105,6 +108,7 @@ struct VsIn {
   @location(5) im1: vec4f,
   @location(6) im2: vec4f,
   @location(7) im3: vec4f,
+  @location(8) enamel: f32,
   @builtin(vertex_index) vid: u32,
   @builtin(instance_index) iid: u32,
 };
@@ -118,6 +122,7 @@ struct VsOut {
   @location(3) uv: vec2f,
   @location(4) ao: f32,
   @location(5) wear: f32,
+  @location(6) enamel: f32,
 };
 
 @vertex fn vsMain(in: VsIn) -> VsOut {
@@ -139,6 +144,7 @@ struct VsOut {
   out.uv = in.uv;
   out.ao = mix(1.0, ao, frame.occlusionOn);
   out.wear = in.wear;
+  out.enamel = in.enamel * select(0.0, 1.0, material.enamelOpacity > 0.0);
   return out;
 }
 
@@ -163,6 +169,8 @@ fn planish(p: vec3f) -> f32 {
 // ---- ray tracing against the placed parts ----
 
 const NO_HIT: u32 = 0xffffffffu;
+/** Fired enamel is glass with a faint orange peel: glossy, never a mirror. */
+const ENAMEL_ROUGHNESS: f32 = 0.09;
 const MAX_BLAS_STEPS: u32 = 512u;
 const MAX_TLAS_STEPS: u32 = 256u;
 
@@ -479,12 +487,15 @@ fn occlusionAt(index: u32) -> f32 {
   // prefiltered environment as roughness rises, since a single ray cannot stand
   // in for a wide lobe. On a miss the environment is used unoccluded: the
   // visibility along that ray is now known, not estimated.
+  // Enamel is glass, so it traces too: its lobe is always narrow.
+  var traced = prefiltered;
+  var traceWeight = 0.0;
+  let enamelled = in.enamel > 0.001;
   if (trace.enabled != 0u) {
-    let traceWeight = 1.0 - smoothstep(0.12, 0.45, roughness);
+    traceWeight = 1.0 - smoothstep(0.12, 0.45, select(roughness, ENAMEL_ROUGHNESS, enamelled));
     if (traceWeight > 0.001) {
       let origin = in.world + n * trace.eps;
       let hit = traceRay(origin, r, trace.eps);
-      var traced = prefiltered;
       if (hit.inst != NO_HIT) { traced = shadeHit(origin, hit, r); }
       reflected = mix(reflected, traced, traceWeight);
     }
@@ -503,6 +514,29 @@ fn occlusionAt(index: u32) -> f32 {
     let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
     let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
     colour = (specular + diffuse) * frame.exposure;
+
+    // Enamel: a glass skin over the metal, on the vertices that carry it. The
+    // surface is a smooth dielectric with its own narrow highlight; under it
+    // the body scatters light in its colour, and a transparent enamel lets the
+    // metal's reflection back out through the colour, which is the glow of a
+    // translucent enamel over a bright foil.
+    if (enamelled) {
+      let eRough = ENAMEL_ROUGHNESS;
+      let eLod = max(eRough * frame.maxLod, footLod);
+      let ePrefiltered = textureSampleLevel(envSpecular, linearSampler, spin * reflect(-v, n), eLod).rgb;
+      let eOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * eRough - 1.0)) - 1.0 + ao, 0.0, 1.0);
+      let eReflected = mix(ePrefiltered * eOcclusion, traced, traceWeight);
+      let eAb = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, eRough), 0.0).rg;
+      let eFresnel = vec3f(0.04) * eAb.x + eAb.y;
+      let eSpecular = eReflected * eFresnel;
+      // the metal's own highlight, seen through the glass and dyed by it: the
+      // colour is the round trip's transmittance, in and back out. A little
+      // stays even in an opaque enamel, where the layer is thin at the rim.
+      let through = specular * material.enamelColour * (1.0 - material.enamelOpacity);
+      let body = irradiance * material.enamelColour * ao * material.enamelOpacity;
+      let enamel = (eSpecular + (1.0 - eFresnel) * (body + through)) * frame.exposure;
+      colour = mix(colour, enamel, in.enamel);
+    }
   }
 
   let d = frame.debug;

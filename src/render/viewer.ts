@@ -15,7 +15,7 @@ import type { Anchor } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
 import { computeWear } from '../mesh/wear';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
-import { finishes, metals, patinaColour, type Finish, type Metal } from './materials';
+import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap } from './post';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
@@ -24,6 +24,8 @@ import { buildScene, type SceneInstance } from './bvh';
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
+/** Bytes of each material record that the shader reads. */
+const MATERIAL_SIZE = 96;
 const FRAME_SIZE = 96;
 
 export type Quality = 'draft' | 'final';
@@ -34,6 +36,8 @@ export interface InstanceGroup {
   /** Per-group overrides, so a rosette can have silver leaves and gold studs. */
   metal?: string;
   finish?: string;
+  /** Enamel colour on the vertices the mesh marks as enamelled. */
+  enamel?: string;
 }
 
 interface GpuGroup {
@@ -42,6 +46,8 @@ interface GpuGroup {
   normal: GPUBuffer;
   uv: GPUBuffer;
   wear: GPUBuffer;
+  /** 0 or 1 per vertex: where the enamel is. Zeros on a plain part. */
+  enamel: GPUBuffer;
   instance: GPUBuffer;
   index: GPUBuffer;
   indexCount: number;
@@ -236,6 +242,7 @@ export class Viewer {
           { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] },
           { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32' }] },
           instanceLayout,
+          { arrayStride: 4, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32' }] },
         ],
       },
       fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
@@ -364,7 +371,7 @@ export class Viewer {
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
     for (const g of this.groups) {
-      for (const b of [g.position, g.normal, g.uv, g.wear, g.instance, g.index]) b.destroy();
+      for (const b of [g.position, g.normal, g.uv, g.wear, g.enamel, g.instance, g.index]) b.destroy();
     }
     const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
     this.groups = groups.map((g) => ({
@@ -373,6 +380,7 @@ export class Viewer {
       normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
       uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
       wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
+      enamel: bufferFrom(device, g.mesh.enamel ?? new Float32Array(g.mesh.positions.length / 3), GPUBufferUsage.VERTEX, 'enamel'),
       instance: bufferFrom(device, g.matrices, shared, 'instances'),
       index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
       indexCount: g.mesh.indices.length,
@@ -387,7 +395,7 @@ export class Viewer {
     });
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
-      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: 80 } }],
+      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } }],
     });
 
     // the reflection scene costs a hierarchy build and five uploads; without
@@ -630,6 +638,7 @@ export class Viewer {
         pass.setVertexBuffer(2, g.uv);
         pass.setVertexBuffer(3, g.wear);
         pass.setVertexBuffer(4, g.instance);
+        pass.setVertexBuffer(5, g.enamel);
         pass.setIndexBuffer(g.index, 'uint32');
         pass.drawIndexed(g.indexCount, g.instanceCount);
       });
@@ -693,7 +702,7 @@ export class Viewer {
     });
   }
 
-  /** Per-group material and occlusion slice, 80 bytes at a 256-byte stride. */
+  /** Per-group material and occlusion slice, 96 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
@@ -707,6 +716,8 @@ export class Viewer {
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
       u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : 0, 0], o + 12);
       f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
+      const e = enamels[g.source.enamel ?? ''];
+      f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

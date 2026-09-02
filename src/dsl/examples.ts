@@ -25,6 +25,32 @@ form rosette {
 }
 `,
 
+  cloisonne: `# An enamelled brooch: emerald leaves and ruby petals round a pearl
+# Enamel is an option on leaves and petals: it fills the top face inside the
+# bevel and leaves the rim as metal. Transparent colours — cobalt, peacock,
+# emerald, ruby, amber — glow with the metal beneath them; turquoise, moss,
+# coral, lilac, ivory, white and black are opaque.
+material gold polished
+
+part leaf   = leaf(length: 32, width: 15, thickness: 1.1, veins: 2, boss: 2.2, cup: 20deg, enamel: emerald)
+part petal  = petal(length: 22, width: 13, thickness: 0.8, shape: round, cup: 55deg, curl: 30deg, enamel: ruby)
+part stud   = rivet(head: 3.4, height: 1.2, shank: 2.2, grip: 1.1)
+part bezel  = collar(inner: 5.6, wall: 1.3, length: 2.2) in gold satin
+part heart  = pearl(radius: 6.4, oblate: 0.08) in white pearl
+
+unit sector {
+  place leaf
+  fasten stud to leaf.boss
+}
+
+form cloisonne {
+  repeat sector around ring(8, radius: 6)
+  repeat petal around ring(6, radius: 6.5, tilt: 40deg, z: 1.2, phase: 22deg)
+  place bezel at (0, 0, 1.4)
+  place heart at (0, 0, 3.6)
+}
+`,
+
   brooch: `# A pearl brooch: the rosette's leaves round a pearl, a seed pearl on each stud
 # Pearls are the first non-metal here. They take their names from the trade —
 # white, cream, pink, grey, black, gold — and need no finish word.
