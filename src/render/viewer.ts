@@ -137,6 +137,15 @@ export class Viewer {
   private frameMs = 16;
   /** When the scale last stepped: each step reallocates the render targets, so steps are rationed. */
   private lastScaleStep = 0;
+  /**
+   * What the display itself can do, measured on the ticks we draw nothing on.
+   * Everything about pacing is judged against this rather than a number picked
+   * in advance.
+   */
+  private tickMs = 16.7;
+  private lastTickAt = 0;
+  /** Rewritten in place each frame rather than allocated. */
+  private frameData = new Float32Array(FRAME_SIZE / 4);
   /** Ask for a frame on the next tick. */
   requestRender() { this.dirty = true; }
   private renderScale = 1;
@@ -506,6 +515,9 @@ export class Viewer {
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    const tickNow = performance.now();
+    const sinceTick = tickNow - this.lastTickAt;
+    this.lastTickAt = tickNow;
     const moving = this.controls.moving;
     this.controls.update();
     this.camera.update();
@@ -515,16 +527,26 @@ export class Viewer {
       this.bakeOcclusion();
     }
     // nothing to draw when nothing has changed: the GPU idles and the page stays responsive
-    if (!this.dirty && !moving) return;
+    if (!this.dirty && !moving) {
+      // A tick we spend nothing on is the display's own cadence, and it costs
+      // nothing to measure. It is the only honest yardstick for the pacing
+      // below: a frame gap can never be shorter than the screen's own.
+      if (sinceTick > 1 && sinceTick < 250) this.tickMs = this.tickMs * 0.9 + sinceTick * 0.1;
+      return;
+    }
     this.dirty = false;
     this.frameCount++;
     this.pace(moving);
     const { device } = this.ctx;
 
-    const frame = new Float32Array(FRAME_SIZE / 4);
+    const frame = this.frameData;
     frame.set(this.camera.viewProjection, 0);
-    frame.set([...this.camera.position, this.exposure], 16);
-    frame.set([this.envSpin, this.debugMode, (this.environment?.mips ?? 1) - 1, this.occlusion ? 1 : 0], 20);
+    frame.set(this.camera.position, 16);
+    frame[19] = this.exposure;
+    frame[20] = this.envSpin;
+    frame[21] = this.debugMode;
+    frame[22] = (this.environment?.mips ?? 1) - 1;
+    frame[23] = this.occlusion ? 1 : 0;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -580,8 +602,14 @@ export class Viewer {
 
   /**
    * Time consecutive frames during interaction and move the internal scale to
-   * hold 30 a second. Measured at the tick, which is the frame rate the user
-   * feels: a slow GPU backs the ticks up just as surely as slow script would.
+   * keep up with the display.
+   *
+   * What counts as fast enough has to be the display's own cadence, not a
+   * number chosen in advance. A frame gap is floored by the screen: on a sixty
+   * hertz panel nothing is ever quicker than sixteen milliseconds, so a scale
+   * that waits for fourteen before stepping back up can only ever fall, and
+   * one slow moment leaves the piece soft for the rest of the session. Both
+   * thresholds are therefore multiples of what the idle ticks report.
    */
   private pace(moving: boolean) {
     const now = performance.now();
@@ -592,15 +620,17 @@ export class Viewer {
     this.frameMs = this.frameMs * 0.8 + gap * 0.2;
     // a step swaps a few hundred megabytes of targets, so at most a few a second
     if (now - this.lastScaleStep < 300) return;
-    if (this.frameMs > 36 && this.autoScale > 0.5) {
+    const missing = this.tickMs * 1.5 + 6;
+    const keepingUp = this.tickMs * 1.2;
+    if (this.frameMs > missing && this.autoScale > 0.5) {
       // step by how far over budget the frame is, so a very slow frame drops straight to the floor
-      this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(33 / this.frameMs)));
-      this.frameMs = 16;
+      this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(missing / this.frameMs)));
+      this.frameMs = this.tickMs;
       this.lastScaleStep = now;
       this.resize();
-    } else if (this.frameMs < 14 && this.autoScale < 1) {
+    } else if (this.frameMs < keepingUp && this.autoScale < 1) {
       this.autoScale = Math.min(1, this.autoScale / 0.85);
-      this.frameMs = 16;
+      this.frameMs = this.tickMs;
       this.lastScaleStep = now;
       this.resize();
     }

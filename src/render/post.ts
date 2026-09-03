@@ -105,6 +105,16 @@ export class PostChain {
   private brightParams: GPUBuffer;
   private compositeParams: GPUBuffer;
 
+  // Views, made once with their textures. A render pass needs one per
+  // attachment, and making them per frame is a dozen driver objects a frame
+  // for something that only changes when the targets are rebuilt.
+  private msaaView: GPUTextureView | null = null;
+  private resolveView: GPUTextureView | null = null;
+  private depthView: GPUTextureView | null = null;
+  private bloomViews: GPUTextureView[] = [];
+  /** Rewritten in place each frame rather than allocated. */
+  private compositeData = new Float32Array(4);
+
   private brightBind: GPUBindGroup | null = null;
   private downBinds: GPUBindGroup[] = [];
   private upBinds: GPUBindGroup[] = [];
@@ -170,6 +180,11 @@ export class PostChain {
       }));
     }
 
+    this.msaaView = this.msaa.createView();
+    this.resolveView = this.resolve.createView();
+    this.depthView = this.depth.createView();
+    this.bloomViews = this.bloom.map((t) => t.createView());
+
     const view = (t: GPUTexture) => t.createView();
     this.brightBind = device.createBindGroup({
       layout: this.brightPipe.getBindGroupLayout(0),
@@ -208,14 +223,14 @@ export class PostChain {
   scenePass(clear: [number, number, number]): GPURenderPassDescriptor {
     return {
       colorAttachments: [{
-        view: this.msaa!.createView(),
-        resolveTarget: this.resolve!.createView(),
+        view: this.msaaView!,
+        resolveTarget: this.resolveView!,
         clearValue: { r: clear[0], g: clear[1], b: clear[2], a: 1 },
         loadOp: 'clear',
         storeOp: 'store',
       }],
       depthStencilAttachment: {
-        view: this.depth!.createView(),
+        view: this.depthView!,
         depthClearValue: 1,
         depthLoadOp: 'clear',
         depthStoreOp: 'discard',
@@ -226,7 +241,9 @@ export class PostChain {
   /** Bloom the resolved scene and composite it onto the canvas. */
   finish(encoder: GPUCommandEncoder, canvasView: GPUTextureView, opts: PostOptions) {
     const { device } = this.ctx;
-    device.queue.writeBuffer(this.compositeParams, 0, new Float32Array([opts.raw ? 0 : opts.bloom, opts.raw ? 1 : 0, 0, 0]));
+    this.compositeData[0] = opts.raw ? 0 : opts.bloom;
+    this.compositeData[1] = opts.raw ? 1 : 0;
+    device.queue.writeBuffer(this.compositeParams, 0, this.compositeData);
 
     const draw = (pipeline: GPURenderPipeline, bind: GPUBindGroup, target: GPUTextureView, load: GPULoadOp) => {
       const pass = encoder.beginRenderPass({
@@ -239,13 +256,13 @@ export class PostChain {
     };
 
     if (!opts.raw) {
-      draw(this.brightPipe, this.brightBind!, this.bloom[0].createView(), 'clear');
+      draw(this.brightPipe, this.brightBind!, this.bloomViews[0], 'clear');
       for (let i = 1; i < BLOOM_LEVELS; i++) {
-        draw(this.downPipe, this.downBinds[i - 1], this.bloom[i].createView(), 'clear');
+        draw(this.downPipe, this.downBinds[i - 1], this.bloomViews[i], 'clear');
       }
       let k = 0;
       for (let i = BLOOM_LEVELS - 2; i >= 0; i--) {
-        draw(this.upPipe, this.upBinds[k++], this.bloom[i].createView(), 'load');
+        draw(this.upPipe, this.upBinds[k++], this.bloomViews[i], 'load');
       }
     }
     draw(this.compositePipe, this.compositeBind!, canvasView, 'clear');
@@ -257,7 +274,9 @@ export class PostChain {
     this.resolve?.destroy();
     for (const t of this.bloom) t.destroy();
     this.msaa = this.depth = this.resolve = null;
+    this.msaaView = this.resolveView = this.depthView = null;
     this.bloom = [];
+    this.bloomViews = [];
   }
 
   dispose() {
