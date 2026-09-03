@@ -42,14 +42,13 @@ const state = {
   envSpin: 0,
   debug: 0,
   showAnchors: false,
-  reflections: false,
   renderScale: 1,
   quality: 'draft' as Quality,
 };
 
 let framed = '';
 
-function toggle(label: string, key: 'showAnchors' | 'reflections', onChange: () => void) {
+function toggle(label: string, key: 'showAnchors', onChange: () => void) {
   const wrap = document.createElement('label');
   wrap.className = 'check';
   const input = document.createElement('input');
@@ -203,7 +202,6 @@ viewSet.append(
     state.renderScale = v;
     viewer.setRenderScale(v);
   }),
-  toggle('reflections', 'reflections', () => viewer.setReflections(state.reflections)),
   toggle('show anchors', 'showAnchors', () => build()),
 );
 

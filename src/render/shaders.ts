@@ -72,33 +72,6 @@ struct Material {
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
-// --- the scene, for tracing reflected rays ---
-struct Node { bmin: vec3f, left: u32, bmax: vec3f, count: u32 };
-struct Inst {
-  worldToObject: mat4x4f,
-  objectToWorld: mat4x4f,
-  bmin: vec3f, nodeOffset: u32,
-  bmax: vec3f, triOffset: u32,
-  group: u32, occlusionBase: u32, _p: vec2u,
-};
-struct MaterialRec {
-  f0: vec3f, roughness: f32,
-  anisotropy: f32, hammer: f32, patina: f32, wear: f32,
-  patinaColour: vec3f, _pad: f32,
-  occlusionBase: u32, vertexCount: u32, model: u32, _pad2: u32,
-  baseColour: vec3f, orient: f32,
-  enamelColour: vec3f, enamelOpacity: f32,
-  _fill: array<vec4f, 10>,
-};
-struct Trace { instanceCount: u32, enabled: u32, eps: f32, bounces: u32 };
-@group(2) @binding(0) var<storage, read> nodes: array<Node>;
-@group(2) @binding(1) var<storage, read> tris: array<vec4f>;      // 6 per triangle: v0 v1 v2 n0 n1 n2
-@group(2) @binding(2) var<storage, read> triIdx: array<vec4u>;    // i0 i1 i2, for the occlusion lookup
-@group(2) @binding(3) var<storage, read> instances: array<Inst>;
-@group(2) @binding(4) var<storage, read> materials: array<MaterialRec>;
-@group(2) @binding(5) var<uniform> trace: Trace;
-@group(2) @binding(6) var<storage, read> tlas: array<Node>;
-
 struct VsIn {
   @location(0) position: vec3f,
   @location(1) normal: vec3f,
@@ -166,132 +139,8 @@ fn planish(p: vec3f) -> f32 {
   return sin(p.x * 1.7 + p.y * 0.9) * sin(p.y * 1.9 - p.z * 1.1) * sin(p.z * 1.6 + p.x * 0.8);
 }
 
-// ---- ray tracing against the placed parts ----
-
-const NO_HIT: u32 = 0xffffffffu;
 /** Fired enamel is glass with a faint orange peel: glossy, never a mirror. */
 const ENAMEL_ROUGHNESS: f32 = 0.09;
-const MAX_BLAS_STEPS: u32 = 512u;
-const MAX_TLAS_STEPS: u32 = 256u;
-
-/** Slab test: the entry distance, or a large number when the ray misses or the box is beyond tMax. */
-fn rayBox(o: vec3f, invD: vec3f, bmin: vec3f, bmax: vec3f, tMax: f32) -> f32 {
-  let t0 = (bmin - o) * invD;
-  let t1 = (bmax - o) * invD;
-  let tn = min(t0, t1);
-  let tf = max(t0, t1);
-  let tEnter = max(max(tn.x, tn.y), max(tn.z, 0.0));
-  let tExit = min(min(tf.x, tf.y), min(tf.z, tMax));
-  return select(1e30, tEnter, tExit >= tEnter);
-}
-
-/** Möller–Trumbore: (t, u, v), with t < 0 for a miss. */
-fn rayTri(o: vec3f, d: vec3f, v0: vec3f, v1: vec3f, v2: vec3f) -> vec3f {
-  let e1 = v1 - v0;
-  let e2 = v2 - v0;
-  let p = cross(d, e2);
-  let det = dot(e1, p);
-  if (abs(det) < 1e-9) { return vec3f(-1.0); }
-  let inv = 1.0 / det;
-  let s = o - v0;
-  let u = dot(s, p) * inv;
-  if (u < 0.0 || u > 1.0) { return vec3f(-1.0); }
-  let q = cross(s, e1);
-  let v = dot(d, q) * inv;
-  if (v < 0.0 || u + v > 1.0) { return vec3f(-1.0); }
-  return vec3f(dot(e2, q) * inv, u, v);
-}
-
-struct Hit { t: f32, inst: u32, tri: u32, u: f32, v: f32 };
-
-fn safeDir(d: vec3f) -> vec3f {
-  return select(d, vec3f(1e-6), abs(d) < vec3f(1e-6));
-}
-
-/** Walk one mesh's hierarchy in its own space, front to back, tightening the hit. */
-fn traceInstance(i: u32, o: vec3f, d: vec3f, tMin: f32, hit: ptr<function, Hit>) {
-  let inst = instances[i];
-  let oo = (inst.worldToObject * vec4f(o, 1.0)).xyz;
-  let od = safeDir((inst.worldToObject * vec4f(d, 0.0)).xyz);
-  let oinv = 1.0 / od;
-  var stack: array<u32, 20>;
-  var sp = 1u;
-  stack[0] = inst.nodeOffset;
-  // a ceiling on the walk: no tree here needs it, but a command buffer that
-  // runs on is a lost device, and this keeps the worst case bounded
-  var steps = 0u;
-  while (sp > 0u && steps < MAX_BLAS_STEPS) {
-    sp--;
-    steps++;
-    let node = nodes[stack[sp]];
-    if ((node.count & 0x80000000u) != 0u) {
-      let li = inst.nodeOffset + node.left;
-      let ri = inst.nodeOffset + (node.count & 0x7fffffffu);
-      let ln = nodes[li];
-      let rn = nodes[ri];
-      var tl = rayBox(oo, oinv, ln.bmin, ln.bmax, (*hit).t);
-      var tr = rayBox(oo, oinv, rn.bmin, rn.bmax, (*hit).t);
-      var near = li; var far = ri;
-      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
-      if (sp + 2u <= 20u) {
-        if (tr < (*hit).t) { stack[sp] = far; sp++; }
-        if (tl < (*hit).t) { stack[sp] = near; sp++; }
-      }
-      continue;
-    }
-    let first = inst.triOffset + node.left;
-    for (var k = 0u; k < node.count; k++) {
-      let b = (first + k) * 6u;
-      let r = rayTri(oo, od, tris[b].xyz, tris[b + 1u].xyz, tris[b + 2u].xyz);
-      if (r.x > tMin && r.x < (*hit).t) {
-        (*hit).t = r.x; (*hit).inst = i; (*hit).tri = first + k; (*hit).u = r.y; (*hit).v = r.z;
-      }
-    }
-  }
-}
-
-/**
- * Closest hit along a world-space ray. The hierarchy over placements finds the
- * few this ray can touch, nearest first; each takes the ray into its mesh's
- * space and walks that mesh's tree. Directions are never renormalised after a
- * transform, so t stays in world units and the nearest hit is the nearest hit.
- */
-fn traceRay(o: vec3f, dIn: vec3f, tMin: f32) -> Hit {
-  var hit: Hit;
-  hit.t = 1e30;
-  hit.inst = NO_HIT;
-  if (trace.instanceCount == 0u) { return hit; }
-  let d = safeDir(dIn);
-  let invD = 1.0 / d;
-  var stack: array<u32, 16>;
-  var sp = 1u;
-  stack[0] = 0u;
-  var steps = 0u;
-  while (sp > 0u && steps < MAX_TLAS_STEPS) {
-    sp--;
-    steps++;
-    let node = tlas[stack[sp]];
-    if ((node.count & 0x80000000u) != 0u) {
-      let li = node.left;
-      let ri = node.count & 0x7fffffffu;
-      let ln = tlas[li];
-      let rn = tlas[ri];
-      var tl = rayBox(o, invD, ln.bmin, ln.bmax, hit.t);
-      var tr = rayBox(o, invD, rn.bmin, rn.bmax, hit.t);
-      var near = li; var far = ri;
-      if (tr < tl) { near = ri; far = li; let tt = tl; tl = tr; tr = tt; }
-      if (sp + 2u <= 16u) {
-        if (tr < hit.t) { stack[sp] = far; sp++; }
-        if (tl < hit.t) { stack[sp] = near; sp++; }
-      }
-      continue;
-    }
-    for (var k = 0u; k < node.count; k++) {
-      traceInstance(node.left + k, o, d, tMin, &hit);
-    }
-  }
-  return hit;
-}
 
 /**
  * Nacre: light gets under the surface and comes back out diffused, so the
@@ -316,86 +165,6 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   // multiple scattering loses some light on every pass through the plates:
   // nacre returns about half of what falls on it, not all of it
   return base * (scattered + irrBack * rim) * ao * 0.55;
-}
-
-struct Surface { n: vec3f, ao: f32, m: MaterialRec };
-
-/** Normal, occlusion and material at a hit, facing the ray. */
-fn surfaceAt(hit: Hit, d: vec3f) -> Surface {
-  let inst = instances[hit.inst];
-  let b = hit.tri * 6u;
-  let w0 = 1.0 - hit.u - hit.v;
-  let nObj = tris[b + 3u].xyz * w0 + tris[b + 4u].xyz * hit.u + tris[b + 5u].xyz * hit.v;
-  var n = normalize((inst.objectToWorld * vec4f(nObj, 0.0)).xyz);
-  if (dot(n, d) > 0.0) { n = -n; }
-  let idx = triIdx[hit.tri];
-  let base = inst.occlusionBase;
-  var s: Surface;
-  s.n = n;
-  s.ao = occlusionAt(base + idx.x) * w0 + occlusionAt(base + idx.y) * hit.u + occlusionAt(base + idx.z) * hit.v;
-  s.m = materials[inst.group];
-  return s;
-}
-
-/** Lighting at a surface given what its reflection ray sees. */
-fn shadeSurface(s: Surface, d: vec3f, reflected: vec3f) -> vec3f {
-  let v = -d;
-  let ndv = clamp(dot(s.n, v), 0.001, 1.0);
-  let spin = spinZ(frame.envSpin);
-  if (s.m.model == 1u) {
-    let roughness = max(s.m.roughness, 0.18);
-    let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
-    let fresnel = s.m.f0 * ab.x + ab.y;
-    return nacreBody(s.n, v, ndv, s.m.baseColour, s.ao) * (1.0 - fresnel) + reflected * fresnel * orientTint(ndv, s.m.orient);
-  }
-  let roughness = clamp(s.m.roughness, 0.03, 1.0);
-  let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
-  let specOcclusion = clamp(pow(ndv + s.ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + s.ao, 0.0, 1.0);
-  let specular = reflected * (s.m.f0 * ab.x + ab.y) * specOcclusion;
-  let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * s.n, frame.maxLod).rgb;
-  let diffuse = irradiance * s.m.patinaColour * s.m.patina * 0.5 * s.ao;
-  return specular + diffuse;
-}
-
-fn envAt(dir: vec3f, roughness: f32) -> vec3f {
-  return textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * dir, roughness * frame.maxLod).rgb;
-}
-
-/** The last bounce: what this surface reflects is the environment. */
-fn shadeHit2(hit: Hit, d: vec3f) -> vec3f {
-  let s = surfaceAt(hit, d);
-  let r = reflect(d, s.n);
-  return shadeSurface(s, d, envAt(r, select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u)));
-}
-
-/**
- * Shade the point a reflected ray landed on, through that surface's own
- * material, so a rose-gold rivet reflected in a gold leaf still reads as rose
- * gold. Two bounces: this surface's reflection is traced once more, which is
- * what lights the deep folds of a cup, where a petal reflects a petal that
- * reflects the room.
- */
-fn shadeHit(o: vec3f, hit: Hit, d: vec3f) -> vec3f {
-  let s = surfaceAt(hit, d);
-  let p = o + d * hit.t;
-  let r = reflect(d, s.n);
-  let roughness = select(s.m.roughness, max(s.m.roughness, 0.18), s.m.model == 1u);
-  var reflected = envAt(r, roughness);
-  // the second bounce is dropped while the camera moves: it is the costlier
-  // half of the trace and the least visible in motion
-  if (roughness < 0.45 && trace.bounces > 1u) {
-    let hit2 = traceRay(p + s.n * trace.eps, r, trace.eps);
-    if (hit2.inst != NO_HIT) {
-      reflected = mix(reflected, shadeHit2(hit2, r), 1.0 - smoothstep(0.12, 0.45, roughness));
-    }
-  }
-  return shadeSurface(s, d, reflected);
-}
-
-fn occlusionAt(index: u32) -> f32 {
-  let r = f32(occlusion[2u * index]);
-  let g = f32(occlusion[2u * index + 1u]);
-  return select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
 }
 
 @fragment fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
@@ -482,24 +251,7 @@ fn occlusionAt(index: u32) -> f32 {
   let specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
   var reflected = prefiltered * specOcclusion;
 
-  // Inter-reflection: a polished surface reflects its neighbours, not just the
-  // room. One mirror ray per pixel, which is exact for a mirror and blurs to the
-  // prefiltered environment as roughness rises, since a single ray cannot stand
-  // in for a wide lobe. On a miss the environment is used unoccluded: the
-  // visibility along that ray is now known, not estimated.
-  // Enamel is glass, so it traces too: its lobe is always narrow.
-  var traced = prefiltered;
-  var traceWeight = 0.0;
   let enamelled = in.enamel > 0.001;
-  if (trace.enabled != 0u) {
-    traceWeight = 1.0 - smoothstep(0.12, 0.45, select(roughness, ENAMEL_ROUGHNESS, enamelled));
-    if (traceWeight > 0.001) {
-      let origin = in.world + n * trace.eps;
-      let hit = traceRay(origin, r, trace.eps);
-      if (hit.inst != NO_HIT) { traced = shadeHit(origin, hit, r); }
-      reflected = mix(reflected, traced, traceWeight);
-    }
-  }
 
   var colour: vec3f;
   if (material.model == 1u) {
@@ -525,7 +277,7 @@ fn occlusionAt(index: u32) -> f32 {
       let eLod = max(eRough * frame.maxLod, footLod);
       let ePrefiltered = textureSampleLevel(envSpecular, linearSampler, spin * reflect(-v, n), eLod).rgb;
       let eOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * eRough - 1.0)) - 1.0 + ao, 0.0, 1.0);
-      let eReflected = mix(ePrefiltered * eOcclusion, traced, traceWeight);
+      let eReflected = ePrefiltered * eOcclusion;
       let eAb = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, eRough), 0.0).rg;
       let eFresnel = vec3f(0.04) * eAb.x + eAb.y;
       let eSpecular = eReflected * eFresnel;
@@ -592,9 +344,10 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
 `;
 
 /**
- * Depth only, ahead of the scene pass. Tracing a reflected ray is the most
- * expensive thing a fragment does, and a rose is forty petals deep: without a
- * prepass most of that work is done for surfaces a nearer petal then covers.
+ * Depth only, ahead of the scene pass. The scene's fragment shader is not
+ * cheap — noise for patina and wear, a planished normal — and a rose is forty
+ * petals deep: without a prepass most of that work is done for surfaces a
+ * nearer petal then covers.
  */
 export const PREPASS_WGSL = `
 ${FRAME_STRUCT}

@@ -19,7 +19,6 @@ import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from
 import { bakeOcclusion, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap } from './post';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
-import { buildScene, type SceneInstance } from './bvh';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
@@ -104,17 +103,6 @@ export class Viewer {
   private materialBuffer: GPUBuffer | null = null;
   private materialBind: GPUBindGroup | null = null;
 
-  private traceLayout: GPUBindGroupLayout;
-  private traceBind: GPUBindGroup | null = null;
-  private traceBuffers: GPUBuffer[] = [];
-  private traceParams: GPUBuffer;
-  private reflections = false;
-  /** The reflection scene is built only when something will trace against it. */
-  private traceStale = true;
-  private traceInstances = 0;
-  private traceEps = 0.01;
-  /** Reflection bounces this frame: two at rest, one while the camera moves. */
-  private bounces = 2;
   /** An occlusion bake asked for since the last frame; coalesced so a dragged slider bakes once a frame, not once an event. */
   private bakeQueued = false;
 
@@ -198,13 +186,6 @@ export class Viewer {
       ],
     });
 
-    const ro = (binding: number): GPUBindGroupLayoutEntry =>
-      ({ binding, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } });
-    this.traceLayout = device.createBindGroupLayout({
-      label: 'trace',
-      entries: [ro(0), ro(1), ro(2), ro(3), ro(4), { binding: 5, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform' } }, ro(6)],
-    });
-    this.traceParams = device.createBuffer({ label: 'trace params', size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     const target: GPUColorTargetState = { format: this.post.colourFormat };
     const multisample = { count: this.post.sampleCount };
@@ -233,7 +214,7 @@ export class Viewer {
     const pbr = shader(device, PBR_WGSL, 'pbr');
     this.pbrPipeline = device.createRenderPipeline({
       label: 'pbr',
-      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout, this.traceLayout] }),
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout] }),
       vertex: {
         module: pbr, entryPoint: 'vsMain',
         buffers: [
@@ -346,14 +327,6 @@ export class Viewer {
   /** 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear. */
   setDebug(mode: number) { this.debugMode = mode; this.dirty = true; }
 
-  /** Trace reflected rays against the other parts, or reflect only the room. */
-  setReflections(on: boolean) {
-    this.reflections = on;
-    if (on && this.traceStale && this.groups.length) this.buildTrace();
-    this.writeTraceParams();
-    this.dirty = true;
-  }
-
   /**
    * Draft is for working: a lighter shadow bake and fewer pixels, so an edit
    * shows in a fraction of a second on a dense form. Final is for looking.
@@ -391,17 +364,13 @@ export class Viewer {
     this.materialBuffer?.destroy();
     this.materialBuffer = device.createBuffer({
       label: 'materials', size: Math.max(1, this.groups.length) * MATERIAL_STRIDE,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
       entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } }],
     });
 
-    // the reflection scene costs a hierarchy build and five uploads; without
-    // reflections the shader needs only a bind group that resolves
-    if (this.reflections) this.buildTrace();
-    else this.buildTrace(true);
     if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
@@ -417,71 +386,6 @@ export class Viewer {
       total += g.vertexCount * g.instanceCount;
     }
     return bases;
-  }
-
-  /**
-   * The scene as the reflection tracer sees it: hierarchies per mesh, a list
-   * of placements. `empty` binds a scene with nothing in it, for when nothing
-   * traces; the real one is built the moment reflections are switched on.
-   */
-  private buildTrace(empty = false) {
-    const { device } = this.ctx;
-    for (const b of this.traceBuffers) b.destroy();
-    this.traceBuffers = [];
-    this.traceStale = empty;
-
-    const bases = this.occlusionBases();
-    const instances: SceneInstance[] = [];
-    let radius = 0;
-    if (!empty) this.groups.forEach((g, k) => {
-      for (let i = 0; i < g.instanceCount; i++) {
-        instances.push({
-          mesh: g.source.mesh,
-          matrix: g.source.matrices.subarray(i * 16, i * 16 + 16),
-          group: k,
-          occlusionBase: bases[k] + i * g.vertexCount,
-        });
-      }
-      const b = g.source.mesh;
-      for (let i = 0; i < b.positions.length; i += 3) {
-        radius = Math.max(radius, Math.abs(b.positions[i]), Math.abs(b.positions[i + 1]), Math.abs(b.positions[i + 2]));
-      }
-    });
-    const scene = buildScene(instances);
-    this.traceInstances = scene.instanceCount;
-    // a ray starts a hair off its surface: enough to clear the triangle it
-    // left, small against the thinnest sheet in the piece
-    this.traceEps = Math.max(1e-3, radius * 4e-4);
-
-    const storage = GPUBufferUsage.STORAGE;
-    const nodes = bufferFrom(device, new Uint8Array(scene.nodes), storage, 'bvh nodes');
-    const tris = bufferFrom(device, scene.tris, storage, 'bvh triangles');
-    const triIdx = bufferFrom(device, scene.triIdx, storage, 'bvh indices');
-    const inst = bufferFrom(device, new Uint8Array(scene.instances), storage, 'bvh instances');
-    const tlas = bufferFrom(device, new Uint8Array(scene.tlas), storage, 'bvh tlas');
-    this.traceBuffers = [nodes, tris, triIdx, inst, tlas];
-    this.traceBind = device.createBindGroup({
-      label: 'trace',
-      layout: this.traceLayout,
-      entries: [
-        { binding: 0, resource: { buffer: nodes } },
-        { binding: 1, resource: { buffer: tris } },
-        { binding: 2, resource: { buffer: triIdx } },
-        { binding: 3, resource: { buffer: inst } },
-        { binding: 4, resource: { buffer: this.materialBuffer! } },
-        { binding: 5, resource: { buffer: this.traceParams } },
-        { binding: 6, resource: { buffer: tlas } },
-      ],
-    });
-    this.writeTraceParams();
-  }
-
-  private writeTraceParams() {
-    const data = new ArrayBuffer(16);
-    new Uint32Array(data).set([this.traceInstances, this.reflections ? 1 : 0], 0);
-    new Float32Array(data).set([this.traceEps], 2);
-    new Uint32Array(data).set([this.bounces], 3);
-    this.ctx.device.queue.writeBuffer(this.traceParams, 0, data);
   }
 
   setMesh(data: PartMesh) {
@@ -586,13 +490,6 @@ export class Viewer {
       this.bakeQueued = false;
       this.bakeOcclusion();
     }
-    // the second bounce is the costlier half of a traced frame; it waits for the camera to settle
-    const bounces = moving ? 1 : 2;
-    if (bounces !== this.bounces) {
-      this.bounces = bounces;
-      this.writeTraceParams();
-      this.dirty = true;
-    }
     // nothing to draw when nothing has changed: the GPU idles and the page stays responsive
     if (!this.dirty && !moving) return;
     this.dirty = false;
@@ -628,9 +525,8 @@ export class Viewer {
       pass.drawIndexed(this.discCount);
     }
 
-    if (this.groups.length && this.materialBind && this.traceBind) {
+    if (this.groups.length && this.materialBind) {
       pass.setPipeline(this.pbrPipeline);
-      pass.setBindGroup(2, this.traceBind);
       this.groups.forEach((g, k) => {
         pass.setBindGroup(1, this.materialBind!, [k * MATERIAL_STRIDE]);
         pass.setVertexBuffer(0, g.position);
