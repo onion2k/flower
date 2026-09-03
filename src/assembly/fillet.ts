@@ -37,6 +37,11 @@ export function solderFillet(
   anchorName: string,
   cache: FilletCache,
 ): Placement | null {
+  // Solder wets metal. A stone sits in its setting and a pearl is cemented on
+  // its peg, and a meniscus round either would be a claim about the making of
+  // the piece that is not true.
+  if (placed.part.solderable === false || owner.part.solderable === false) return null;
+
   const ownerAnchor = owner.part.anchors.find((a) => a.name === target.name);
   const partAnchor = placed.part.anchors.find((a) => a.name === anchorName);
   if (!ownerAnchor || !partAnchor) return null;

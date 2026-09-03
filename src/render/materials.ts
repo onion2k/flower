@@ -13,12 +13,18 @@ export interface Metal {
   f0: [number, number, number];
   /** True where the value comes from measured data rather than judgement. */
   measured: boolean;
-  /** Shading model: metal by default; nacre for pearls. */
-  model?: 'nacre';
+  /** Shading model: metal by default; nacre for pearls, gem for cut stones. */
+  model?: 'nacre' | 'gem';
   /** Body colour, for materials that have one. Linear RGB. */
   colour?: [number, number, number];
   /** Strength of the iridescent sheen, for nacre. */
   orient?: number;
+  /** Index of refraction, for a gem. It sets both the sheen and how hard the stone bends light. */
+  ior?: number;
+  /** How far the stone pulls the colours apart — the trade calls it fire. */
+  dispersion?: number;
+  /** How readily it throws a flash as it turns. */
+  sparkle?: number;
 }
 
 export const metals: Record<string, Metal> = {
@@ -39,6 +45,25 @@ export const metals: Record<string, Metal> = {
   'grey pearl': { name: 'grey pearl', f0: [0.046, 0.046, 0.046], measured: false, model: 'nacre', colour: [0.42, 0.42, 0.44], orient: 0.14 },
   'black pearl': { name: 'black pearl', f0: [0.05, 0.05, 0.05], measured: false, model: 'nacre', colour: [0.07, 0.08, 0.09], orient: 0.22 },
   'gold pearl': { name: 'gold pearl', f0: [0.046, 0.046, 0.046], measured: false, model: 'nacre', colour: [0.85, 0.66, 0.36], orient: 0.10 },
+
+  // Cut stones. The index of refraction and the dispersion are the published
+  // figures for each species and do real work in the shader: the first sets how
+  // much of the surface is mirror, the second how far the stone splits what it
+  // swallows. `colour` is what survives a trip through a stone of ordinary
+  // size, judged by eye rather than measured — a real absorption would have to
+  // know how far the light travelled.
+  diamond: { name: 'diamond', f0: [0.172, 0.172, 0.172], measured: true, model: 'gem', colour: [0.97, 0.97, 0.98], ior: 2.417, dispersion: 0.044, sparkle: 1.0 },
+  ruby: { name: 'ruby', f0: [0.077, 0.077, 0.077], measured: true, model: 'gem', colour: [0.72, 0.05, 0.10], ior: 1.77, dispersion: 0.018, sparkle: 0.7 },
+  sapphire: { name: 'sapphire', f0: [0.077, 0.077, 0.077], measured: true, model: 'gem', colour: [0.05, 0.13, 0.62], ior: 1.77, dispersion: 0.018, sparkle: 0.7 },
+  emerald: { name: 'emerald', f0: [0.051, 0.051, 0.051], measured: true, model: 'gem', colour: [0.06, 0.55, 0.24], ior: 1.58, dispersion: 0.014, sparkle: 0.45 },
+  amethyst: { name: 'amethyst', f0: [0.045, 0.045, 0.045], measured: true, model: 'gem', colour: [0.42, 0.20, 0.62], ior: 1.54, dispersion: 0.013, sparkle: 0.6 },
+  aquamarine: { name: 'aquamarine', f0: [0.051, 0.051, 0.051], measured: true, model: 'gem', colour: [0.42, 0.78, 0.82], ior: 1.58, dispersion: 0.014, sparkle: 0.6 },
+  topaz: { name: 'topaz', f0: [0.056, 0.056, 0.056], measured: true, model: 'gem', colour: [0.90, 0.62, 0.18], ior: 1.62, dispersion: 0.014, sparkle: 0.65 },
+  garnet: { name: 'garnet', f0: [0.079, 0.079, 0.079], measured: true, model: 'gem', colour: [0.52, 0.06, 0.05], ior: 1.79, dispersion: 0.024, sparkle: 0.7 },
+  peridot: { name: 'peridot', f0: [0.060, 0.060, 0.060], measured: true, model: 'gem', colour: [0.52, 0.72, 0.10], ior: 1.65, dispersion: 0.020, sparkle: 0.6 },
+  citrine: { name: 'citrine', f0: [0.046, 0.046, 0.046], measured: true, model: 'gem', colour: [0.88, 0.60, 0.10], ior: 1.55, dispersion: 0.013, sparkle: 0.6 },
+  onyx: { name: 'onyx', f0: [0.046, 0.046, 0.046], measured: false, model: 'gem', colour: [0.02, 0.02, 0.025], ior: 1.55, dispersion: 0.010, sparkle: 0.3 },
+  moonstone: { name: 'moonstone', f0: [0.043, 0.043, 0.043], measured: false, model: 'gem', colour: [0.80, 0.84, 0.88], ior: 1.52, dispersion: 0.012, sparkle: 0.35 },
 };
 
 export interface Finish {
@@ -70,6 +95,7 @@ export const finishes: Record<string, Finish> = {
 /** Metals proper, for the picker: pearls are chosen per part in a sketch. */
 export const metalNames = Object.keys(metals).filter((n) => !metals[n].model);
 export const pearlNames = Object.keys(metals).filter((n) => metals[n].model === 'nacre');
+export const gemNames = Object.keys(metals).filter((n) => metals[n].model === 'gem');
 export const finishNames = Object.keys(finishes);
 
 /** Oxide colour for the patinated fraction, per metal family. */

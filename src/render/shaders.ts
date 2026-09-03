@@ -78,6 +78,11 @@ struct Material {
   reliefDroop: f32,
   veinF0: vec3f,        // wires along the veins of an enamelled face
   veinOn: f32,
+  // a cut stone
+  gemIor: f32,
+  gemDispersion: f32,
+  gemSparkle: f32,
+  _pad4: f32,
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -108,6 +113,9 @@ struct VsOut {
   // which cap, and the flat plate's coordinates there; linear in uv, so exact
   @location(7) cap: f32,
   @location(8) plate: vec2f,
+  // the part's own up and across, in world space: which way a stone is standing
+  @location(9) axis: vec3f,
+  @location(10) side: vec3f,
 };
 
 @vertex fn vsMain(in: VsIn) -> VsOut {
@@ -132,6 +140,9 @@ struct VsOut {
   out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
   out.cap = in.face.y;
   out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
+  let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
+  out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
+  out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
   return out;
 }
 
@@ -261,6 +272,76 @@ fn veinWire(x: f32, y: f32) -> f32 {
   return sdf;
 }
 
+/**
+ * A single bounce cannot pick up the colour a real path does, so the spread
+ * across the channels is exaggerated to stand in for a dozen of them.
+ */
+const FIRE_GAIN: f32 = 6.0;
+
+/**
+ * What a crown gives back. The rest leaks out of the pavilion and is lost,
+ * which is the difference between a stone and a mirror, and the reason a
+ * badly cut one looks like a window.
+ */
+const CROWN_RETURN: f32 = 0.7;
+
+/** Pavilion mains on a brilliant, and near enough for everything else. */
+const PAVILION_FACETS: f32 = 8.0;
+
+/**
+ * What comes back out of a cut stone.
+ *
+ * Nothing is traced. What sells a gem is not what lies behind it but what it
+ * does with the light in front: a ray bends on the way in, runs down to the
+ * pavilion, bounces twice off it and leaves through the crown — so the room
+ * arrives at the eye folded and multiplied, which is what a brilliant shows.
+ * Bending each channel by a slightly different amount splits it into colour on
+ * the way, which is the fire.
+ */
+fn gemInterior(v: vec3f, n: vec3f, axis: vec3f, lateral: vec3f, ior: f32, dispersion: f32) -> vec3f {
+  let spin = spinZ(frame.envSpin);
+  // A pavilion meets the girdle at about forty degrees, and it takes two of
+  // those facets to turn the light round: the first sends the ray across the
+  // stone, the second sends it back up and out. Both are built here from the
+  // stone's own axis and the pavilion facet the light is given, so every part
+  // of the crown ends up looking somewhere different — which is the whole
+  // reason a cut stone is alive rather than a lump of glass.
+  let slope = 0.755;   // cosine of the pavilion angle
+  let reach = 0.656;   // and its sine
+  var out = vec3f(0.0);
+  for (var c = 0; c < 3; c++) {
+    // red bends least, blue most
+    let channel = max(ior + dispersion * FIRE_GAIN * (f32(c) - 1.0), 1.02);
+    var ray = refract(-v, n, 1.0 / channel);
+    // a facet steep enough to keep the light in gives nothing back but a mirror
+    if (dot(ray, ray) < 1e-6) { ray = reflect(-v, n); }
+    ray = reflect(ray, axis * slope + lateral * reach);
+    ray = reflect(ray, axis * slope - lateral * reach);
+    let sample = textureSampleLevel(envSpecular, linearSampler, spin * ray, 0.0).rgb;
+    out += sample * vec3f(f32(c == 0), f32(c == 1), f32(c == 2));
+  }
+  return out * CROWN_RETURN;
+}
+
+/**
+ * The flash a stone throws as it turns.
+ *
+ * Each facet answers only when its reflection happens to point a particular
+ * way — so the smallest movement of the head
+ * puts a different set of them out and another set alight. How bright the
+ * facet's own reflection is decides whether any of them answer at all, which
+ * is why a stone sparkles under a lamp and lies quiet in a shadow.
+ */
+fn gemSparkle(n: vec3f, r: vec3f, lit: f32, amount: f32) -> f32 {
+  if (amount <= 0.0 || lit <= 0.0) { return 0.0; }
+  // The facet's own normal names it. It is constant across a facet, so the
+  // whole facet answers at once — which is exactly what a facet does, and why
+  // a stone flashes rather than glitters like sand.
+  let which = floor(n * 24.0);
+  let aim = floor(r * 7.0);
+  return smoothstep(0.88, 0.99, hash13(which * 3.1 + aim * 1.9)) * lit * amount;
+}
+
 /** Planished dimpling: three crossed waves. */
 fn planish(p: vec3f) -> f32 {
   return sin(p.x * 1.7 + p.y * 0.9) * sin(p.y * 1.9 - p.z * 1.1) * sin(p.z * 1.6 + p.x * 0.8);
@@ -327,9 +408,14 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   // planishing, patina or wear: those are things done to metal
   let nacre = material.model == 1u;
   if (nacre) { roughness = max(roughness, 0.18); }
+  // a stone is polished by definition, whatever finish the sketch asked for,
+  // and nothing is hammered, patinated or worn but metal
+  let gemstone = material.model == 2u;
+  if (gemstone) { roughness = min(roughness, 0.04); }
+  let worked = !nacre && !gemstone;
 
   // --- planishing: perturb the normal by the gradient of a height field ---
-  if (material.hammer > 0.0 && !nacre) {
+  if (material.hammer > 0.0 && worked) {
     let p = in.object * 0.55;
     let eps = 0.35;
     let h0 = planish(p);
@@ -340,7 +426,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   }
 
   // --- patina: an oxide fraction that is not metal any more ---
-  if (material.patina > 0.0 && !nacre) {
+  if (material.patina > 0.0 && worked) {
     let blotch = noise3(in.object * 0.32) * 0.65 + noise3(in.object * 0.9) * 0.35;
     let mask = smoothstep(0.62 - material.patina * 0.55, 0.78 - material.patina * 0.3, blotch);
     metallic = mix(1.0, 0.0, mask * material.patina);
@@ -349,7 +435,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   }
 
   // --- wear: edges handled bright, creases left dull ---
-  let wearOn = select(material.wear, 0.0, nacre);
+  let wearOn = select(material.wear, 0.0, !worked);
   let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
   var crease = smoothstep(0.05, 0.8, -in.wear) * wearOn;
   // the grain only matters where there is a crease, and most of a surface has none
@@ -406,6 +492,26 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let tint = orientTint(ndv, material.orient);
     let body = nacreBody(n, v, ndv, material.baseColour, ao);
     colour = (body * (1.0 - fresnel) * mix(vec3f(1.0), tint, 0.3) + reflected * fresnel * tint) * frame.exposure;
+  } else if (gemstone) {
+    // a hard dielectric mirror on the facet, the folded room underneath it,
+    // and a flash where the facet catches something bright
+    let axis = normalize(in.axis);
+    let ior = max(material.gemIor, 1.05);
+    let g0 = pow((ior - 1.0) / (ior + 1.0), 2.0);
+    let mirror = reflected * (g0 * ab.x + ab.y);
+    let fresnel = g0 + (1.0 - g0) * pow(1.0 - ndv, 5.0);
+    // Which pavilion facet the light meets depends on where it crossed the
+    // crown, not only on where it was going. That is why the table of a stone
+    // is a mosaic of directions rather than one flat colour, and it is the
+    // difference between reading as a gem and reading as a bead of glass.
+    let across = normalize(in.side - axis * dot(in.side, axis));
+    let step = 6.2831853 / PAVILION_FACETS;
+    let az = (floor(atan2(in.object.y, in.object.x) / step) + 0.5) * step;
+    let lateral = across * cos(az) + cross(axis, across) * sin(az);
+    let interior = gemInterior(v, n, axis, lateral, ior, material.gemDispersion) * material.baseColour * ao;
+    let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
+    let flash = gemSparkle(n, r, lit, material.gemSparkle);
+    colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);
     // metal has no diffuse lobe, so this only shows where patina has taken hold

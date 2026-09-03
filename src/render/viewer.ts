@@ -24,7 +24,7 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 160;
+const MATERIAL_SIZE = 176;
 const FRAME_SIZE = 96;
 
 export type Quality = 'draft' | 'final';
@@ -620,7 +620,7 @@ export class Viewer {
     });
   }
 
-  /** Per-group material and occlusion slice, 160 bytes at a 256-byte stride. */
+  /** Per-group material and occlusion slice, 176 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
@@ -632,7 +632,7 @@ export class Viewer {
       const f = finishes[g.source.finish ?? ''] ?? this.finish;
       const o = (k * MATERIAL_STRIDE) / 4;
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
-      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : 0, 0], o + 12);
+      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : m.model === 'gem' ? 2 : 0, 0], o + 12);
       f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
       const e = enamels[g.source.enamel ?? ''];
       f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);
@@ -642,6 +642,7 @@ export class Viewer {
         : [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0], o + 24);
       const v = metals[g.source.veinMetal ?? ''];
       f32.set(v && e && !v.model ? [...v.f0, 1] : [0, 0, 0, 0], o + 36);
+      f32.set([m.ior ?? 1.5, m.dispersion ?? 0, m.sparkle ?? 0, 0], o + 40);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

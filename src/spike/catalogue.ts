@@ -4,6 +4,8 @@ import { bar, disc, gusset } from '../parts/panel';
 import { leaf } from '../parts/leaf';
 import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
+import { gem, type GemCut } from '../parts/gem';
+import { setting } from '../parts/setting';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -170,6 +172,23 @@ export const catalogue: Record<string, () => Part> = {
   'pod · ribbed': () => pod({ length: 18, width: 12, ribs: 8, ribDepth: 0.13 }),
 
   'bell · lobed': () => bell({ length: 13, mouth: 17, throat: 5, wall: 0.6, flare: 2.4, lobes: 5, lobeDepth: 0.2 }),
+
+  // Stones carry their own species, since a cut is not worth looking at in the
+  // panel's metal, and the mounts that hold them.
+  'gem · brilliant': stone('brilliant', 'diamond'),
+  'gem · step': stone('step', 'emerald'),
+  'gem · pear': stone('pear', 'ruby'),
+  'gem · marquise': stone('marquise', 'sapphire'),
+  'gem · rose': stone('rose', 'garnet'),
+  'gem · cabochon': stone('cabochon', 'moonstone'),
+
+  'setting · claw': () => setting({ width: 14, style: 'claw', claws: 4, height: 6 }),
+  'setting · bezel': () => setting({ width: 14, style: 'bezel', height: 5 }),
 };
+
+/** A stone of a given cut, in its own species rather than the panel's metal. */
+function stone(cut: GemCut, species: string): () => Part {
+  return () => ({ ...gem({ name: cut, cut, width: 14 }), material: { metal: species } });
+}
 
 export const catalogueNames = Object.keys(catalogue);

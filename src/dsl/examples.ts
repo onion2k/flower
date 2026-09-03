@@ -52,6 +52,39 @@ form cloisonne {
 }
 `,
 
+  cluster: `# A cluster: a brilliant held in claws, ringed by bezel-set stones
+# A stone takes its species as a material — diamond, ruby, sapphire, emerald,
+# amethyst, aquamarine, topaz, garnet, peridot, citrine, onyx, moonstone —
+# and a cut: brilliant, oval, pear, marquise, trillion, step, baguette, rose
+# or cabochon. A setting is the metal that holds one; fasten the stone to its
+# seat and the girdle comes to rest on it.
+material gold polished
+
+part leaf  = leaf(length: 24, width: 11, thickness: 1.0, boss: 2.0, cup: 18deg)
+part stud  = rivet(head: 2.8, height: 1.0, shank: 1.8, grip: 1.0)
+part mount = setting(width: 8, style: claw, claws: 6, height: 3.4)
+part stone = gem(cut: brilliant, width: 8) in diamond
+part collet = setting(width: 3.4, style: bezel, height: 1.4)
+part accentStone = gem(cut: brilliant, width: 3.4) in sapphire
+
+unit spoke {
+  place leaf
+  fasten stud to leaf.boss
+}
+
+unit accent {
+  place collet
+  fasten accentStone to collet.seat
+}
+
+form cluster {
+  repeat spoke around ring(8, radius: 5)
+  repeat accent around ring(8, radius: 10.5, phase: 22deg, z: 1.4)
+  place mount at (0, 0, 1.6)
+  fasten stone to mount.seat
+}
+`,
+
   brooch: `# A pearl brooch: the rosette's leaves round a pearl, a seed pearl on each stud
 # Pearls are the first non-metal here. They take their names from the trade —
 # white, cream, pink, grey, black, gold — and need no finish word.
