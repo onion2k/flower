@@ -37,6 +37,8 @@ export function pearl(spec: PearlSpec): Part {
     name: spec.name ?? 'pearl',
     mesh,
     bounds: meshBounds(mesh),
+    // a pearl is cemented onto its peg; there is no solder anywhere near it
+    solderable: false,
     anchors: [
       { name: 'seat', position: [0, 0, -r * squash], axis: [0, 0, -1], tangent: [1, 0, 0] },
       { name: 'crown', position: [0, 0, r * squash], axis: [0, 0, 1], tangent: [1, 0, 0] },

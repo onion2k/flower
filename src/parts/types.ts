@@ -35,6 +35,14 @@ export interface Part {
   relief?: PlateRelief;
   /** Metal of the wires set along the veins of an enamelled plate, cloisonné fashion. */
   veinMetal?: string;
+  /**
+   * Whether a join to this part is soldered. False for the things that are
+   * held rather than joined — a stone in its setting, a pearl on its post —
+   * where a fillet of solder would be a lie about how the piece is made.
+   */
+  solderable?: boolean;
+  /** Facets round a stone's pavilion, for the shader to bounce light off. */
+  pavilionFacets?: number;
 }
 
 /**

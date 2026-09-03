@@ -6,6 +6,8 @@ import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
 import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
 import { pearl } from '../parts/pearl';
+import { gem, type GemCut } from '../parts/gem';
+import { setting, type SettingStyle } from '../parts/setting';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -212,6 +214,18 @@ function enamelName(a: Args): string | undefined {
   return name;
 }
 
+/** One of a fixed set of words, named in the error when it is not. */
+function oneOf<T extends string>(a: Args, name: string, allowed: readonly T[], fallback: T): T {
+  const word = a.word(name, -1, fallback);
+  if (!allowed.includes(word as T)) {
+    throw new DslError(`there is no ${name} called "${word}" — try ${allowed.join(', ')}`, a.span);
+  }
+  return word as T;
+}
+
+const GEM_CUTS = ['brilliant', 'oval', 'pear', 'marquise', 'trillion', 'step', 'baguette', 'rose', 'cabochon'] as const;
+const SETTING_STYLES = ['claw', 'bezel'] as const;
+
 /** A metal for the vein wires of an enamelled plate; pearls are not wire. */
 function veinMetalName(a: Args): string | undefined {
   const name = a.word('veinMetal', -1, '');
@@ -252,6 +266,28 @@ const PARTS = {
       segments: a.num('segments', -1, 64),
       enamel: enamelName(a),
       veinMetal: veinMetalName(a),
+    })),
+
+  gem: define(['cut', 'width', 'length', 'depth', 'facets', 'table', 'segments'], (a) =>
+    gem({
+      cut: oneOf(a, 'cut', GEM_CUTS, 'brilliant') as GemCut,
+      width: a.num('width', 0),
+      length: a.num('length', -1, 0) || undefined,
+      depth: a.num('depth', -1, 0) || undefined,
+      facets: a.num('facets', -1, 0) || undefined,
+      table: a.num('table', -1, 0) || undefined,
+      segments: a.num('segments', -1, 40),
+    })),
+
+  setting: define(['width', 'style', 'claws', 'height', 'wall', 'grip', 'segments'], (a) =>
+    setting({
+      width: a.num('width', 0),
+      style: oneOf(a, 'style', SETTING_STYLES, 'claw') as SettingStyle,
+      claws: a.num('claws', -1, 0) || undefined,
+      height: a.num('height', -1, 0) || undefined,
+      wall: a.num('wall', -1, 0) || undefined,
+      grip: a.num('grip', -1, 0) || undefined,
+      segments: a.num('segments', -1, 32),
     })),
 
   wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
