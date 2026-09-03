@@ -53,8 +53,8 @@ form cloisonne {
 `,
 
   faberge: `# An Easter egg in the Fabergé manner: translucent enamel fired over a
-# gold body, a trellis laid over it with a stone at every crossing, and three
-# curling legs to hold the whole thing off the table.
+# gold body, a trellis laid over it on the diagonal with a stone at every
+# crossing, a pinecone finial, and three curling legs to hold it off the table.
 #
 # Cobalt is a transparent enamel, so what shines through it is the gold
 # underneath — which is the whole trick of the thing, and why the egg is gold
@@ -63,52 +63,58 @@ material gold polished
 
 part shell = egg(radius: 15, height: 19, taper: 0.34, enamel: cobalt, segments: 96)
 
-# The trellis. The ribs follow the egg's own profile and the hoops sit at the
-# heights where they cross, each a little proud of the enamel.
-part rib   = wire(path: through((5.4, 0, -17.9), (9.6, 0, -14.6), (12.2, 0, -9.5), (13.0, 0, -3.3), (12.1, 0, 3.3), (10.0, 0, 9.5), (7.05, 0, 14.6), (3.7, 0, 17.9)), radius: 0.42, tip: 1, sections: 120)
-part hoopA = wire(path: circle(radius: 12.19, z: -9.5), radius: 0.38, closed: yes, sections: 144)
-part hoopB = wire(path: circle(radius: 13.0, z: -3.3), radius: 0.38, closed: yes, sections: 144)
-part hoopC = wire(path: circle(radius: 12.13, z: 3.3), radius: 0.38, closed: yes, sections: 144)
-part hoopD = wire(path: circle(radius: 9.98, z: 9.5), radius: 0.38, closed: yes, sections: 144)
-part hoopE = wire(path: circle(radius: 7.05, z: 14.56), radius: 0.38, closed: yes, sections: 144)
+# The trellis. One strand climbs the shell at forty-five degrees to the
+# meridian; the dihedral group gives eight of them and eight mirror images
+# running the other way, so the lattice closes on itself in diamonds.
+part strand = wire(path: through((6.23, 0.00, -17.36), (7.72, 2.91, -15.86), (7.93, 6.03, -13.93), (6.97, 8.90, -11.62), (5.03, 11.17, -9.00), (2.38, 12.56, -6.14), (-0.68, 12.90, -3.11), (-3.75, 12.10, 0), (-6.43, 10.24, 3.11), (-8.32, 7.53, 6.14), (-9.15, 4.33, 9.00), (-8.76, 1.12, 11.62), (-7.24, -1.59, 13.93), (-4.89, -3.32, 15.86), (-2.19, -3.74, 17.36)), radius: 0.2, tip: 1, sections: 200, sides: 8)
 
-# A stone at every crossing. The tilt lays each one flat against the shell,
-# which stands steeper the further up it sits.
-part spark = gem(cut: brilliant, width: 1.7) in diamond
+# A stone at every crossing. Each course sits half a step round from the one
+# below, because that is where two opposite-handed helices meet.
+part spark = gem(cut: brilliant, width: 1.5) in diamond
 
-# The finial: a collar gathering the ribs, and a cabochon over it.
-part crown = collar(inner: 2.2, wall: 0.7, length: 1.8) in gold satin
-part cap   = setting(width: 4.4, style: bezel, height: 1.3)
-part jewel = gem(cut: cabochon, width: 4.4) in ruby
+# The finial: a collar gathering the strands, then a pinecone of small scales.
+part crown = collar(inner: 3.9, wall: 0.45, length: 1.3) in gold satin
+part pip   = egg(radius: 1.7, height: 3.0, taper: 0.5, segments: 28)
+part scale = petal(length: 2.0, width: 2.3, thickness: 0.28, shape: round, cup: 42deg, curl: 26deg, segments: 28)
+part nib   = bead(radius: 0.5, point: 0.6, segments: 16)
 
-# The stand: three legs off a foot ring, each carrying a leaf and a tendril.
+# The stand: three legs off a foot ring, with leaves sweeping up round the egg.
 part leg   = wire(path: through((11, 0, -34), (9, 0, -28.5), (5.6, 0, -24), (8.2, 0, -20), (7.4, 0, -16.4)), radius: 0.9, tip: 0.6, sections: 110)
 part sole  = wire(path: circle(radius: 11, z: -34), radius: 0.85, closed: yes, sections: 144)
-part frond = leaf(length: 10.5, width: 4.8, thickness: 0.6, cup: 30deg, curl: 34deg, veins: 2)
+part frond = leaf(length: 10.5, width: 5.6, thickness: 0.6, cup: 28deg, curl: 34deg, veins: 2)
+part sprig = leaf(length: 8.5, width: 4.4, thickness: 0.5, cup: 26deg, curl: 30deg)
 part curlicue = wire(path: spiral(start: 0.9, turns: 1.15, growth: 2.7), radius: 0.55, tip: 0.12, sections: 110)
 
 form faberge {
   place shell
-  repeat rib around ring(12)
-  place hoopA
-  place hoopB
-  place hoopC
-  place hoopD
-  place hoopE
+  repeat strand around dihedral(8)
 
-  repeat spark around ring(12, radius: 12.6, z: -9.5, tilt: 107deg)
-  repeat spark around ring(12, radius: 13.4, z: -3.3, tilt: 90deg)
-  repeat spark around ring(12, radius: 12.5, z: 3.3, tilt: 77deg)
-  repeat spark around ring(12, radius: 10.4, z: 9.5, tilt: 66deg)
-  repeat spark around ring(12, radius: 7.5, z: 14.56, tilt: 53deg)
+  repeat spark around ring(8, radius: 6.46, z: -17.36, tilt: 149deg)
+  repeat spark around ring(8, radius: 8.67, z: -15.68, tilt: 136deg, phase: 22.5deg)
+  repeat spark around ring(8, radius: 10.93, z: -12.78, tilt: 120deg, phase: 45deg)
+  repeat spark around ring(8, radius: 12.57, z: -8.64, tilt: 104deg, phase: 67.5deg)
+  repeat spark around ring(8, radius: 13.15, z: -3.78, tilt: 90deg, phase: 90deg)
+  repeat spark around ring(8, radius: 12.73, z: 1.13, tilt: 80deg, phase: 112.5deg)
+  repeat spark around ring(8, radius: 11.62, z: 5.61, tilt: 72deg, phase: 135deg)
+  repeat spark around ring(8, radius: 10.15, z: 9.45, tilt: 66deg, phase: 157.5deg)
+  repeat spark around ring(8, radius: 8.54, z: 12.54, tilt: 59deg, phase: 180deg)
+  repeat spark around ring(8, radius: 6.93, z: 14.90, tilt: 52deg, phase: 202.5deg)
+  repeat spark around ring(8, radius: 5.44, z: 16.58, tilt: 44deg, phase: 225deg)
 
-  place crown at (0, 0, 18.2)
-  place cap at (0, 0, 20.2)
-  fasten jewel to cap.seat
+  place crown at (0, 0, 17.5)
+  place pip at (0, 0, 20.4)
+  repeat scale around ring(8, radius: 1.35, z: 19.3, tilt: 66deg)
+  repeat scale around ring(8, radius: 1.45, z: 20.0, tilt: 58deg, phase: 22.5deg)
+  repeat scale around ring(7, radius: 1.4, z: 20.7, tilt: 48deg)
+  repeat scale around ring(6, radius: 1.2, z: 21.3, tilt: 38deg, phase: 30deg)
+  repeat scale around ring(5, radius: 0.95, z: 21.8, tilt: 28deg)
+  repeat scale around ring(4, radius: 0.7, z: 22.2, tilt: 18deg, phase: 45deg)
+  place nib at (0, 0, 22.6)
 
   place sole
   repeat leg around ring(3)
-  repeat frond around ring(3, radius: 5.0, z: -20, tilt: 48deg)
+  repeat frond around ring(6, radius: 6.4, z: -26, tilt: -48deg)
+  repeat sprig around ring(6, radius: 8.8, z: -30.5, tilt: -30deg, phase: 30deg)
   repeat curlicue around ring(3, radius: 8.4, z: -26, tilt: 90deg, phase: 60deg)
 }
 `,
