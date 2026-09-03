@@ -295,13 +295,15 @@ export function lateralVein(i: number, veins: number, halfWidth: number, side: n
   const a0 = 1.0 - 0.35 * k;                     // launch angle from the midrib
   const r = halfWidth * (2.8 + 0.6 * k);         // radius of the arc it follows
   const sweep = a0 - 0.25;                       // it never turns back toward the midrib
+  // a gentle wave along the vein: a wavelength that varies smoothly by vein,
+  // a phase that differs by side, and an envelope that keeps the midrib join clean
+  const wave = halfWidth * (0.8 + 0.3 * k);
   return {
-    u, r, sweep,
+    u, r, sweep, wave, side,
     // centre of the arc, in (along, across) from the launch point: the vein
     // turns toward the tip, so the centre sits ahead of it and inside
     cx: r * Math.sin(a0), cy: -r * Math.cos(a0),
     phi0: a0 + Math.PI / 2,
-    end: [r * Math.sin(a0) + r * Math.cos(a0 + Math.PI / 2 - (a0 - 0.25)), -r * Math.cos(a0) + r * Math.sin(a0 + Math.PI / 2 - (a0 - 0.25))] as [number, number],
   };
 }
 
@@ -316,8 +318,22 @@ export function lateralCoords(v: ReturnType<typeof lateralVein>, dx: number, ay:
   if (sweep > Math.PI) sweep -= 2 * Math.PI;
   if (sweep < -Math.PI) sweep += 2 * Math.PI;
   if (sweep < 0) return [Math.hypot(dx, ay), 0];
-  if (sweep > v.sweep) return [Math.hypot(dx - v.end[0], ay - v.end[1]), v.r * v.sweep];
-  return [Math.abs(Math.hypot(px, py) - v.r), v.r * sweep];
+  const tEnd = v.r * v.sweep;
+  if (sweep > v.sweep) {
+    // the cap sits where the waved centreline ends: out along the radius by the wave there
+    const phiEnd = v.phi0 - v.sweep;
+    const rho = v.r + lateralWave(v, tEnd);
+    return [Math.hypot(dx - (v.cx + rho * Math.cos(phiEnd)), ay - (v.cy + rho * Math.sin(phiEnd))), tEnd];
+  }
+  const t = v.r * sweep;
+  return [Math.abs(Math.hypot(px, py) - v.r - lateralWave(v, t)), t];
+}
+
+/** Sideways offset of a lateral's centreline at distance t along it. Mirrors `lateralWave` in the WGSL. */
+export function lateralWave(v: ReturnType<typeof lateralVein>, t: number): number {
+  const amp = v.wave * 0.028;
+  const envelope = Math.min(t / (0.4 * v.wave), 1);
+  return amp * Math.sin((2 * Math.PI * t) / v.wave + v.side * 0.7) * envelope;
 }
 
 /**

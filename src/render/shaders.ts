@@ -159,7 +159,7 @@ fn reliefSmooth(a: f32, b: f32, x: f32) -> f32 {
   return t * t * (3.0 - 2.0 * t);
 }
 
-struct Lateral { u: f32, r: f32, sweep: f32, cx: f32, cy: f32, phi0: f32, end: vec2f };
+struct Lateral { u: f32, r: f32, sweep: f32, cx: f32, cy: f32, phi0: f32, wave: f32, side: f32 };
 
 /** Lateral vein i: where it leaves the midrib and the arc it follows. Mirrors deform.ts exactly. */
 fn lateralVein(i: i32, veins: i32, halfWidth: f32, side: f32) -> Lateral {
@@ -172,9 +172,16 @@ fn lateralVein(i: i32, veins: i32, halfWidth: f32, side: f32) -> Lateral {
   out.cx = out.r * sin(a0);
   out.cy = -out.r * cos(a0);
   out.phi0 = a0 + 1.57079633;
-  let phiEnd = out.phi0 - out.sweep;
-  out.end = vec2f(out.cx + out.r * cos(phiEnd), out.cy + out.r * sin(phiEnd));
+  out.wave = halfWidth * (0.8 + 0.3 * k);
+  out.side = side;
   return out;
+}
+
+/** Sideways offset of a lateral's centreline at distance t along it: a gentle wave, zero at the midrib. Mirrors deform.ts. */
+fn lateralWave(v: Lateral, t: f32) -> f32 {
+  let amp = v.wave * 0.028;
+  let envelope = min(t / (0.4 * v.wave), 1.0);
+  return amp * sin(6.2831853 * t / v.wave + v.side * 0.7) * envelope;
 }
 
 /** Distance across a lateral (x) and along it (y), as a capsule: past an end, the distance is to that end. */
@@ -184,8 +191,14 @@ fn lateralCoords(v: Lateral, dx: f32, ay: f32) -> vec2f {
   if (sweep > 3.14159265) { sweep -= 6.2831853; }
   if (sweep < -3.14159265) { sweep += 6.2831853; }
   if (sweep < 0.0) { return vec2f(length(vec2f(dx, ay)), 0.0); }
-  if (sweep > v.sweep) { return vec2f(length(vec2f(dx, ay) - v.end), v.r * v.sweep); }
-  return vec2f(abs(length(vec2f(px, py)) - v.r), v.r * sweep);
+  let tEnd = v.r * v.sweep;
+  if (sweep > v.sweep) {
+    let phiEnd = v.phi0 - v.sweep;
+    let rho = v.r + lateralWave(v, tEnd);
+    return vec2f(length(vec2f(dx - (v.cx + rho * cos(phiEnd)), ay - (v.cy + rho * sin(phiEnd)))), tEnd);
+  }
+  let t = v.r * sweep;
+  return vec2f(abs(length(vec2f(px, py)) - v.r - lateralWave(v, t)), t);
 }
 
 /** The relief as a unit field, before the ridge height scales it. */
