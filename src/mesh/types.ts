@@ -109,6 +109,19 @@ export function recomputeNormals(mesh: Mesh) {
  * separate parts. Everything else in the vocabulary stays separate on purpose:
  * pieces overlap and are riveted, not welded.
  */
+/**
+ * Glaze a whole mesh rather than one face of it.
+ *
+ * A plate is enamelled in a cell: the metal round the edge is the wall that
+ * holds the glass, so only the cap is marked. A body turned on a lathe has no
+ * cell — it is dipped, or the enamel is fired over the whole of it, which is
+ * how an egg is done — so every vertex carries it.
+ */
+export function enamelWhole(mesh: Mesh): Mesh {
+  mesh.enamel = new Float32Array(mesh.positions.length / 3).fill(1);
+  return mesh;
+}
+
 export function mergeMeshes(meshes: Mesh[]): Mesh {
   let verts = 0, tris = 0;
   for (const m of meshes) { verts += m.positions.length / 3; tris += m.indices.length; }

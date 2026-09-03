@@ -2,7 +2,7 @@ import { arc, bezier3, catmullRom, logSpiral } from '../geom/curve';
 import { band, blade, wire } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
 import { leaf } from '../parts/leaf';
-import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
+import { bead, bell, bud, collar, egg, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
 import { gem, type GemCut } from '../parts/gem';
 import { setting } from '../parts/setting';
@@ -181,6 +181,8 @@ export const catalogue: Record<string, () => Part> = {
   'gem · marquise': stone('marquise', 'sapphire'),
   'gem · rose': stone('rose', 'garnet'),
   'gem · cabochon': stone('cabochon', 'moonstone'),
+
+  egg: () => egg({ radius: 11, taper: 0.34 }),
 
   'setting · claw': () => setting({ width: 14, style: 'claw', claws: 4, height: 6 }),
   'setting · bezel': () => setting({ width: 14, style: 'bezel', height: 5 }),

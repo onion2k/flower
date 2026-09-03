@@ -3,7 +3,7 @@ import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
 import { enamels, enamelNames, metalNames } from '../render/materials';
 import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
-import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
+import { bead, bell, bud, collar, egg, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
 import { pearl } from '../parts/pearl';
 import { gem, type GemCut } from '../parts/gem';
@@ -323,12 +323,22 @@ const PARTS = {
       segments: a.num('segments', -1, 24),
     })),
 
-  bead: define(['radius', 'point', 'bore', 'segments'], (a) =>
+  bead: define(['radius', 'point', 'bore', 'enamel', 'segments'], (a) =>
     bead({
       radius: a.num('radius', 0),
       point: a.num('point', 1, NaN) || undefined,
       bore: a.num('bore', -1, 0) || undefined,
+      enamel: enamelName(a),
       segments: a.num('segments', -1, 24),
+    })),
+
+  egg: define(['radius', 'height', 'taper', 'enamel', 'segments'], (a) =>
+    egg({
+      radius: a.num('radius', 0),
+      height: a.num('height', 1, 0) || undefined,
+      taper: a.num('taper', -1, NaN) || undefined,
+      enamel: enamelName(a),
+      segments: a.num('segments', -1, 48),
     })),
 
   pearl: define(['radius', 'oblate', 'segments'], (a) =>

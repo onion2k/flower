@@ -52,6 +52,67 @@ form cloisonne {
 }
 `,
 
+  faberge: `# An Easter egg in the Fabergé manner: translucent enamel fired over a
+# gold body, a trellis laid over it with a stone at every crossing, and three
+# curling legs to hold the whole thing off the table.
+#
+# Cobalt is a transparent enamel, so what shines through it is the gold
+# underneath — which is the whole trick of the thing, and why the egg is gold
+# and not silver.
+material gold polished
+
+part shell = egg(radius: 15, height: 19, taper: 0.34, enamel: cobalt, segments: 96)
+
+# The trellis. The ribs follow the egg's own profile and the hoops sit at the
+# heights where they cross, each a little proud of the enamel.
+part rib   = wire(path: through((5.4, 0, -17.9), (9.6, 0, -14.6), (12.2, 0, -9.5), (13.0, 0, -3.3), (12.1, 0, 3.3), (10.0, 0, 9.5), (7.05, 0, 14.6), (3.7, 0, 17.9)), radius: 0.42, tip: 1, sections: 120)
+part hoopA = wire(path: circle(radius: 12.19, z: -9.5), radius: 0.38, closed: yes, sections: 144)
+part hoopB = wire(path: circle(radius: 13.0, z: -3.3), radius: 0.38, closed: yes, sections: 144)
+part hoopC = wire(path: circle(radius: 12.13, z: 3.3), radius: 0.38, closed: yes, sections: 144)
+part hoopD = wire(path: circle(radius: 9.98, z: 9.5), radius: 0.38, closed: yes, sections: 144)
+part hoopE = wire(path: circle(radius: 7.05, z: 14.56), radius: 0.38, closed: yes, sections: 144)
+
+# A stone at every crossing. The tilt lays each one flat against the shell,
+# which stands steeper the further up it sits.
+part spark = gem(cut: brilliant, width: 1.7) in diamond
+
+# The finial: a collar gathering the ribs, and a cabochon over it.
+part crown = collar(inner: 2.2, wall: 0.7, length: 1.8) in gold satin
+part cap   = setting(width: 4.4, style: bezel, height: 1.3)
+part jewel = gem(cut: cabochon, width: 4.4) in ruby
+
+# The stand: three legs off a foot ring, each carrying a leaf and a tendril.
+part leg   = wire(path: through((11, 0, -34), (9, 0, -28.5), (5.6, 0, -24), (8.2, 0, -20), (7.4, 0, -16.4)), radius: 0.9, tip: 0.6, sections: 110)
+part sole  = wire(path: circle(radius: 11, z: -34), radius: 0.85, closed: yes, sections: 144)
+part frond = leaf(length: 10.5, width: 4.8, thickness: 0.6, cup: 30deg, curl: 34deg, veins: 2)
+part curlicue = wire(path: spiral(start: 0.9, turns: 1.15, growth: 2.7), radius: 0.55, tip: 0.12, sections: 110)
+
+form faberge {
+  place shell
+  repeat rib around ring(12)
+  place hoopA
+  place hoopB
+  place hoopC
+  place hoopD
+  place hoopE
+
+  repeat spark around ring(12, radius: 12.6, z: -9.5, tilt: 107deg)
+  repeat spark around ring(12, radius: 13.4, z: -3.3, tilt: 90deg)
+  repeat spark around ring(12, radius: 12.5, z: 3.3, tilt: 77deg)
+  repeat spark around ring(12, radius: 10.4, z: 9.5, tilt: 66deg)
+  repeat spark around ring(12, radius: 7.5, z: 14.56, tilt: 53deg)
+
+  place crown at (0, 0, 18.2)
+  place cap at (0, 0, 20.2)
+  fasten jewel to cap.seat
+
+  place sole
+  repeat leg around ring(3)
+  repeat frond around ring(3, radius: 5.0, z: -20, tilt: 48deg)
+  repeat curlicue around ring(3, radius: 8.4, z: -26, tilt: 90deg, phase: 60deg)
+}
+`,
+
   cluster: `# A cluster: a brilliant held in claws, ringed by bezel-set stones
 # A stone takes its species as a material — diamond, ruby, sapphire, emerald,
 # amethyst, aquamarine, topaz, garnet, peridot, citrine, onyx, moonstone —

@@ -1,4 +1,5 @@
 import { revolve, type Silhouette } from '../mesh/revolve';
+import { enamelWhole } from '../mesh/types';
 import { meshBounds, type Part } from './types';
 import type { Vec2 } from '../geom/types';
 
@@ -74,6 +75,8 @@ export interface BeadSpec {
   /** Length of the drawn point at the top. 0 gives a plain ovoid. */
   point?: number;
   bore?: number;
+  /** Enamel fired over the whole body, by colour name. */
+  enamel?: string;
   segments?: number;
 }
 
@@ -110,11 +113,65 @@ export function bead(spec: BeadSpec): Part {
   }
 
   const mesh = revolve(sil, { segments: spec.segments ?? 24 });
+  if (spec.enamel) enamelWhole(mesh);
   return {
     name: spec.name ?? 'bead',
     mesh,
     bounds: meshBounds(mesh),
+    enamel: spec.enamel,
     anchors: [{ name: 'seat', position: [0, 0, -r], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.bore }],
+  };
+}
+
+export interface EggSpec {
+  name?: string;
+  /** Half the width at the widest point. */
+  radius: number;
+  /** Half the height, pole to pole. Defaults to a real egg's proportion. */
+  height?: number;
+  /**
+   * How much narrower the top is than the bottom. 0 gives an ellipsoid; a hen's
+   * egg is about a third, and it is the only thing that separates an egg from a
+   * ball — the widest point sits below the middle, and the eye reads that at
+   * once even when it cannot say why.
+   */
+  taper?: number;
+  /** Enamel fired over the whole body, by colour name. */
+  enamel?: string;
+  segments?: number;
+}
+
+/**
+ * An egg.
+ *
+ * A bead can be made ovoid, but it draws to a point because it is meant to
+ * finish a tendril. An egg does not: it closes at both ends on a smooth dome,
+ * and the asymmetry is a gentle bias down the length rather than a spike.
+ */
+export function egg(spec: EggSpec): Part {
+  const r = spec.radius;
+  const h = spec.height ?? r * 1.28;
+  const taper = Math.min(Math.max(spec.taper ?? 0.34, 0), 0.85);
+  const rows = 40;
+
+  const points: Vec2[] = [];
+  for (let i = 0; i <= rows; i++) {
+    const t = (i / rows) * Math.PI;   // 0 at the bottom pole
+    const bias = (1 - Math.cos(t)) / 2;
+    points.push([r * Math.sin(t) * (1 - taper * bias), -h * Math.cos(t)]);
+  }
+
+  const mesh = revolve({ points }, { segments: spec.segments ?? 48 });
+  if (spec.enamel) enamelWhole(mesh);
+  return {
+    name: spec.name ?? 'egg',
+    mesh,
+    bounds: meshBounds(mesh),
+    enamel: spec.enamel,
+    anchors: [
+      { name: 'base', position: [0, 0, -h], axis: [0, 0, -1], tangent: [1, 0, 0] },
+      { name: 'apex', position: [0, 0, h], axis: [0, 0, 1], tangent: [1, 0, 0] },
+    ],
   };
 }
 
