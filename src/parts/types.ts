@@ -41,6 +41,8 @@ export interface Part {
    * where a fillet of solder would be a lie about how the piece is made.
    */
   solderable?: boolean;
+  /** Facets round a stone's pavilion, for the shader to bounce light off. */
+  pavilionFacets?: number;
 }
 
 /**

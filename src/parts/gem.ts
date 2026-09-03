@@ -68,7 +68,10 @@ export function gem(spec: GemSpec): Part {
     { name: 'culet', position: [0, 0, -pavilion], axis: [0, 0, -1], tangent: [1, 0, 0] },
   ];
   // solder wets metal; a stone is held, not joined
-  return { name: spec.name ?? cut, mesh, bounds: meshBounds(mesh), anchors, solderable: false };
+  return {
+    name: spec.name ?? cut, mesh, bounds: meshBounds(mesh), anchors,
+    solderable: false, pavilionFacets: p.mains,
+  };
 }
 
 interface Proportions {
@@ -80,18 +83,24 @@ interface Proportions {
   facets: number;
   /** Length over width. */
   ratio: number;
+  /**
+   * Facets round the pavilion. The shader gives the light one of these to
+   * bounce off, so a step cut's four break its table into quarters where a
+   * brilliant's eight break it into a rosette.
+   */
+  mains: number;
 }
 
 const CUTS: Record<GemCut, Proportions> = {
-  brilliant: { table: 0.56, crown: 0.16, pavilion: 0.43, girdle: 0.03, facets: 16, ratio: 1 },
-  oval: { table: 0.56, crown: 0.15, pavilion: 0.42, girdle: 0.03, facets: 16, ratio: 1.4 },
-  pear: { table: 0.56, crown: 0.15, pavilion: 0.42, girdle: 0.03, facets: 16, ratio: 1.5 },
-  marquise: { table: 0.55, crown: 0.14, pavilion: 0.40, girdle: 0.03, facets: 16, ratio: 2.0 },
-  trillion: { table: 0.58, crown: 0.15, pavilion: 0.40, girdle: 0.03, facets: 18, ratio: 1 },
-  step: { table: 0.62, crown: 0.14, pavilion: 0.45, girdle: 0.03, facets: 8, ratio: 1.35 },
-  baguette: { table: 0.72, crown: 0.10, pavilion: 0.34, girdle: 0.03, facets: 4, ratio: 2.2 },
-  rose: { table: 0, crown: 0.34, pavilion: 0, girdle: 0, facets: 12, ratio: 1 },
-  cabochon: { table: 0, crown: 0.42, pavilion: 0, girdle: 0, facets: 0, ratio: 1 },
+  brilliant: { table: 0.56, crown: 0.16, pavilion: 0.43, girdle: 0.03, facets: 16, ratio: 1, mains: 8 },
+  oval: { table: 0.56, crown: 0.15, pavilion: 0.42, girdle: 0.03, facets: 16, ratio: 1.4, mains: 8 },
+  pear: { table: 0.56, crown: 0.15, pavilion: 0.42, girdle: 0.03, facets: 16, ratio: 1.5, mains: 8 },
+  marquise: { table: 0.55, crown: 0.14, pavilion: 0.40, girdle: 0.03, facets: 16, ratio: 2.0, mains: 8 },
+  trillion: { table: 0.58, crown: 0.15, pavilion: 0.40, girdle: 0.03, facets: 18, ratio: 1, mains: 6 },
+  step: { table: 0.62, crown: 0.14, pavilion: 0.45, girdle: 0.03, facets: 8, ratio: 1.35, mains: 4 },
+  baguette: { table: 0.72, crown: 0.10, pavilion: 0.34, girdle: 0.03, facets: 4, ratio: 2.2, mains: 4 },
+  rose: { table: 0, crown: 0.34, pavilion: 0, girdle: 0, facets: 12, ratio: 1, mains: 8 },
+  cabochon: { table: 0, crown: 0.42, pavilion: 0, girdle: 0, facets: 0, ratio: 1, mains: 24 },
 };
 
 /** One tier of the stone: the outline scaled and lifted, and how far it is turned. */
@@ -144,6 +153,9 @@ function tiersOf(cut: GemCut, crown: number, pavilion: number, girdleT: number, 
   }
 }
 
+/** The widest the teardrop curve gets, so a pear comes out the width it was asked for. */
+const PEAR_PEAK = 0.7698;
+
 /**
  * The girdle outline, sampled at `n` points, turned by `phase` steps.
  *
@@ -169,12 +181,12 @@ function girdleOutline(cut: GemCut, n: number, halfL: number, halfW: number, pha
         // both ends drawn to a point: the exponent flattens the curve into a cusp
         pts.push([halfL * c, halfW * Math.sign(s) * Math.pow(Math.abs(s), 1.6)]);
         break;
-      case 'pear': {
-        // pointed at one end, round at the other, easing between the two
-        const k = 0.5 + 0.5 * c;
-        pts.push([halfL * c, halfW * Math.sign(s) * Math.pow(Math.abs(s), 1 + 0.75 * k)]);
+      case 'pear':
+        // The teardrop curve: a cusp at one end and a full round shoulder at
+        // the other, widest about a third of the way back from the point,
+        // which is what separates a pear from an oval with one end pinched.
+        pts.push([halfL * c, halfW * s * Math.sin(t / 2) / PEAR_PEAK]);
         break;
-      }
       case 'trillion': {
         const r = 1 / (1 + 0.24 * Math.cos(3 * t));
         pts.push([halfL * c * r, halfW * s * r]);

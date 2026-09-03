@@ -41,6 +41,8 @@ export interface InstanceGroup {
   relief?: PlateRelief;
   /** Metal of the wires along the veins of an enamelled face. */
   veinMetal?: string;
+  /** Facets round a stone's pavilion. */
+  pavilionFacets?: number;
 }
 
 interface GpuGroup {
@@ -642,7 +644,7 @@ export class Viewer {
         : [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0], o + 24);
       const v = metals[g.source.veinMetal ?? ''];
       f32.set(v && e && !v.model ? [...v.f0, 1] : [0, 0, 0, 0], o + 36);
-      f32.set([m.ior ?? 1.5, m.dispersion ?? 0, m.sparkle ?? 0, 0], o + 40);
+      f32.set([m.ior ?? 1.5, m.dispersion ?? 0, m.sparkle ?? 0, g.source.pavilionFacets ?? 8], o + 40);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

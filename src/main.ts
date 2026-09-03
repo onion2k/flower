@@ -209,11 +209,11 @@ controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string }>();
+  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number }>();
   for (const p of assembly.placements) {
     let group = byMesh.get(p.part.mesh);
     if (!group) {
-      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal };
+      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets };
       byMesh.set(p.part.mesh, group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -226,6 +226,7 @@ function groupByMesh(assembly: Assembly) {
     enamel: g.enamel,
     relief: g.relief,
     veinMetal: g.veinMetal,
+    pavilionFacets: g.pavilionFacets,
   }));
 }
 

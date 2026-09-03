@@ -82,7 +82,7 @@ struct Material {
   gemIor: f32,
   gemDispersion: f32,
   gemSparkle: f32,
-  _pad4: f32,
+  gemPavilion: f32,   // facets round the pavilion; a step cut has fewer than a brilliant
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -284,9 +284,6 @@ const FIRE_GAIN: f32 = 6.0;
  * badly cut one looks like a window.
  */
 const CROWN_RETURN: f32 = 0.7;
-
-/** Pavilion mains on a brilliant, and near enough for everything else. */
-const PAVILION_FACETS: f32 = 8.0;
 
 /**
  * What comes back out of a cut stone.
@@ -505,7 +502,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     // is a mosaic of directions rather than one flat colour, and it is the
     // difference between reading as a gem and reading as a bead of glass.
     let across = normalize(in.side - axis * dot(in.side, axis));
-    let step = 6.2831853 / PAVILION_FACETS;
+    let step = 6.2831853 / max(material.gemPavilion, 2.0);
     let az = (floor(atan2(in.object.y, in.object.x) / step) + 0.5) * step;
     let lateral = across * cos(az) + cross(axis, across) * sin(az);
     let interior = gemInterior(v, n, axis, lateral, ior, material.gemDispersion) * material.baseColour * ao;

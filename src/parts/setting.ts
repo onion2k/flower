@@ -41,12 +41,16 @@ export interface SettingSpec {
 export function setting(spec: SettingSpec): Part {
   const style = spec.style ?? 'claw';
   const r = spec.width / 2;
-  const wall = spec.wall ?? Math.max(spec.width * 0.09, 0.25);
+  // A bezel's wall and a claw's wire are not the same thing and should not
+  // default to the same number: a wall is thin because it wraps the whole
+  // girdle, a claw is thicker because it holds at four points.
+  const bezelStyle = style === 'bezel';
+  const wall = spec.wall ?? Math.max(spec.width * (bezelStyle ? 0.06 : 0.09), bezelStyle ? 0.16 : 0.25);
   const height = spec.height ?? spec.width * 0.42;
-  const grip = spec.grip ?? Math.max(spec.width * 0.06, 0.2);
+  const grip = spec.grip ?? Math.max(spec.width * (bezelStyle ? 0.04 : 0.06), bezelStyle ? 0.11 : 0.2);
   const segments = spec.segments ?? 32;
 
-  const built = style === 'bezel'
+  const built = bezelStyle
     ? bezel(r, wall, height, grip, segments)
     : claws(r, wall, height, grip, spec.claws ?? 4, segments);
 
@@ -68,15 +72,18 @@ export function setting(spec: SettingSpec): Part {
  * girdle will be, which is what actually holds the stone in.
  */
 function bezel(r: number, wall: number, height: number, grip: number, segments: number) {
-  const ledge = Math.max(wall * 0.55, r * 0.09);
+  const ledge = Math.max(wall * 0.5, r * 0.07);
   const lap = ledge * 0.5;
+  // The outside tapers as it rises, so what shows above the girdle is half the
+  // metal that carries the weight at the base. A bezel of one thickness all
+  // the way up reads as a tin rim round a small stone.
   const points: Vec2[] = [
     [r - lap, grip],
     [r, 0],
     [r - ledge, 0],
     [r - ledge, -height],
     [r + wall, -height],
-    [r + wall, grip],
+    [r + wall * 0.5, grip],
   ];
   const mesh = revolve({ points, sharp: points.map(() => true), closed: true }, { segments });
   return { mesh, bottom: -height };
