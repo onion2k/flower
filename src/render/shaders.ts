@@ -245,12 +245,17 @@ fn veinWire(x: f32, y: f32) -> f32 {
   let ay = abs(yy);
   let side = select(1.0, -1.0, yy < 0.0);
   let halfWire = 0.16;
-  var sdf = ay - halfWire * (1.0 - 0.35 * u);
+  // the midrib draws down along its length, as it does in the leaf
+  var sdf = ay - halfWire * (1.0 - 0.45 * u);
   let veins = i32(material.reliefVeins);
   for (var i = 0; i < veins; i++) {
     let v = lateralVein(i, veins, halfWidth, side);
     let c = lateralCoords(v, x - v.u * length, ay);
-    let taper = 1.0 - 0.45 * c.y / (v.r * v.sweep);
+    // Two thinnings, and they compound. Along its own length a vein tapers
+    // toward where it ends; and a vein set nearer the tip is a finer one to
+    // begin with, because the whole system draws down as the leaf narrows.
+    let station = 1.0 - 0.30 * v.u;
+    let taper = station * (1.0 - 0.45 * c.y / (v.r * v.sweep));
     sdf = min(sdf, c.x - halfWire * 0.85 * taper);
   }
   return sdf;
