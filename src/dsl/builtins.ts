@@ -46,8 +46,22 @@ export interface CallArg {
  * silently falling back to a default would leave someone staring at a shape that
  * ignored what they wrote.
  */
+export type ParamKind = 'number' | 'word' | 'flag' | 'point' | 'path' | 'symmetry' | 'points';
+
+/** What a builtin asked for, as recorded by a probe call. */
+export interface ParamInfo {
+  name: string;
+  kind: ParamKind;
+  required: boolean;
+  fallback?: number | string | boolean;
+  /** For words drawn from a fixed set. */
+  choices?: readonly string[];
+}
+
 export class Args {
   private used = new Set<number>();
+  /** Set on a probe: every read is noted and answered with a stand-in value. */
+  recorder?: ParamInfo[];
 
   constructor(
     private callee: string,
@@ -81,7 +95,15 @@ export class Args {
     return undefined;
   }
 
+  private record(info: ParamInfo) {
+    if (!this.recorder!.some((p) => p.name === info.name)) this.recorder!.push(info);
+  }
+
   num(name: string, positional: number, fallback?: number): number {
+    if (this.recorder) {
+      this.record({ name, kind: 'number', required: fallback === undefined, fallback });
+      return fallback === undefined || Number.isNaN(fallback) ? 1 : fallback;
+    }
     const arg = this.find(name, positional);
     if (!arg) {
       if (fallback !== undefined) return fallback;
@@ -94,6 +116,10 @@ export class Args {
   }
 
   flag(name: string, positional: number, fallback: boolean): boolean {
+    if (this.recorder) {
+      this.record({ name, kind: 'flag', required: false, fallback });
+      return fallback;
+    }
     const arg = this.find(name, positional);
     if (!arg) return fallback;
     if (typeof arg.value === 'number') return arg.value !== 0;
@@ -102,7 +128,11 @@ export class Args {
     throw new DslError(`"${name}" must be yes or no in ${this.callee}`, arg.span);
   }
 
-  word(name: string, positional: number, fallback: string): string {
+  word(name: string, positional: number, fallback: string, choices?: readonly string[]): string {
+    if (this.recorder) {
+      this.record({ name, kind: 'word', required: false, fallback, choices });
+      return fallback;
+    }
     const arg = this.find(name, positional);
     if (!arg) return fallback;
     if (typeof arg.value !== 'string') {
@@ -112,6 +142,10 @@ export class Args {
   }
 
   vec(name: string, positional: number, fallback?: Vec3): Vec3 {
+    if (this.recorder) {
+      this.record({ name, kind: 'point', required: fallback === undefined });
+      return fallback ?? [0, 0, 0];
+    }
     const arg = this.find(name, positional);
     if (!arg) {
       if (fallback) return fallback;
@@ -124,6 +158,10 @@ export class Args {
   }
 
   curve(name: string, positional: number): Curve {
+    if (this.recorder) {
+      this.record({ name, kind: 'path', required: true });
+      return arc(1, 0, Math.PI * 2, 0);
+    }
     const arg = this.find(name, positional);
     if (!arg) throw new DslError(`${this.callee} needs a path`, this.span);
     if (!isCurve(arg.value)) {
@@ -136,6 +174,10 @@ export class Args {
   }
 
   symmetry(name: string, positional: number): Symmetry {
+    if (this.recorder) {
+      this.record({ name, kind: 'symmetry', required: true });
+      return radial(1);
+    }
     const arg = this.find(name, positional);
     if (!arg) throw new DslError(`${this.callee} needs a symmetry for "${name}"`, this.span);
     if (!isSymmetry(arg.value)) {
@@ -145,6 +187,10 @@ export class Args {
   }
 
   rest(): Value[] {
+    if (this.recorder) {
+      this.record({ name: this.known[this.known.length - 1] ?? 'values', kind: 'points', required: true });
+      return [];
+    }
     const out: Value[] = [];
     for (let i = 0; i < this.args.length; i++) {
       if (this.used.has(i) || this.args[i].name) continue;
@@ -206,7 +252,7 @@ const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
 
 /** An enamel colour by its trade name, checked here so a misspelling names the choices. */
 function enamelName(a: Args): string | undefined {
-  const name = a.word('enamel', -1, '');
+  const name = a.word('enamel', -1, '', enamelNames);
   if (!name) return undefined;
   if (!enamels[name]) {
     throw new DslError(`there is no enamel called "${name}" — try ${enamelNames.join(', ')}`, a.span);
@@ -216,7 +262,7 @@ function enamelName(a: Args): string | undefined {
 
 /** One of a fixed set of words, named in the error when it is not. */
 function oneOf<T extends string>(a: Args, name: string, allowed: readonly T[], fallback: T): T {
-  const word = a.word(name, -1, fallback);
+  const word = a.word(name, -1, fallback, allowed);
   if (!allowed.includes(word as T)) {
     throw new DslError(`there is no ${name} called "${word}" — try ${allowed.join(', ')}`, a.span);
   }
@@ -225,10 +271,15 @@ function oneOf<T extends string>(a: Args, name: string, allowed: readonly T[], f
 
 const GEM_CUTS = ['brilliant', 'oval', 'pear', 'marquise', 'trillion', 'step', 'baguette', 'rose', 'cabochon'] as const;
 const SETTING_STYLES = ['claw', 'bezel'] as const;
+const LEAF_SHAPES = ['ovate', 'lanceolate', 'elliptic', 'obovate', 'cordate', 'orbicular', 'linear', 'deltoid', 'spatulate'] as const;
+const PETAL_SHAPES = ['round', 'pointed', 'spoon', 'strap', 'lip', 'quill'] as const;
+const PETAL_EDGES = ['entire', 'toothed', 'fringed', 'crenate', 'notched'] as const;
+const SECTIONS = ['round', 'square', 'hex', 'octagon', 'flat', 'lens'] as const;
+const ORIENTS = ['outward', 'flat'] as const;
 
 /** A metal for the vein wires of an enamelled plate; pearls are not wire. */
 function veinMetalName(a: Args): string | undefined {
-  const name = a.word('veinMetal', -1, '');
+  const name = a.word('veinMetal', -1, '', metalNames);
   if (!name) return undefined;
   if (!metalNames.includes(name)) {
     throw new DslError(`there is no metal called "${name}" for veins — try ${metalNames.join(', ')}`, a.span);
@@ -246,7 +297,7 @@ const PARTS = {
       length: a.num('length', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 1.1),
-      shape: a.word('shape', -1, 'ovate') as LeafShape,
+      shape: oneOf(a, 'shape', LEAF_SHAPES, 'ovate') as LeafShape,
       bevel: a.num('bevel', -1, NaN) || undefined,
       piercings: a.num('piercings', -1, 0) || undefined,
       veins: a.num('veins', -1, 0) || undefined,
@@ -294,7 +345,7 @@ const PARTS = {
     wire({
       path: a.curve('path', 0),
       radius: a.num('radius', 1),
-      section: a.word('section', -1, 'round') as Section,
+      section: oneOf(a, 'section', SECTIONS, 'round') as Section,
       tipScale: a.num('tip', -1, 0.2),
       twistTurns: a.num('twist', -1, 0) / (Math.PI * 2) || undefined,
       flatten: a.flag('flatten', -1, false),
@@ -388,8 +439,8 @@ const PARTS = {
       length: a.num('length', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 0.7),
-      shape: a.word('shape', -1, 'round') as PetalShape,
-      edge: a.word('edge', -1, 'entire') as PetalEdge,
+      shape: oneOf(a, 'shape', PETAL_SHAPES, 'round') as PetalShape,
+      edge: oneOf(a, 'edge', PETAL_EDGES, 'entire') as PetalEdge,
       edgeDepth: a.num('edgeDepth', -1, 0.06),
       edgeCount: a.num('edgeCount', -1, 0) || undefined,
       bevel: a.num('bevel', -1, NaN) || undefined,
@@ -531,7 +582,7 @@ const SYMMETRIES = {
 
   shell: define(['count', 'radius', 'orient', 'lean', 'turns'], (a) =>
     sphereShell(a.num('count', 0), a.num('radius', 1), {
-      orient: a.word('orient', -1, 'flat') as 'outward' | 'flat',
+      orient: oneOf(a, 'orient', ORIENTS, 'flat') as 'outward' | 'flat',
       lean: a.num('lean', -1, 0),
       turns: a.num('turns', -1, 1),
     })),
@@ -568,4 +619,29 @@ export const BUILTINS: Record<string, { known: string[]; fn: Builtin }> = {
 };
 
 export const PART_NAMES = Object.keys(PARTS);
+
+const signatures = new Map<string, ParamInfo[]>();
+
+/**
+ * What a builtin takes, with defaults, learned by calling it.
+ *
+ * The argument reads inside each builtin are the one true record of its
+ * parameters, so rather than keep a second table in step with them the probe
+ * runs the builtin once with a recording Args that answers every read with a
+ * stand-in. Whatever the builtin then does with those stand-ins is discarded.
+ * The result is ordered by the declared list, which is also the positional order.
+ */
+export function signature(name: string): ParamInfo[] | undefined {
+  const builtin = BUILTINS[name];
+  if (!builtin) return undefined;
+  let sig = signatures.get(name);
+  if (sig) return sig;
+  const args = new Args(name, [], { start: 0, end: 0, line: 1, column: 1 }, builtin.known);
+  args.recorder = [];
+  try { builtin.fn(args); } catch { /* stand-in values need not make a shape */ }
+  const read = new Map(args.recorder.map((p) => [p.name, p]));
+  sig = builtin.known.map((n) => read.get(n) ?? { name: n, kind: 'number' as const, required: false });
+  signatures.set(name, sig);
+  return sig;
+}
 export const BUILTIN_NAMES = Object.keys(BUILTINS);

@@ -1,3 +1,4 @@
+import { completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { lintGutter, setDiagnostics } from '@codemirror/lint';
@@ -8,6 +9,7 @@ import {
 import type { CompileResult } from '../dsl/index';
 import { sketchHighlighting, sketchLanguage } from './language';
 import { scrubbing } from './scrub';
+import { parameterHelp } from './help';
 
 export interface SketchEditor {
   view: EditorView;
@@ -56,7 +58,8 @@ export function createEditor(parent: HTMLElement, doc: string, onChange: () => v
         sketchLanguage,
         sketchHighlighting,
         scrubbing,
-        keymap.of([...defaultKeymap, ...historyKeymap, indentWithTab]),
+        parameterHelp,
+        keymap.of([...completionKeymap, ...defaultKeymap, ...historyKeymap, indentWithTab]),
         EditorState.tabSize.of(2),
         theme,
         EditorView.updateListener.of((u) => {
