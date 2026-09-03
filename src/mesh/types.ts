@@ -10,6 +10,12 @@ export interface Mesh {
    * fired into, with the bevel and walls left as the metal rim.
    */
   enamel?: Float32Array;
+  /**
+   * Which face of a plate a vertex belongs to: +1 the top cap, -1 the bottom
+   * cap, 0 the bevel and walls. Lets the shader evaluate chased relief per
+   * pixel on the caps, where the flat coordinates are known.
+   */
+  cap?: Float32Array;
 }
 
 export type Vec2 = [number, number];
@@ -112,6 +118,7 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
   const uvs = new Float32Array(verts * 2);
   const indices = new Uint32Array(tris);
   const enamel = meshes.some((m) => m.enamel) ? new Float32Array(verts) : undefined;
+  const cap = meshes.some((m) => m.cap) ? new Float32Array(verts) : undefined;
 
   let vo = 0, io = 0;
   for (const m of meshes) {
@@ -119,9 +126,13 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
     normals.set(m.normals, vo * 3);
     uvs.set(m.uvs, vo * 2);
     if (enamel && m.enamel) enamel.set(m.enamel, vo);
+    if (cap && m.cap) cap.set(m.cap, vo);
     for (let i = 0; i < m.indices.length; i++) indices[io + i] = m.indices[i] + vo;
     vo += m.positions.length / 3;
     io += m.indices.length;
   }
-  return enamel ? { positions, normals, uvs, indices, enamel } : { positions, normals, uvs, indices };
+  const out: Mesh = { positions, normals, uvs, indices };
+  if (enamel) out.enamel = enamel;
+  if (cap) out.cap = cap;
+  return out;
 }

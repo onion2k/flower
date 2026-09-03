@@ -11,7 +11,7 @@
 import { createContext, bufferFrom, emptyBuffer, shader, type GpuContext } from '../gpu/context';
 import { Camera, Orbit } from '../gpu/camera';
 import type { Mesh as PartMesh } from '../mesh/types';
-import type { Anchor } from '../parts/types';
+import type { Anchor, PlateRelief } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
 import { computeWear } from '../mesh/wear';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
@@ -24,7 +24,7 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 96;
+const MATERIAL_SIZE = 160;
 const FRAME_SIZE = 96;
 
 export type Quality = 'draft' | 'final';
@@ -37,6 +37,10 @@ export interface InstanceGroup {
   finish?: string;
   /** Enamel colour on the vertices the mesh marks as enamelled. */
   enamel?: string;
+  /** Chased relief, shaded per pixel on the caps. */
+  relief?: PlateRelief;
+  /** Metal of the wires along the veins of an enamelled face. */
+  veinMetal?: string;
 }
 
 interface GpuGroup {
@@ -45,13 +49,24 @@ interface GpuGroup {
   normal: GPUBuffer;
   uv: GPUBuffer;
   wear: GPUBuffer;
-  /** 0 or 1 per vertex: where the enamel is. Zeros on a plain part. */
-  enamel: GPUBuffer;
+  /** Per vertex: enamel 0 or 1, and which cap (+1 top, -1 bottom, 0 neither). */
+  face: GPUBuffer;
   instance: GPUBuffer;
   index: GPUBuffer;
   indexCount: number;
   instanceCount: number;
   vertexCount: number;
+}
+
+/** Enamel and cap flags, interleaved as one vec2 per vertex. */
+function faceOf(mesh: PartMesh): Float32Array {
+  const n = mesh.positions.length / 3;
+  const out = new Float32Array(n * 2);
+  for (let i = 0; i < n; i++) {
+    out[i * 2] = mesh.enamel?.[i] ?? 0;
+    out[i * 2 + 1] = mesh.cap?.[i] ?? 0;
+  }
+  return out;
 }
 
 /** Wear belongs to the mesh, so it is computed once however often the mesh is placed. */
@@ -223,7 +238,7 @@ export class Viewer {
           { arrayStride: 8, attributes: [{ shaderLocation: 2, offset: 0, format: 'float32x2' }] },
           { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32' }] },
           instanceLayout,
-          { arrayStride: 4, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32' }] },
+          { arrayStride: 8, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32x2' }] },
         ],
       },
       fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
@@ -344,7 +359,7 @@ export class Viewer {
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
     for (const g of this.groups) {
-      for (const b of [g.position, g.normal, g.uv, g.wear, g.enamel, g.instance, g.index]) b.destroy();
+      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.instance, g.index]) b.destroy();
     }
     const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
     this.groups = groups.map((g) => ({
@@ -353,7 +368,7 @@ export class Viewer {
       normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
       uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
       wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
-      enamel: bufferFrom(device, g.mesh.enamel ?? new Float32Array(g.mesh.positions.length / 3), GPUBufferUsage.VERTEX, 'enamel'),
+      face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
       instance: bufferFrom(device, g.matrices, shared, 'instances'),
       index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
       indexCount: g.mesh.indices.length,
@@ -458,10 +473,13 @@ export class Viewer {
   /**
    * Pixels the scene pass is allowed. Every one is shaded four times for the
    * multisampling and carried in float, so this is the single biggest lever on
-   * frame time; 3.2 million is a little under a retina laptop screen.
+   * frame time. Final is meant to fill a 2x display: anything short of device
+   * resolution is upscaled, and an upscaled edge stair-steps however well it
+   * was multisampled. Frames are drawn on demand, so at rest the cost is one
+   * frame; while the camera moves the adaptive scale takes over.
    */
-  static readonly PIXEL_BUDGET = 3_200_000;
-  /** Draft keeps to a laptop screen's worth of pixels at 1x. */
+  static readonly PIXEL_BUDGET = 12_000_000;
+  /** Draft keeps to a laptop screen's worth of pixels, and never less than 1x. */
   static readonly DRAFT_PIXEL_BUDGET = 1_800_000;
 
   private resize = () => {
@@ -470,7 +488,11 @@ export class Viewer {
     // large monitor comes down to the same cost rather than crawling.
     const cw = Math.max(1, this.host.clientWidth), ch = Math.max(1, this.host.clientHeight);
     const budget = this.quality === 'final' ? Viewer.PIXEL_BUDGET : Viewer.DRAFT_PIXEL_BUDGET;
-    const dpr = Math.min(window.devicePixelRatio, 2, Math.sqrt(budget / (cw * ch))) * this.renderScale * this.autoScale;
+    // never below one pixel per CSS pixel at rest: under that, edges stair-step
+    // however well they were multisampled, because each rendered pixel is
+    // stretched over more than one on screen
+    const budgeted = Math.max(Math.min(window.devicePixelRatio, Math.sqrt(budget / (cw * ch))), 1);
+    const dpr = Math.min(budgeted, 2) * this.renderScale * this.autoScale;
     const w = Math.max(1, Math.floor(cw * dpr));
     const h = Math.max(1, Math.floor(ch * dpr));
     this.ctx.canvas.width = w;
@@ -534,7 +556,7 @@ export class Viewer {
         pass.setVertexBuffer(2, g.uv);
         pass.setVertexBuffer(3, g.wear);
         pass.setVertexBuffer(4, g.instance);
-        pass.setVertexBuffer(5, g.enamel);
+        pass.setVertexBuffer(5, g.face);
         pass.setIndexBuffer(g.index, 'uint32');
         pass.drawIndexed(g.indexCount, g.instanceCount);
       });
@@ -598,7 +620,7 @@ export class Viewer {
     });
   }
 
-  /** Per-group material and occlusion slice, 96 bytes at a 256-byte stride. */
+  /** Per-group material and occlusion slice, 160 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
@@ -614,6 +636,12 @@ export class Viewer {
       f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
       const e = enamels[g.source.enamel ?? ''];
       f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);
+      const r = g.source.relief;
+      f32.set(r
+        ? [r.height, r.veins, r.length, r.halfWidth, ...r.span, r.droop, 0, 0, 0]
+        : [0, 0, 1, 1, 0, 0, 1, 1, 0, 0, 0, 0], o + 24);
+      const v = metals[g.source.veinMetal ?? ''];
+      f32.set(v && e && !v.model ? [...v.f0, 1] : [0, 0, 0, 0], o + 36);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

@@ -24,8 +24,12 @@ import type { Mesh } from './types';
 const REFERENCE_RADIUS = 0.6;
 
 export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Array {
-  const { positions: p, normals: n, indices } = mesh;
+  const { positions: p, indices } = mesh;
   const count = p.length / 3;
+  // Curvature is read from the geometry's own normals, not the shading ones.
+  // A plate's vertex normals leave out its chased relief, which the shader
+  // adds per pixel; the wear on a ridge still has to see the ridge.
+  const n = geometricNormals(mesh);
   const kSum = new Float64Array(count);
   const kCount = new Uint32Array(count);
   const nbSum = new Float64Array(count * 3);
@@ -119,4 +123,22 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
     out[v] = 0.5 * wear[v] + 0.5 * mean;
   }
   return out;
+}
+
+/** Area-weighted normals from the triangles alone. */
+function geometricNormals(mesh: Mesh): Float32Array {
+  const { positions: p, indices } = mesh;
+  const n = new Float32Array(p.length);
+  for (let t = 0; t < indices.length; t += 3) {
+    const a = indices[t] * 3, b = indices[t + 1] * 3, c = indices[t + 2] * 3;
+    const e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
+    const e2x = p[c] - p[a], e2y = p[c + 1] - p[a + 1], e2z = p[c + 2] - p[a + 2];
+    const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
+    for (const v of [a, b, c]) { n[v] += nx; n[v + 1] += ny; n[v + 2] += nz; }
+  }
+  for (let i = 0; i < n.length; i += 3) {
+    const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
+    n[i] /= l; n[i + 1] /= l; n[i + 2] /= l;
+  }
+  return n;
 }

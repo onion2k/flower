@@ -1,7 +1,7 @@
 import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
-import { enamels, enamelNames } from '../render/materials';
+import { enamels, enamelNames, metalNames } from '../render/materials';
 import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
 import { bead, bell, bud, collar, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
@@ -212,12 +212,22 @@ function enamelName(a: Args): string | undefined {
   return name;
 }
 
+/** A metal for the vein wires of an enamelled plate; pearls are not wire. */
+function veinMetalName(a: Args): string | undefined {
+  const name = a.word('veinMetal', -1, '');
+  if (!name) return undefined;
+  if (!metalNames.includes(name)) {
+    throw new DslError(`there is no metal called "${name}" for veins — try ${metalNames.join(', ')}`, a.span);
+  }
+  return name;
+}
+
 /** Parts. Each call makes real geometry, so results are cached by the caller. */
 const PARTS = {
   leaf: define(
     ['length', 'width', 'thickness', 'shape', 'bevel', 'piercings', 'veins', 'teeth',
      'toothDepth', 'lobes', 'spread', 'droop', 'cup', 'keel', 'curl', 'curlBias', 'twist',
-     'relief', 'reliefVeins', 'boss', 'segments', 'enamel'],
+     'relief', 'reliefVeins', 'boss', 'segments', 'enamel', 'veinMetal'],
     (a) => leaf({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -241,6 +251,7 @@ const PARTS = {
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 64),
       enamel: enamelName(a),
+      veinMetal: veinMetalName(a),
     })),
 
   wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
@@ -326,7 +337,7 @@ const PARTS = {
   petal: define(
     ['length', 'width', 'thickness', 'shape', 'edge', 'edgeDepth', 'edgeCount', 'bevel',
      'veins', 'cup', 'keel', 'curl', 'curlBias', 'twist', 'ruffle', 'ruffleWaves',
-     'droop', 'relief', 'reliefVeins', 'boss', 'segments', 'enamel'],
+     'droop', 'relief', 'reliefVeins', 'boss', 'segments', 'enamel', 'veinMetal'],
     (a) => petal({
       length: a.num('length', 0),
       width: a.num('width', 1),
@@ -350,6 +361,7 @@ const PARTS = {
       bossBore: a.num('boss', -1, 0) || undefined,
       segments: a.num('segments', -1, 72),
       enamel: enamelName(a),
+      veinMetal: veinMetalName(a),
     })),
 
   stem: define(['path', 'radius', 'tip', 'nodes', 'swell', 'from', 'to', 'sections', 'sides'], (a) =>

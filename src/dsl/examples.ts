@@ -29,11 +29,12 @@ form rosette {
 # Enamel is an option on leaves and petals: it fills the top face inside the
 # bevel and leaves the rim as metal. Transparent colours — cobalt, peacock,
 # emerald, ruby, amber — glow with the metal beneath them; turquoise, moss,
-# coral, lilac, ivory, white and black are opaque.
+# coral, lilac, ivory, white and black are opaque. veinMetal sets wires of a
+# second metal along the veins, cloisonné fashion.
 material gold polished
 
-part leaf   = leaf(length: 32, width: 15, thickness: 1.1, veins: 2, boss: 2.2, cup: 20deg, enamel: emerald)
-part petal  = petal(length: 22, width: 13, thickness: 0.8, shape: round, cup: 55deg, curl: 30deg, enamel: ruby)
+part leaf   = leaf(length: 32, width: 15, thickness: 1.1, boss: 2.2, cup: 20deg, enamel: ruby, veinMetal: silver)
+part petal  = petal(length: 22, width: 13, thickness: 0.8, shape: round, cup: 55deg, curl: 30deg, enamel: emerald)
 part stud   = rivet(head: 3.4, height: 1.2, shank: 2.2, grip: 1.1)
 part bezel  = collar(inner: 5.6, wall: 1.3, length: 2.2) in gold satin
 part heart  = pearl(radius: 6.4, oblate: 0.08) in white pearl

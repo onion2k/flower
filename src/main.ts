@@ -7,7 +7,7 @@ import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
 import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
-import type { Anchor } from './parts/types';
+import type { Anchor, PlateRelief } from './parts/types';
 import type { Mesh } from './mesh/types';
 import { Viewer, type Quality } from './render/viewer';
 
@@ -209,11 +209,11 @@ controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string }>();
+  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string }>();
   for (const p of assembly.placements) {
     let group = byMesh.get(p.part.mesh);
     if (!group) {
-      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel };
+      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal };
       byMesh.set(p.part.mesh, group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -224,6 +224,8 @@ function groupByMesh(assembly: Assembly) {
     metal: g.metal,
     finish: g.finish,
     enamel: g.enamel,
+    relief: g.relief,
+    veinMetal: g.veinMetal,
   }));
 }
 

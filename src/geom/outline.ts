@@ -315,7 +315,7 @@ export function leafPiercings(
     const t = (i + 0.9) / (count + 1.1);
     const w = (width / 2) * leafHalfWidth(shape, t);
     const spine = Math.sin(Math.PI * t) * droop * length;
-    const hole = teardropOutline(w * 2.1 * margin, w * 1.5 * margin, 20);
+    const hole = teardropOutline(w * 2.1 * margin, w * 1.5 * margin, 36);
     holes.push(ensureWinding(transformLoop(hole, t * length, spine, 1, 0.18), false));
   }
   return holes;
@@ -371,7 +371,7 @@ export function veinPiercings(
     const spine = Math.sin(Math.PI * t) * droop * length;
     const slot = w * 1.25 * margin;
     for (const sign of [1, -1]) {
-      const loop = stadiumOutline(slot, Math.max(w * 0.2, 0.35), 6);
+      const loop = stadiumOutline(slot, Math.max(w * 0.2, 0.35), 10);
       const cx = t * length + Math.cos(angle) * slot * 0.45;
       const cy = spine + sign * (Math.sin(angle) * slot * 0.45 + w * 0.16);
       holes.push(ensureWinding(transformLoop(loop, cx, cy, 1, sign * angle), false));

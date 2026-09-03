@@ -235,21 +235,22 @@ function ruffleField(
 
 /**
  * Chased veins: a midrib ridge tapering to the tip, and lateral ridges angled
- * forward from it, fading before the margin. Like the ruffle, a shear along Z,
- * with the normal corrected from the height field's gradient — taken by central
- * differences here, since the field is a sum of gaussians and not worth
- * differentiating by hand.
+ * forward from it, fading before the margin. Like the ruffle, a shear along Z.
+ *
+ * The vertex normal is deliberately left alone. A ridge is narrower than the
+ * cap's lattice can follow, and a normal bent per vertex then interpolated
+ * across a triangle shows every triangle in a reflection. The scene shader
+ * evaluates this same field per pixel instead (see `reliefHeight` in the
+ * WGSL), from the parameters the part records; the two must agree.
  */
 function veinField(
   mesh: Mesh, relief: number, veins: number,
   minX: number, length: number, halfWidth: number,
   midline: (x: number) => number,
 ) {
-  const { positions, normals } = mesh;
+  const { positions } = mesh;
   const wm = halfWidth * 0.16;   // midrib half-width
   const wl = halfWidth * 0.11;   // lateral half-width
-  const angle = 0.9;             // laterals leave the midrib at about 50°
-  const ca = Math.cos(angle), sa = Math.sin(angle);
   const smooth = (a: number, b: number, x: number) => {
     const t = Math.min(Math.max((x - a) / (b - a), 0), 1);
     return t * t * (3 - 2 * t);
@@ -263,12 +264,11 @@ function veinField(
     let h = relief * Math.exp(-(yy * yy) / (wm * wm)) * taper;
 
     const margin = 1 - smooth(0.7, 1.0, ay / halfWidth);
+    const side = yy < 0 ? -1 : 1;
     let lateral = 0;
     for (let i = 0; i < veins; i++) {
-      const ui = 0.14 + (0.68 * i) / Math.max(veins - 1, 1);
-      const dx = x - (minX + ui * length);
-      const t = dx * ca + ay * sa;      // along the vein
-      const d = -dx * sa + ay * ca;     // across it
+      const v = lateralVein(i, veins, halfWidth, side);
+      const [d, t] = lateralCoords(v, x - (minX + v.u * length), ay);
       const along = smooth(0, wl * 2, t) * Math.exp(-(t * t) / (halfWidth * halfWidth * 1.4));
       lateral = Math.max(lateral, Math.exp(-(d * d) / (wl * wl)) * along);
     }
@@ -276,18 +276,48 @@ function veinField(
     return h;
   };
 
-  const eps = halfWidth * 1e-3;
   for (let i = 0; i < positions.length; i += 3) {
-    const x = positions[i], y = positions[i + 1];
-    positions[i + 2] += height(x, y);
-    const fx = (height(x + eps, y) - height(x - eps, y)) / (2 * eps);
-    const fy = (height(x, y + eps) - height(x, y - eps)) / (2 * eps);
-    const nz = normals[i + 2];
-    const nx = normals[i] - fx * nz;
-    const ny = normals[i + 1] - fy * nz;
-    const l = Math.hypot(nx, ny, nz) || 1;
-    normals[i] = nx / l; normals[i + 1] = ny / l; normals[i + 2] = nz / l;
+    positions[i + 2] += height(positions[i], positions[i + 1]);
   }
+}
+
+/**
+ * Where lateral vein `i` of `veins` leaves the midrib and how it bends. A
+ * lateral leaves at a steep angle and arcs gently forward toward the tip;
+ * veins nearer the tip leave at a shallower angle, and the two sides
+ * alternate rather than mirror. The variation is smooth along the leaf, so
+ * neighbouring veins are near-parallel and never cross. The shader carries a
+ * copy (`lateralVein` in the WGSL) that must land on the same numbers.
+ */
+export function lateralVein(i: number, veins: number, halfWidth: number, side: number) {
+  const k = i / Math.max(veins - 1, 1);
+  const u = 0.12 + 0.72 * k + side * 0.022;
+  const a0 = 1.0 - 0.35 * k;                     // launch angle from the midrib
+  const r = halfWidth * (2.8 + 0.6 * k);         // radius of the arc it follows
+  const sweep = a0 - 0.25;                       // it never turns back toward the midrib
+  return {
+    u, r, sweep,
+    // centre of the arc, in (along, across) from the launch point: the vein
+    // turns toward the tip, so the centre sits ahead of it and inside
+    cx: r * Math.sin(a0), cy: -r * Math.cos(a0),
+    phi0: a0 + Math.PI / 2,
+    end: [r * Math.sin(a0) + r * Math.cos(a0 + Math.PI / 2 - (a0 - 0.25)), -r * Math.cos(a0) + r * Math.sin(a0 + Math.PI / 2 - (a0 - 0.25))] as [number, number],
+  };
+}
+
+/**
+ * Distance across a lateral and distance along it, as a capsule: past either
+ * end the distance is to that end, so whatever is drawn along the vein gets a
+ * round cap rather than a square one.
+ */
+export function lateralCoords(v: ReturnType<typeof lateralVein>, dx: number, ay: number): [number, number] {
+  const px = dx - v.cx, py = ay - v.cy;
+  let sweep = v.phi0 - Math.atan2(py, px);
+  if (sweep > Math.PI) sweep -= 2 * Math.PI;
+  if (sweep < -Math.PI) sweep += 2 * Math.PI;
+  if (sweep < 0) return [Math.hypot(dx, ay), 0];
+  if (sweep > v.sweep) return [Math.hypot(dx - v.end[0], ay - v.end[1]), v.r * v.sweep];
+  return [Math.abs(Math.hypot(px, py) - v.r), v.r * sweep];
 }
 
 /**

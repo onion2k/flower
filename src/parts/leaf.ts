@@ -2,9 +2,9 @@ import {
   clearsOthers, ensureWinding, fitsInside, leafOutline, leafPiercings, palmateOutline, palmateVeins,
   teardropOutline, transformLoop, veinPiercings, type LeafShape,
 } from '../geom/outline';
-import { extrude } from '../mesh/extrude';
+import { extrude, outlineSpan } from '../mesh/extrude';
 import { chordLimit, deform, deformAnchor } from '../mesh/deform';
-import { meshBounds, type Anchor, type Part } from './types';
+import { meshBounds, type Anchor, type Part, type PlateRelief } from './types';
 import type { Vec2 } from '../geom/types';
 
 export interface LeafSpec {
@@ -47,6 +47,8 @@ export interface LeafSpec {
   bossBore?: number;
   /** Enamel fired into the top face, by colour name. The bevel stays metal. */
   enamel?: string;
+  /** Metal wires along the veins of an enamelled face, by metal name. */
+  veinMetal?: string;
 }
 
 /**
@@ -150,7 +152,10 @@ export function leaf(spec: LeafSpec): Part {
     }
   }
 
-  return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
+  const sp = outlineSpan(outline);
+  // recorded even at zero height: the vein wires of an enamelled leaf are drawn from the same field
+  const relief: PlateRelief = { height: fields.relief, veins: fields.reliefVeins, length: spec.length, halfWidth: fields.halfWidth, droop, span: [sp.minX, sp.minY, sp.width, sp.height] };
+  return { name: spec.name ?? 'leaf', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel, relief, veinMetal: spec.veinMetal };
 }
 
 const halfWidthAt = (width: number, t: number) =>

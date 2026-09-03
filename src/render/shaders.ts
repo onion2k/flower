@@ -69,6 +69,15 @@ struct Material {
   orient: f32,
   enamelColour: vec3f,
   enamelOpacity: f32,   // 0: no enamel on this part
+  // chased relief on a plate, evaluated per pixel on the caps
+  relief: f32,          // ridge height; 0: none
+  reliefVeins: f32,
+  reliefLength: f32,
+  reliefHalfWidth: f32,
+  reliefSpan: vec4f,    // the cap uv box: minX, minY, width, height
+  reliefDroop: f32,
+  veinF0: vec3f,        // wires along the veins of an enamelled face
+  veinOn: f32,
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -81,7 +90,7 @@ struct VsIn {
   @location(5) im1: vec4f,
   @location(6) im2: vec4f,
   @location(7) im3: vec4f,
-  @location(8) enamel: f32,
+  @location(8) face: vec2f,     // enamel, cap
   @builtin(vertex_index) vid: u32,
   @builtin(instance_index) iid: u32,
 };
@@ -96,6 +105,9 @@ struct VsOut {
   @location(4) ao: f32,
   @location(5) wear: f32,
   @location(6) enamel: f32,
+  // which cap, and the flat plate's coordinates there; linear in uv, so exact
+  @location(7) cap: f32,
+  @location(8) plate: vec2f,
 };
 
 @vertex fn vsMain(in: VsIn) -> VsOut {
@@ -117,7 +129,9 @@ struct VsOut {
   out.uv = in.uv;
   out.ao = mix(1.0, ao, frame.occlusionOn);
   out.wear = in.wear;
-  out.enamel = in.enamel * select(0.0, 1.0, material.enamelOpacity > 0.0);
+  out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
+  out.cap = in.face.y;
+  out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
   return out;
 }
 
@@ -132,6 +146,101 @@ fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
   let b = dp2perp * duv1.y + dp1perp * duv2.y;
   let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
   return mat3x3f(t * inv, b * inv, n);
+}
+
+/**
+ * The chased vein relief, the same field deform.ts displaced the plate by:
+ * a midrib ridge tapering to the tip, lateral ridges angled forward from it.
+ * Evaluated per pixel so a ridge narrower than the lattice still reads as a
+ * ridge and not a row of facets.
+ */
+fn reliefSmooth(a: f32, b: f32, x: f32) -> f32 {
+  let t = clamp((x - a) / (b - a), 0.0, 1.0);
+  return t * t * (3.0 - 2.0 * t);
+}
+
+struct Lateral { u: f32, r: f32, sweep: f32, cx: f32, cy: f32, phi0: f32, end: vec2f };
+
+/** Lateral vein i: where it leaves the midrib and the arc it follows. Mirrors deform.ts exactly. */
+fn lateralVein(i: i32, veins: i32, halfWidth: f32, side: f32) -> Lateral {
+  let k = f32(i) / f32(max(veins - 1, 1));
+  var out: Lateral;
+  out.u = 0.12 + 0.72 * k + side * 0.022;
+  let a0 = 1.0 - 0.35 * k;
+  out.r = halfWidth * (2.8 + 0.6 * k);
+  out.sweep = a0 - 0.25;
+  out.cx = out.r * sin(a0);
+  out.cy = -out.r * cos(a0);
+  out.phi0 = a0 + 1.57079633;
+  let phiEnd = out.phi0 - out.sweep;
+  out.end = vec2f(out.cx + out.r * cos(phiEnd), out.cy + out.r * sin(phiEnd));
+  return out;
+}
+
+/** Distance across a lateral (x) and along it (y), as a capsule: past an end, the distance is to that end. */
+fn lateralCoords(v: Lateral, dx: f32, ay: f32) -> vec2f {
+  let px = dx - v.cx; let py = ay - v.cy;
+  var sweep = v.phi0 - atan2(py, px);
+  if (sweep > 3.14159265) { sweep -= 6.2831853; }
+  if (sweep < -3.14159265) { sweep += 6.2831853; }
+  if (sweep < 0.0) { return vec2f(length(vec2f(dx, ay)), 0.0); }
+  if (sweep > v.sweep) { return vec2f(length(vec2f(dx, ay) - v.end), v.r * v.sweep); }
+  return vec2f(abs(length(vec2f(px, py)) - v.r), v.r * sweep);
+}
+
+/** The relief as a unit field, before the ridge height scales it. */
+fn reliefField(x: f32, y: f32) -> f32 {
+  let length = material.reliefLength;
+  let halfWidth = material.reliefHalfWidth;
+  let wm = halfWidth * 0.16;
+  let wl = halfWidth * 0.11;
+  let u = clamp(x / length, 0.0, 1.0);
+  let spine = sin(3.14159265 * u) * material.reliefDroop * length;
+  let yy = y - spine;
+  let ay = abs(yy);
+  let taper = pow(1.0 - u, 0.7) * reliefSmooth(0.0, 0.1, u);
+  var h = exp(-(yy * yy) / (wm * wm)) * taper;
+  let margin = 1.0 - reliefSmooth(0.7, 1.0, ay / halfWidth);
+  let side = select(1.0, -1.0, yy < 0.0);
+  var lateral = 0.0;
+  let veins = i32(material.reliefVeins);
+  for (var i = 0; i < veins; i++) {
+    let v = lateralVein(i, veins, halfWidth, side);
+    let c = lateralCoords(v, x - v.u * length, ay);
+    let along = reliefSmooth(0.0, wl * 2.0, c.y) * exp(-(c.y * c.y) / (halfWidth * halfWidth * 1.4));
+    lateral = max(lateral, exp(-(c.x * c.x) / (wl * wl)) * along);
+  }
+  h += 0.55 * lateral * margin * pow(1.0 - u, 0.4);
+  return h;
+}
+
+fn reliefHeight(x: f32, y: f32) -> f32 { return material.relief * reliefField(x, y); }
+
+/**
+ * Signed distance to the edge of the cloisonné wire: negative inside it. The
+ * wire has a width of its own — a third of a millimetre at the midrib,
+ * thinning along each vein — and its own extent: it starts on the midrib,
+ * runs out until the enamel cell's rim clips it, and where it ends short of
+ * that it ends in a round cap. The ridge's fades do not apply to it.
+ */
+fn veinWire(x: f32, y: f32) -> f32 {
+  let length = material.reliefLength;
+  let halfWidth = material.reliefHalfWidth;
+  let u = clamp(x / length, 0.0, 1.0);
+  let spine = sin(3.14159265 * u) * material.reliefDroop * length;
+  let yy = y - spine;
+  let ay = abs(yy);
+  let side = select(1.0, -1.0, yy < 0.0);
+  let halfWire = 0.16;
+  var sdf = ay - halfWire * (1.0 - 0.35 * u);
+  let veins = i32(material.reliefVeins);
+  for (var i = 0; i < veins; i++) {
+    let v = lateralVein(i, veins, halfWidth, side);
+    let c = lateralCoords(v, x - v.u * length, ay);
+    let taper = 1.0 - 0.45 * c.y / (v.r * v.sweep);
+    sdf = min(sdf, c.x - halfWire * 0.85 * taper);
+  }
+  return sdf;
 }
 
 /** Planished dimpling: three crossed waves. */
@@ -172,7 +281,26 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   let v = normalize(frame.cameraPos - in.world);
   if (!frontFacing) { n = -n; }
 
-  let tbn = tangentFrame(n, in.world, in.uv);
+  var tbn = tangentFrame(n, in.world, in.uv);
+  // how much of the flat plate one pixel covers, for antialiasing anything drawn on it
+  let plateFootprint = max(0.75 * length(vec2f(dpdx(in.plate.x), dpdy(in.plate.x))), 0.005);
+
+  // --- chased relief: bend the normal by the height field's gradient, per pixel ---
+  // The relief was applied as a shear along the flat plate's normal; the cup and
+  // curl that followed are bends, so the flat x and y directions are still unit
+  // tangents of the surface. The vertex normal carries no relief, so this is
+  // the whole of it.
+  if (material.relief > 0.0 && abs(in.cap) > 0.5) {
+    let eps = material.reliefHalfWidth * 1e-3;
+    let fx = (reliefHeight(in.plate.x + eps, in.plate.y) - reliefHeight(in.plate.x - eps, in.plate.y)) / (2.0 * eps);
+    let fy = (reliefHeight(in.plate.x, in.plate.y + eps) - reliefHeight(in.plate.x, in.plate.y - eps)) / (2.0 * eps);
+    let t = normalize(tbn[0] - n * dot(tbn[0], n));
+    let b = normalize(tbn[1] - n * dot(tbn[1], n));
+    n = normalize(n - in.cap * (fx * t + fy * b) * select(1.0, -1.0, !frontFacing));
+    // re-square the frame to the new normal without touching the derivatives,
+    // which may not be taken inside a branch this pixel's neighbours may skip
+    tbn = mat3x3f(normalize(t - n * dot(t, n)), normalize(b - n * dot(b, n)), n);
+  }
 
   var roughness = material.roughness;
   var f0 = material.f0;
@@ -286,7 +414,15 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
       // stays even in an opaque enamel, where the layer is thin at the rim.
       let through = specular * material.enamelColour * (1.0 - material.enamelOpacity);
       let body = irradiance * material.enamelColour * ao * material.enamelOpacity;
-      let enamel = (eSpecular + (1.0 - eFresnel) * (body + through)) * frame.exposure;
+      var enamel = (eSpecular + (1.0 - eFresnel) * (body + through)) * frame.exposure;
+      // Cloisonné: wires of a second metal set along the veins. The same field
+      // that raises the relief says where a vein runs; its core is the wire.
+      // The wire is polished, and reflects what the glass beside it reflects.
+      if (material.veinOn > 0.0) {
+        let wire = 1.0 - smoothstep(-plateFootprint, plateFootprint, veinWire(in.plate.x, in.plate.y));
+        let wireColour = eReflected * (material.veinF0 * eAb.x + eAb.y) * frame.exposure;
+        enamel = mix(enamel, wireColour, wire);
+      }
       colour = mix(colour, enamel, in.enamel);
     }
   }

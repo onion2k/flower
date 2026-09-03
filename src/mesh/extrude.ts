@@ -50,6 +50,7 @@ export function extrude(opts: ExtrudeOptions): Mesh {
   const mb = new MeshBuilder();
   const span = boundsOf(opts.outline);
   let topCap: [number, number] = [0, 0];
+  let bottomCap: [number, number] = [0, 0];
 
   // --- caps, from the inset outline so the bevel has somewhere to sit ---
   for (const top of [true, false]) {
@@ -78,6 +79,7 @@ export function extrude(opts: ExtrudeOptions): Mesh {
       mb.vertex(x, y, z, 0, 0, nz, (x - span.minX) / span.width, (y - span.minY) / span.height);
     }
     if (top) topCap = [base, mb.vertexCount];
+    else bottomCap = [base, mb.vertexCount];
     for (let i = 0; i < tri.length; i += 3) {
       // Every triangle is kept, including the occasional sliver earcut leaves
       // where an outline is nearly collinear. They are invisible, but they carry
@@ -103,6 +105,9 @@ export function extrude(opts: ExtrudeOptions): Mesh {
   }
 
   const mesh = mb.build();
+  mesh.cap = new Float32Array(mesh.positions.length / 3);
+  mesh.cap.fill(1, topCap[0], topCap[1]);
+  mesh.cap.fill(-1, bottomCap[0], bottomCap[1]);
   if (opts.enamelTop) {
     mesh.enamel = new Float32Array(mesh.positions.length / 3);
     mesh.enamel.fill(1, topCap[0], topCap[1]);
@@ -496,6 +501,13 @@ function perimeterParam(loop: Vec2[]): number[] {
   }
   return total > 0 ? out.map((d) => d / total) : out;
 }
+
+/**
+ * The box the cap's uv is measured against: u = (x - minX) / width and
+ * v = (y - minY) / height, so anything that knows this box can turn a cap
+ * uv back into the flat plate's coordinates.
+ */
+export function outlineSpan(loop: Vec2[]) { return boundsOf(loop); }
 
 function boundsOf(loop: Vec2[]) {
   let minX = Infinity, minY = Infinity, maxX = -Infinity, maxY = -Infinity;

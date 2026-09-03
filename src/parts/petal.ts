@@ -2,9 +2,9 @@ import {
   clearsOthers, ensureWinding, fitsInside, petalOutline, transformLoop, veinPiercings,
   circleOutline, type PetalEdge, type PetalShape,
 } from '../geom/outline';
-import { extrude } from '../mesh/extrude';
+import { extrude, outlineSpan } from '../mesh/extrude';
 import { chordLimit, deform, deformAnchor } from '../mesh/deform';
-import { meshBounds, type Anchor, type Part } from './types';
+import { meshBounds, type Anchor, type Part, type PlateRelief } from './types';
 import type { Vec2 } from '../geom/types';
 
 export interface PetalSpec {
@@ -42,6 +42,8 @@ export interface PetalSpec {
   bossBore?: number;
   /** Enamel fired into the top face, by colour name. The bevel stays metal. */
   enamel?: string;
+  /** Metal wires along the veins of an enamelled face, by metal name. */
+  veinMetal?: string;
 }
 
 /**
@@ -127,5 +129,7 @@ export function petal(spec: PetalSpec): Part {
     boss.axis = moved.axis;
   }
 
-  return { name: spec.name ?? 'petal', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
+  const sp = outlineSpan(outline);
+  const relief: PlateRelief = { height: fields.relief, veins: fields.reliefVeins, length: spec.length, halfWidth: fields.halfWidth, droop: spec.droop ?? 0, span: [sp.minX, sp.minY, sp.width, sp.height] };
+  return { name: spec.name ?? 'petal', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel, relief, veinMetal: spec.veinMetal };
 }

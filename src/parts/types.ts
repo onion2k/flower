@@ -31,6 +31,28 @@ export interface Part {
   material?: { metal?: string; finish?: string };
   /** Enamel colour name, for a part whose mesh marks an enamelled face. */
   enamel?: string;
+  /** Chased relief on a plate, for the shader to shade per pixel. */
+  relief?: PlateRelief;
+  /** Metal of the wires set along the veins of an enamelled plate, cloisonné fashion. */
+  veinMetal?: string;
+}
+
+/**
+ * The parameters of a plate's vein relief, exactly as `deform` displaced it,
+ * so the scene shader can evaluate the same height field per pixel and shade
+ * a ridge smoothly however coarse the cap's lattice is.
+ */
+export interface PlateRelief {
+  /** Ridge height. */
+  height: number;
+  /** Count of lateral ridges. */
+  veins: number;
+  length: number;
+  halfWidth: number;
+  /** Sideways bow of the midrib: spine(x) = sin(pi x / length) * droop * length. */
+  droop: number;
+  /** The box the cap uv is measured against: minX, minY, width, height. */
+  span: [number, number, number, number];
 }
 
 export const findAnchor = (part: Part, name: string): Anchor => {
