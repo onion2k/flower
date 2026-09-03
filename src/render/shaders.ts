@@ -15,6 +15,8 @@ struct Frame {
   debug: f32,      // 0 shaded, 1 normals, 2 uv, 3 roughness, 4 prefiltered, 5 brdf, 6 occlusion, 7 wear
   maxLod: f32,
   occlusionOn: f32,
+  // 1 while something is selected: the rest of the piece steps back
+  selecting: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
@@ -96,6 +98,7 @@ struct VsIn {
   @location(6) im2: vec4f,
   @location(7) im3: vec4f,
   @location(8) face: vec2f,     // enamel, cap
+  @location(9) selected: f32,
   @builtin(vertex_index) vid: u32,
   @builtin(instance_index) iid: u32,
 };
@@ -116,6 +119,7 @@ struct VsOut {
   // the part's own up and across, in world space: which way a stone is standing
   @location(9) axis: vec3f,
   @location(10) side: vec3f,
+  @location(11) @interpolate(flat) selected: f32,
 };
 
 @vertex fn vsMain(in: VsIn) -> VsOut {
@@ -130,6 +134,7 @@ struct VsOut {
 
   var out: VsOut;
   out.clip = frame.viewProj * world;
+  out.selected = in.selected;
   // placements are rigid with uniform scale, so rotating the normal is exact
   out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
   out.world = world.xyz;
@@ -546,6 +551,13 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
       }
       colour = mix(colour, enamel, in.enamel);
     }
+  }
+
+  // Selection: what the cursor is on keeps its light and takes a warm cast;
+  // everything else drops back so the chosen instances read at a glance.
+  if (frame.selecting > 0.5) {
+    let glow = vec3f(0.95, 0.62, 0.18) * frame.exposure * 0.22;
+    colour = mix(colour * 0.22, colour * 1.1 + glow, in.selected);
   }
 
   let d = frame.debug;

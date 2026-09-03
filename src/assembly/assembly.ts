@@ -7,12 +7,24 @@ import { cross, dot, normalize, sub } from '../geom/vec';
 import type { Anchor, Part } from '../parts/types';
 import type { Symmetry } from '../pattern/symmetry';
 
+/** Where in a sketch's source a placement came from. A DSL span satisfies this. */
+export interface Origin {
+  start: number;
+  end: number;
+}
+
 /** One part, placed. `anchors` are already in assembly space. */
 export interface Placement {
   part: Part;
   matrix: Mat4;
   anchors: Anchor[];
   anchor(name: string): Anchor;
+  /**
+   * The statements that made this placement, innermost first: the `place`
+   * inside a unit, then the unit, then the `repeat` that copied it. Empty
+   * when the assembly was built in TypeScript.
+   */
+  origins: Origin[];
 }
 
 export interface ConnectOptions {
@@ -42,8 +54,8 @@ export class Assembly {
 
   constructor(readonly name = 'assembly') {}
 
-  place(part: Part, matrix: Mat4 = identity()): Placement {
-    const p = makePlacement(part, matrix);
+  place(part: Part, matrix: Mat4 = identity(), origin?: Origin): Placement {
+    const p = makePlacement(part, matrix, origin ? [origin] : []);
     this.placements.push(p);
     return p;
   }
@@ -56,27 +68,32 @@ export class Assembly {
    * direction — a leaf, a lens section, a hex head — lands the right way round
    * instead of at an arbitrary roll.
    */
-  connect(target: Anchor, part: Part, anchorName: string, opts: ConnectOptions = {}): Placement {
+  connect(target: Anchor, part: Part, anchorName: string, opts: ConnectOptions = {}, origin?: Origin): Placement {
     const source = part.anchors.find((a) => a.name === anchorName);
     if (!source) throw new Error(`part "${part.name}" has no anchor "${anchorName}"`);
-    const p = makePlacement(part, mate(target, source, opts));
+    const p = makePlacement(part, mate(target, source, opts), origin ? [origin] : []);
     this.placements.push(p);
     return p;
   }
 
   /** Copy an assembly in under every transform of a symmetry. */
-  repeat(sub: Assembly, symmetry: Symmetry): void {
+  repeat(sub: Assembly, symmetry: Symmetry, origin?: Origin): void {
     for (const t of symmetry) {
       for (const p of sub.placements) {
-        this.placements.push(makePlacement(p.part, multiply(t, p.matrix)));
+        this.placements.push(makePlacement(p.part, multiply(t, p.matrix), extend(p.origins, origin)));
       }
     }
   }
 
-  merge(sub: Assembly, transform: Mat4 = identity()): void {
+  merge(sub: Assembly, transform: Mat4 = identity(), origin?: Origin): void {
     for (const p of sub.placements) {
-      this.placements.push(makePlacement(p.part, multiply(transform, p.matrix)));
+      this.placements.push(makePlacement(p.part, multiply(transform, p.matrix), extend(p.origins, origin)));
     }
+  }
+
+  /** Note a statement that encloses everything placed so far, such as the unit it was placed in. */
+  enclose(origin: Origin): void {
+    for (const p of this.placements) p.origins.push(origin);
   }
 
   bounds(): Box3 {
@@ -117,7 +134,9 @@ export class Assembly {
   }
 }
 
-function makePlacement(part: Part, matrix: Mat4): Placement {
+const extend = (origins: Origin[], origin?: Origin) => (origin ? [...origins, origin] : [...origins]);
+
+function makePlacement(part: Part, matrix: Mat4, origins: Origin[]): Placement {
   const anchors = part.anchors.map((a) => ({
     ...a,
     position: transformPoint(matrix, a.position),
@@ -128,6 +147,7 @@ function makePlacement(part: Part, matrix: Mat4): Placement {
     part,
     matrix,
     anchors,
+    origins,
     anchor(name: string) {
       const found = anchors.find((a) => a.name === name);
       if (!found) throw new Error(`placement of "${part.name}" has no anchor "${name}"`);

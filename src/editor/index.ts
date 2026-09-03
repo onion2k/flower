@@ -2,7 +2,7 @@ import { completionKeymap } from '@codemirror/autocomplete';
 import { defaultKeymap, history, historyKeymap, indentWithTab } from '@codemirror/commands';
 import { bracketMatching, indentOnInput } from '@codemirror/language';
 import { lintGutter, setDiagnostics } from '@codemirror/lint';
-import { Annotation, EditorState } from '@codemirror/state';
+import { Annotation, EditorSelection, EditorState } from '@codemirror/state';
 import {
   drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers,
 } from '@codemirror/view';
@@ -14,6 +14,8 @@ import { parameterHelp } from './help';
 export interface SketchEditor {
   view: EditorView;
   get(): string;
+  /** Put the cursor on a range of the source and bring it into view. */
+  jumpTo(start: number, end: number): void;
   /** Replace the whole document, as when picking another sketch. Does not fire onChange. */
   set(source: string): void;
   /** Put the compile error in the gutter, or clear it. */
@@ -41,7 +43,9 @@ const theme = EditorView.theme({
 /** Marks a wholesale swap of the document, which is not an edit the model should rebuild for. */
 const replacing = Annotation.define<boolean>();
 
-export function createEditor(parent: HTMLElement, doc: string, onChange: () => void): SketchEditor {
+export function createEditor(
+  parent: HTMLElement, doc: string, onChange: () => void, onCursor: (pos: number) => void,
+): SketchEditor {
   const view = new EditorView({
     parent,
     state: EditorState.create({
@@ -64,6 +68,9 @@ export function createEditor(parent: HTMLElement, doc: string, onChange: () => v
         theme,
         EditorView.updateListener.of((u) => {
           if (u.docChanged && !u.transactions.some((t) => t.annotation(replacing))) onChange();
+          // a cursor move is silent while the text is changing: the rebuild's own
+          // report will place the selection against the new placements
+          else if (u.selectionSet) onCursor(u.state.selection.main.head);
         }),
       ],
     }),
@@ -72,6 +79,17 @@ export function createEditor(parent: HTMLElement, doc: string, onChange: () => v
   return {
     view,
     get: () => view.state.doc.toString(),
+    jumpTo(start, end) {
+      const max = view.state.doc.length;
+      const from = Math.min(start, max);
+      const to = Math.min(end, max);
+      // the statement is selected whole so it reads as "this line made that"
+      view.dispatch({
+        selection: EditorSelection.range(to, from),
+        effects: EditorView.scrollIntoView(from, { y: 'center' }),
+      });
+      view.focus();
+    },
     set(source) {
       view.dispatch({
         changes: { from: 0, to: view.state.doc.length, insert: source },

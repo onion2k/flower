@@ -83,6 +83,8 @@ interface Context {
 
 export interface Sketch {
   assembly: Assembly;
+  /** Where each part was declared, for finding every placement of it. */
+  partSpans: Map<Part, Span>;
   /** Default material for anything that did not name its own. */
   metal?: string;
   finish?: string;
@@ -161,6 +163,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
   const units = new Map<string, Assembly>();
   const forms = new Map<string, Assembly>();
   const partCache = new Map<Expr, Part>();
+  const partSpans = new Map<Part, Span>();
   const partMaterials = new Map<Part, { metal?: string; finish?: string }>();
 
   /**
@@ -361,14 +364,14 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         if (action.part.kind === 'ident' && !scope.has(action.part.name)) {
           const sub = units.get(action.part.name) ?? forms.get(action.part.name);
           if (sub) {
-            assembly.merge(sub, placementMatrix(action.placement));
+            assembly.merge(sub, placementMatrix(action.placement), action.span);
             continue;
           }
         }
 
         const part = evalPart(action.part);
         applyMaterial(part, action.placement.material, action.span);
-        const placement = assembly.place(part, placementMatrix(action.placement));
+        const placement = assembly.place(part, placementMatrix(action.placement), action.span);
         if (name) placed.set(name, placement);
         continue;
       }
@@ -410,7 +413,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
           roll: action.placement.turn ? num(action.placement.turn) : 0,
           offset: action.placement.offset ? num(action.placement.offset) : 0,
           scale: action.placement.scale ? num(action.placement.scale) : 1,
-        });
+        }, action.span);
         solderFillet(assembly, owner, anchor, placement, anchorName, fillets);
         const name = action.placement.as ?? nameOf(action.part);
         if (name) placed.set(name, placement);
@@ -440,7 +443,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         sub = new Assembly(part.name);
         sub.place(part);
       }
-      assembly.repeat(sub, symmetry);
+      assembly.repeat(sub, symmetry, action.span);
     }
   }
 
@@ -497,6 +500,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         value.name = statement.name;
         applyMaterial(value, statement.material, statement.span);
         scope.set(statement.name, value);
+        partSpans.set(value, statement.span);
         break;
       }
 
@@ -504,6 +508,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         claim(statement.name, statement.span);
         const assembly = new Assembly(statement.name);
         runActions(assembly, statement.actions);
+        assembly.enclose(statement.span);
         units.set(statement.name, assembly);
         break;
       }
@@ -527,6 +532,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
 
   return {
     assembly: forms.get(lastForm)!,
+    partSpans,
     metal: defaultMetal,
     finish: defaultFinish,
     formName: lastForm,

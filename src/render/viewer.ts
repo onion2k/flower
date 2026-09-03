@@ -13,6 +13,7 @@ import { Camera, Orbit } from '../gpu/camera';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor, PlateRelief } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
+import { invert, transformDirection, transformPoint } from '../geom/transform';
 import { computeWear } from '../mesh/wear';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
@@ -25,7 +26,7 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 176;
-const FRAME_SIZE = 96;
+const FRAME_SIZE = 112;
 
 export type Quality = 'draft' | 'final';
 
@@ -54,6 +55,8 @@ interface GpuGroup {
   /** Per vertex: enamel 0 or 1, and which cap (+1 top, -1 bottom, 0 neither). */
   face: GPUBuffer;
   instance: GPUBuffer;
+  /** One float per instance: 1 when it is selected. */
+  selected: GPUBuffer;
   index: GPUBuffer;
   indexCount: number;
   instanceCount: number;
@@ -250,6 +253,7 @@ export class Viewer {
           { arrayStride: 4, attributes: [{ shaderLocation: 3, offset: 0, format: 'float32' }] },
           instanceLayout,
           { arrayStride: 8, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32x2' }] },
+          { arrayStride: 4, stepMode: 'instance', attributes: [{ shaderLocation: 9, offset: 0, format: 'float32' }] },
         ],
       },
       fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
@@ -370,7 +374,7 @@ export class Viewer {
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
     for (const g of this.groups) {
-      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.instance, g.index]) b.destroy();
+      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.instance, g.selected, g.index]) b.destroy();
     }
     const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
     this.groups = groups.map((g) => ({
@@ -381,6 +385,7 @@ export class Viewer {
       wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
       face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
       instance: bufferFrom(device, g.matrices, shared, 'instances'),
+      selected: emptyBuffer(device, (g.matrices.length / 16) * 4, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, 'selected'),
       index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
       indexCount: g.mesh.indices.length,
       instanceCount: g.matrices.length / 16,
@@ -412,6 +417,63 @@ export class Viewer {
       total += g.vertexCount * g.instanceCount;
     }
     return bases;
+  }
+
+  private selecting = false;
+
+  /**
+   * Mark instances as selected, one array per group in the order they were
+   * given to setInstanced, or nothing to clear. With any selection on, the
+   * unselected instances are dimmed.
+   */
+  setSelection(selected: Array<Float32Array<ArrayBuffer>> | null) {
+    const { device } = this.ctx;
+    let any = false;
+    this.groups.forEach((g, k) => {
+      const flags: Float32Array<ArrayBuffer> = selected?.[k] ?? new Float32Array(g.instanceCount);
+      for (let i = 0; i < flags.length && !any; i++) if (flags[i]) any = true;
+      device.queue.writeBuffer(g.selected, 0, flags);
+    });
+    this.selecting = any;
+    this.dirty = true;
+  }
+
+  /**
+   * The instance under a canvas pixel, or null. A ray is cast on the CPU
+   * against each placement's box and then its triangles, in the part's own
+   * space so the mesh is tested untransformed.
+   */
+  pick(x: number, y: number): { group: number; instance: number } | null {
+    const canvas = this.ctx.canvas;
+    const rect = canvas.getBoundingClientRect();
+    const nx = ((x - rect.left) / rect.width) * 2 - 1;
+    const ny = 1 - ((y - rect.top) / rect.height) * 2;
+    this.camera.update();
+    const inv = invert(this.camera.viewProjection);
+    if (!inv) return null;
+    const near = unproject(inv, nx, ny, 0);
+    const far = unproject(inv, nx, ny, 1);
+    if (!near || !far) return null;
+    const dir: Vec3 = [far[0] - near[0], far[1] - near[1], far[2] - near[2]];
+
+    let best = Infinity;
+    let hit: { group: number; instance: number } | null = null;
+    this.groups.forEach((g, k) => {
+      const mesh = g.source.mesh;
+      const box = boundsOf(mesh);
+      for (let i = 0; i < g.instanceCount; i++) {
+        const m = g.source.matrices.subarray(i * 16, i * 16 + 16);
+        const local = invert(m);
+        if (!local) continue;
+        const o = transformPoint(local, near);
+        const d = transformDirection(local, dir);
+        const t = raySlab(o, d, box);
+        if (t === null || t > best) continue;
+        const th = rayMesh(o, d, mesh, best);
+        if (th !== null && th < best) { best = th; hit = { group: k, instance: i }; }
+      }
+    });
+    return hit;
   }
 
   setMesh(data: PartMesh) {
@@ -547,6 +609,7 @@ export class Viewer {
     frame[21] = this.debugMode;
     frame[22] = (this.environment?.mips ?? 1) - 1;
     frame[23] = this.occlusion ? 1 : 0;
+    frame[24] = this.selecting ? 1 : 0;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -581,6 +644,7 @@ export class Viewer {
         pass.setVertexBuffer(3, g.wear);
         pass.setVertexBuffer(4, g.instance);
         pass.setVertexBuffer(5, g.face);
+        pass.setVertexBuffer(6, g.selected);
         pass.setIndexBuffer(g.index, 'uint32');
         pass.drawIndexed(g.indexCount, g.instanceCount);
       });
@@ -731,6 +795,78 @@ export class Viewer {
     this.groundBind = null;
     this.rebuildFrameBind();
   }
+}
+
+function unproject(inv: Float32Array, x: number, y: number, z: number): Vec3 | null {
+  const w = inv[3] * x + inv[7] * y + inv[11] * z + inv[15];
+  if (!w) return null;
+  return [
+    (inv[0] * x + inv[4] * y + inv[8] * z + inv[12]) / w,
+    (inv[1] * x + inv[5] * y + inv[9] * z + inv[13]) / w,
+    (inv[2] * x + inv[6] * y + inv[10] * z + inv[14]) / w,
+  ];
+}
+
+const boundsCache = new WeakMap<PartMesh, Box3>();
+function boundsOf(mesh: PartMesh): Box3 {
+  let b = boundsCache.get(mesh);
+  if (b) return b;
+  const min: Vec3 = [Infinity, Infinity, Infinity];
+  const max: Vec3 = [-Infinity, -Infinity, -Infinity];
+  const p = mesh.positions;
+  for (let i = 0; i < p.length; i += 3) {
+    for (let k = 0; k < 3; k++) {
+      if (p[i + k] < min[k]) min[k] = p[i + k];
+      if (p[i + k] > max[k]) max[k] = p[i + k];
+    }
+  }
+  b = { min, max };
+  boundsCache.set(mesh, b);
+  return b;
+}
+
+/** Entry parameter of a ray into a box, or null when it misses. */
+function raySlab(o: Vec3, d: Vec3, b: Box3): number | null {
+  let t0 = 0;
+  let t1 = Infinity;
+  for (let k = 0; k < 3; k++) {
+    if (Math.abs(d[k]) < 1e-12) {
+      if (o[k] < b.min[k] || o[k] > b.max[k]) return null;
+      continue;
+    }
+    let a = (b.min[k] - o[k]) / d[k];
+    let c = (b.max[k] - o[k]) / d[k];
+    if (a > c) [a, c] = [c, a];
+    if (a > t0) t0 = a;
+    if (c < t1) t1 = c;
+    if (t0 > t1) return null;
+  }
+  return t0;
+}
+
+/** Nearest triangle hit under `limit`, by Möller–Trumbore, either facing. */
+function rayMesh(o: Vec3, d: Vec3, mesh: PartMesh, limit: number): number | null {
+  const p = mesh.positions;
+  const ix = mesh.indices;
+  let best: number | null = null;
+  for (let i = 0; i < ix.length; i += 3) {
+    const a = ix[i] * 3, b = ix[i + 1] * 3, c = ix[i + 2] * 3;
+    const e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
+    const e2x = p[c] - p[a], e2y = p[c + 1] - p[a + 1], e2z = p[c + 2] - p[a + 2];
+    const px = d[1] * e2z - d[2] * e2y, py = d[2] * e2x - d[0] * e2z, pz = d[0] * e2y - d[1] * e2x;
+    const det = e1x * px + e1y * py + e1z * pz;
+    if (Math.abs(det) < 1e-12) continue;
+    const inv = 1 / det;
+    const tx = o[0] - p[a], ty = o[1] - p[a + 1], tz = o[2] - p[a + 2];
+    const u = (tx * px + ty * py + tz * pz) * inv;
+    if (u < 0 || u > 1) continue;
+    const qx = ty * e1z - tz * e1y, qy = tz * e1x - tx * e1z, qz = tx * e1y - ty * e1x;
+    const v = (d[0] * qx + d[1] * qy + d[2] * qz) * inv;
+    if (v < 0 || u + v > 1) continue;
+    const t = (e2x * qx + e2y * qy + e2z * qz) * inv;
+    if (t > 0 && t < limit && (best === null || t < best)) best = t;
+  }
+  return best;
 }
 
 /** A unit disc in the XY plane, wound counter-clockwise seen from +Z. */

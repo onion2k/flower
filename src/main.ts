@@ -7,7 +7,9 @@ import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
 import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
-import type { Anchor, PlateRelief } from './parts/types';
+import type { Anchor, Part, PlateRelief } from './parts/types';
+import type { Placement } from './assembly/assembly';
+import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
 import { Viewer, type Quality } from './render/viewer';
 import { createEditor } from './editor/index';
@@ -146,7 +148,7 @@ let recompile = 0;
 const editor = createEditor(document.getElementById('source')!, examples[exampleNames[0]], () => {
   clearTimeout(recompile);
   recompile = window.setTimeout(build, 120);
-});
+}, (pos) => selectFromSource(pos));
 subjectSet.append(select);
 
 let metalSelect: HTMLSelectElement;
@@ -216,18 +218,20 @@ controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  const byMesh = new Map<Mesh, { matrices: number[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number }>();
+  const byMesh = new Map<Mesh, { matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number }>();
   for (const p of assembly.placements) {
     let group = byMesh.get(p.part.mesh);
     if (!group) {
-      group = { matrices: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets };
+      group = { matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets };
       byMesh.set(p.part.mesh, group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
+    group.placements.push(p);
   }
   return [...byMesh].map(([mesh, g]) => ({
     mesh,
     matrices: new Float32Array(g.matrices),
+    placements: g.placements,
     metal: g.metal,
     finish: g.finish,
     enamel: g.enamel,
@@ -237,12 +241,58 @@ function groupByMesh(assembly: Assembly) {
   }));
 }
 
+/** The groups on screen, placement by placement, so a pick or a cursor can be traced. */
+let shown: Array<{ placements: Placement[] }> = [];
+let partSpans = new Map<Part, Span>();
+
+/**
+ * Source to screen: light every placement the statement under the cursor
+ * had a hand in. A `place` inside a unit lights its copies under every
+ * repeat, the repeat lights everything it copied, a part declaration lights
+ * every placement of that part. With the cursor elsewhere nothing is dimmed.
+ */
+function selectFromSource(pos: number) {
+  if (!shown.length) return;
+  const within = (s: { start: number; end: number }) => pos >= s.start && pos <= s.end;
+  let any = false;
+  const flags = shown.map((g) => {
+    const f = new Float32Array(g.placements.length) as Float32Array<ArrayBuffer>;
+    g.placements.forEach((p, i) => {
+      const span = partSpans.get(p.part);
+      if ((span && within(span)) || p.origins.some(within)) { f[i] = 1; any = true; }
+    });
+    return f;
+  });
+  viewer.setSelection(any ? flags : null);
+}
+
+/** Screen to source: a click on an instance selects the statement that placed it. */
+{
+  let downAt: [number, number] | null = null;
+  stage.addEventListener('pointerdown', (e) => {
+    downAt = e.button === 0 && !e.shiftKey ? [e.clientX, e.clientY] : null;
+  });
+  stage.addEventListener('pointerup', (e) => {
+    if (!downAt) return;
+    const moved = Math.hypot(e.clientX - downAt[0], e.clientY - downAt[1]);
+    downAt = null;
+    if (moved > 4 || !shown.length) return;
+    const hit = viewer.pick(e.clientX, e.clientY);
+    if (!hit) { viewer.setSelection(null); return; }
+    const placement = shown[hit.group]?.placements[hit.instance];
+    const origin = placement?.origins[0];
+    if (origin) editor.jumpTo(origin.start, origin.end);
+    else viewer.setSelection(null);
+  });
+}
+
 function build() {
   const [kind] = select.value.split(':');
   editorPane.classList.toggle('open', kind === 'Sketches');
 
   const t0 = performance.now();
   let assembly: Assembly;
+  partSpans = new Map();
 
   if (kind === 'Sketches') {
     const result = compile(editor.get());
@@ -256,6 +306,7 @@ function build() {
     diagnosticText.textContent = `${result.sketch!.formName} — ${result.sketch!.assembly.stats().instances} placements`;
     diagnosticEl.classList.remove('bad');
     assembly = result.sketch!.assembly;
+    partSpans = result.sketch!.partSpans;
     // a sketch declares its own material, so follow it in the panel too
     if (result.sketch!.metal) state.metal = result.sketch!.metal;
     if (result.sketch!.finish) state.finish = result.sketch!.finish;
@@ -270,7 +321,10 @@ function build() {
   }
   const ms = performance.now() - t0;
 
-  viewer.setInstanced(groupByMesh(assembly));
+  const groups = groupByMesh(assembly);
+  viewer.setInstanced(groups);
+  shown = kind === 'Sketches' ? groups : [];
+  selectFromSource(editor.view.state.selection.main.head);
 
   const bounds = assembly.bounds();
   const span = Math.max(

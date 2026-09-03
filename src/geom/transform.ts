@@ -103,3 +103,35 @@ export function frameAlong(origin: Vec3, x: Vec3, hint: Vec3 = [0, 0, 1], scale 
   z = normalize(z);
   return fromBasis(origin, xa, cross(z, xa), z, scale);
 }
+
+/** General 4x4 inverse, for carrying a ray into a placed part's own space. */
+export function invert(m: Mat4): Mat4 | null {
+  const a = m;
+  const b00 = a[0] * a[5] - a[1] * a[4], b01 = a[0] * a[6] - a[2] * a[4];
+  const b02 = a[0] * a[7] - a[3] * a[4], b03 = a[1] * a[6] - a[2] * a[5];
+  const b04 = a[1] * a[7] - a[3] * a[5], b05 = a[2] * a[7] - a[3] * a[6];
+  const b06 = a[8] * a[13] - a[9] * a[12], b07 = a[8] * a[14] - a[10] * a[12];
+  const b08 = a[8] * a[15] - a[11] * a[12], b09 = a[9] * a[14] - a[10] * a[13];
+  const b10 = a[9] * a[15] - a[11] * a[13], b11 = a[10] * a[15] - a[11] * a[14];
+  let det = b00 * b11 - b01 * b10 + b02 * b09 + b03 * b08 - b04 * b07 + b05 * b06;
+  if (!det) return null;
+  det = 1 / det;
+  const out = new Float32Array(16);
+  out[0] = (a[5] * b11 - a[6] * b10 + a[7] * b09) * det;
+  out[1] = (a[2] * b10 - a[1] * b11 - a[3] * b09) * det;
+  out[2] = (a[13] * b05 - a[14] * b04 + a[15] * b03) * det;
+  out[3] = (a[10] * b04 - a[9] * b05 - a[11] * b03) * det;
+  out[4] = (a[6] * b08 - a[4] * b11 - a[7] * b07) * det;
+  out[5] = (a[0] * b11 - a[2] * b08 + a[3] * b07) * det;
+  out[6] = (a[14] * b02 - a[12] * b05 - a[15] * b01) * det;
+  out[7] = (a[8] * b05 - a[10] * b02 + a[11] * b01) * det;
+  out[8] = (a[4] * b10 - a[5] * b08 + a[7] * b06) * det;
+  out[9] = (a[1] * b08 - a[0] * b10 - a[3] * b06) * det;
+  out[10] = (a[12] * b04 - a[13] * b02 + a[15] * b00) * det;
+  out[11] = (a[9] * b02 - a[8] * b04 - a[11] * b00) * det;
+  out[12] = (a[5] * b07 - a[4] * b09 - a[6] * b06) * det;
+  out[13] = (a[0] * b09 - a[1] * b07 + a[2] * b06) * det;
+  out[14] = (a[13] * b01 - a[12] * b03 - a[14] * b00) * det;
+  out[15] = (a[8] * b03 - a[9] * b01 + a[10] * b00) * det;
+  return out;
+}
