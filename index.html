@@ -26,11 +26,13 @@
       #editor { grid-column: 1; grid-row: 2; display: none; border-top: 1px solid var(--line);
         background: #0e1013; height: min(430px, 50vh); min-height: 0; }
       #editor.open { display: grid; grid-template-rows: minmax(0, 1fr) auto; }
-      #editor textarea { width: 100%; height: 100%; resize: none; border: 0; outline: 0;
-        background: transparent; color: var(--text); font: 12px/1.55 ui-monospace, SFMono-Regular, Menlo, monospace;
-        padding: 12px 14px; tab-size: 2; }
-      #diagnostic { padding: 8px 14px; border-top: 1px solid var(--line); font-size: 11px;
-        white-space: pre; overflow-x: auto; color: #6fcf7f; }
+      #source { min-height: 0; overflow: hidden; }
+      #source .cm-editor { height: 100%; }
+      #source .cm-editor.cm-focused { outline: none; }
+      #diagnostic { padding: 6px 14px; border-top: 1px solid var(--line); font-size: 11px;
+        white-space: pre-wrap; color: #6fcf7f; display: flex; justify-content: space-between; gap: 12px; }
+      #diagnostic .hint { color: var(--dim); white-space: nowrap; }
+      #diagnostic.bad .hint { display: none; }
       #diagnostic.bad { color: #e07a5f; }
       /* absolute so the canvas cannot push the grid cell it is measured against */
       #stage canvas { display: block; position: absolute; top: 0; left: 0; }
@@ -65,7 +67,7 @@
     <div id="app">
       <div id="stage"></div>
       <div id="editor">
-        <textarea id="source" spellcheck="false"></textarea>
+        <div id="source"></div>
         <div id="diagnostic"></div>
       </div>
       <div id="panel">

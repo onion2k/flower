@@ -10,24 +10,31 @@ import { identity } from './geom/transform';
 import type { Anchor, PlateRelief } from './parts/types';
 import type { Mesh } from './mesh/types';
 import { Viewer, type Quality } from './render/viewer';
+import { createEditor } from './editor/index';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
 const statsEl = document.getElementById('stats')!;
 const budgetEl = document.getElementById('budget')!;
 
-const editor = document.getElementById('editor')!;
-const sourceEl = document.getElementById('source') as HTMLTextAreaElement;
+const editorPane = document.getElementById('editor')!;
 const diagnosticEl = document.getElementById('diagnostic')!;
+const diagnosticText = document.createElement('span');
+const diagnosticHint = document.createElement('span');
+diagnosticHint.className = 'hint';
+diagnosticHint.textContent = navigator.platform.startsWith('Mac')
+  ? '⌥ drag a number to scrub · ⌥↑↓ nudge · ⇧ coarser · ⌘ finer'
+  : 'alt drag a number to scrub · alt↑↓ nudge · shift coarser · ctrl finer';
+diagnosticEl.append(diagnosticText, diagnosticHint);
 
 let viewer: Viewer;
 try {
   viewer = await Viewer.create(stage, (info) => {
-    diagnosticEl.textContent = `GPU device lost (${info.reason}): ${info.message || 'the GPU timed out'} — reload the page`;
+    diagnosticText.textContent = `GPU device lost (${info.reason}): ${info.message || 'the GPU timed out'} — reload the page`;
     diagnosticEl.classList.add('bad');
   });
 } catch (err) {
-  diagnosticEl.textContent = `renderer unavailable: ${(err as Error).message}`;
+  diagnosticText.textContent = `renderer unavailable: ${(err as Error).message}`;
   diagnosticEl.classList.add('bad');
   throw err;
 }
@@ -130,15 +137,15 @@ select.value = `Sketches:${state.subject}`;
 select.addEventListener('change', () => {
   const [kind, name] = select.value.split(':');
   state.subject = name;
-  if (kind === 'Sketches') sourceEl.value = examples[name];
+  if (kind === 'Sketches') editor.set(examples[name]);
   framed = '';
   build();
 });
 
 let recompile = 0;
-sourceEl.addEventListener('input', () => {
+const editor = createEditor(document.getElementById('source')!, examples[exampleNames[0]], () => {
   clearTimeout(recompile);
-  recompile = window.setTimeout(build, 180);
+  recompile = window.setTimeout(build, 120);
 });
 subjectSet.append(select);
 
@@ -232,20 +239,21 @@ function groupByMesh(assembly: Assembly) {
 
 function build() {
   const [kind] = select.value.split(':');
-  editor.classList.toggle('open', kind === 'Sketches');
+  editorPane.classList.toggle('open', kind === 'Sketches');
 
   const t0 = performance.now();
   let assembly: Assembly;
 
   if (kind === 'Sketches') {
-    const result = compile(sourceEl.value);
+    const result = compile(editor.get());
+    editor.report(result);
     if (result.error) {
-      diagnosticEl.textContent = result.error.formatted;
+      diagnosticText.textContent = `line ${result.error.line}: ${result.error.message}`;
       diagnosticEl.classList.add('bad');
       // keep the last good shape on screen rather than blanking on every keystroke
       return;
     }
-    diagnosticEl.textContent = `${result.sketch!.formName} — ${result.sketch!.assembly.stats().instances} placements`;
+    diagnosticText.textContent = `${result.sketch!.formName} — ${result.sketch!.assembly.stats().instances} placements`;
     diagnosticEl.classList.remove('bad');
     assembly = result.sketch!.assembly;
     // a sketch declares its own material, so follow it in the panel too
@@ -369,9 +377,8 @@ function report(assembly: Assembly, ms: number, span: number) {
     `${s.instances} placements built from ${s.uniqueTriangles.toLocaleString()} triangles of real geometry`;
 }
 
-sourceEl.value = examples[exampleNames[0]];
 viewer.setMaterial(state.metal, state.finish);
 build();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-(window as any).artshape = { state, build, select, viewer, formNames, catalogueNames };
+(window as any).artshape = { state, build, select, viewer, editor, formNames, catalogueNames };

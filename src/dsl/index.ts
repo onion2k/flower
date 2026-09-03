@@ -10,7 +10,7 @@ export type { CompileOptions, Sketch } from './eval';
 
 export interface CompileResult {
   sketch?: Sketch;
-  error?: { message: string; line: number; column: number; formatted: string };
+  error?: { message: string; line: number; column: number; start: number; end: number; formatted: string };
 }
 
 /**
@@ -30,6 +30,8 @@ export function compile(source: string, options: CompileOptions = {}): CompileRe
           message: error.message,
           line: error.span.line,
           column: error.span.column,
+          start: error.span.start,
+          end: error.span.end,
           formatted: formatError(source, error),
         },
       };
