@@ -15,6 +15,7 @@ import { Viewer, type Quality } from './render/viewer';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
 import { sketchNames } from './editor/help';
+import { store } from './editor/store';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
@@ -123,36 +124,164 @@ function slider(
 const subjectSet = document.createElement('fieldset');
 subjectSet.innerHTML = '<legend>Subject</legend>';
 const select = document.createElement('select');
-for (const [label, names] of [
-  ['Sketches', exampleNames], ['Forms', formNames], ['Parts', catalogueNames],
-] as const) {
-  const group = document.createElement('optgroup');
-  group.label = label;
-  for (const n of names) {
-    const opt = document.createElement('option');
-    opt.value = `${label}:${n}`;
-    opt.textContent = n;
-    group.append(opt);
+
+/** The dropdown: the writer's own sketches first, then what ships with the page. */
+function fillSubjects(keep?: string) {
+  select.replaceChildren();
+  for (const [label, names] of [
+    ['Mine', store.mineNames()], ['Sketches', exampleNames], ['Forms', formNames], ['Parts', catalogueNames],
+  ] as const) {
+    if (!names.length) continue;
+    const group = document.createElement('optgroup');
+    group.label = label;
+    for (const n of names) {
+      const opt = document.createElement('option');
+      opt.value = `${label}:${n}`;
+      opt.textContent = n;
+      group.append(opt);
+    }
+    select.append(group);
   }
-  select.append(group);
+  if (keep) select.value = keep;
 }
-state.subject = exampleNames[0];
-select.value = `Sketches:${state.subject}`;
-select.addEventListener('change', () => {
-  const [kind, name] = select.value.split(':');
+
+/** What the editor should show for a subject: a saved sketch, a draft, or the example itself. */
+function sourceFor(kind: string, name: string): string | undefined {
+  if (kind === 'Mine') return store.mine()[name];
+  if (kind === 'Sketches') return store.draft(name) ?? examples[name];
+  return undefined;
+}
+
+const isSketchKind = (kind: string) => kind === 'Sketches' || kind === 'Mine';
+
+fillSubjects();
+{
+  const remembered = store.subject();
+  const initial = remembered && [...select.options].some((o) => o.value === remembered)
+    ? remembered
+    : `Sketches:${exampleNames[0]}`;
+  select.value = initial;
+  state.subject = initial.split(':')[1];
+}
+
+function chooseSubject(value: string) {
+  select.value = value;
+  const [kind, name] = value.split(':');
   state.subject = name;
-  if (kind === 'Sketches') editor.set(examples[name]);
+  store.setSubject(value);
+  const source = sourceFor(kind, name);
+  if (source !== undefined) editor.set(source);
   framed = '';
+  refreshActions();
   build();
-});
+}
+select.addEventListener('change', () => chooseSubject(select.value));
+
+/** Every edit lands on its shelf: a saved sketch is rewritten, an example gains or loses a draft. */
+function persist() {
+  const [kind, name] = select.value.split(':');
+  const source = editor.get();
+  if (kind === 'Mine') store.save(name, source);
+  else if (kind === 'Sketches') store.setDraft(name, source === examples[name] ? undefined : source);
+  refreshActions();
+}
 
 let recompile = 0;
-const editor = createEditor(document.getElementById('source')!, examples[exampleNames[0]], () => {
+const editor = createEditor(document.getElementById('source')!, sourceFor(...select.value.split(':') as [string, string]) ?? '', () => {
   clearTimeout(recompile);
   recompile = window.setTimeout(build, 120);
+  persist();
 }, (pos) => selectFromSource(pos));
 buildPalette(document.getElementById('palette')!, editor.view);
 subjectSet.append(select);
+
+// --- the shelf: save as, reset, delete, export, import ---
+
+const actions = document.createElement('div');
+actions.className = 'actions';
+subjectSet.append(actions);
+
+function action(label: string, title: string, onClick: () => void) {
+  const b = document.createElement('button');
+  b.textContent = label;
+  b.title = title;
+  b.addEventListener('click', onClick);
+  actions.append(b);
+  return b;
+}
+
+/** A name for a copy: the form's name if the sketch compiles, else the subject's. */
+function suggestedName(): string {
+  const [, name] = select.value.split(':');
+  const result = compile(editor.get(), { resolve: resolveSketch });
+  return result.sketch?.formName ?? name;
+}
+
+const saveAs = action('save as…', 'keep a copy of this sketch under a name of your own', () => {
+  const name = window.prompt('Save this sketch as', suggestedName())?.trim();
+  if (!name) return;
+  if (store.mineNames().includes(name) && !window.confirm(`Replace the sketch called "${name}"?`)) return;
+  store.save(name, editor.get());
+  fillSubjects(`Mine:${name}`);
+  chooseSubject(`Mine:${name}`);
+});
+const reset = action('reset', 'throw away the changes to this example', () => {
+  const [, name] = select.value.split(':');
+  store.setDraft(name, undefined);
+  editor.set(examples[name]);
+  refreshActions();
+  build();
+});
+const remove = action('delete', 'remove this sketch from the browser', () => {
+  const [, name] = select.value.split(':');
+  if (!window.confirm(`Delete the sketch "${name}"? This cannot be undone.`)) return;
+  store.remove(name);
+  fillSubjects();
+  chooseSubject(`Sketches:${exampleNames[0]}`);
+});
+action('export', 'download this sketch as a text file', () => {
+  const [, name] = select.value.split(':');
+  const blob = new Blob([editor.get()], { type: 'text/plain' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${name}.sketch`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+});
+action('import…', 'open a sketch file from disk into Mine', () => {
+  const input = document.createElement('input');
+  input.type = 'file';
+  input.accept = '.sketch,.txt,text/plain';
+  input.addEventListener('change', async () => {
+    const file = input.files?.[0];
+    if (!file) return;
+    const source = await file.text();
+    let name = file.name.replace(/\.(sketch|txt)$/i, '');
+    if (store.mineNames().includes(name)) {
+      const chosen = window.prompt(`There is already a sketch called "${name}" — save this one as`, `${name} 2`)?.trim();
+      if (!chosen) return;
+      name = chosen;
+    }
+    store.save(name, source);
+    fillSubjects(`Mine:${name}`);
+    chooseSubject(`Mine:${name}`);
+  });
+  input.click();
+});
+
+/** Only the actions that make sense for the subject on screen are shown. */
+function refreshActions() {
+  const [kind, name] = select.value.split(':');
+  const sketch = isSketchKind(kind);
+  actions.hidden = !sketch;
+  saveAs.hidden = !sketch;
+  reset.hidden = !(kind === 'Sketches' && store.draft(name) !== undefined);
+  remove.hidden = kind !== 'Mine';
+}
+refreshActions();
+
+/** `use` looks on the shelf first, so a saved sketch can be brought into another. */
+const resolveSketch = (name: string) => store.mine()[name] ?? examples[name];
 
 let metalSelect: HTMLSelectElement;
 let finishSelect: HTMLSelectElement;
@@ -372,14 +501,14 @@ viewer.onFrame = () => { if (labelled.length) layoutLabels(); };
 
 function build() {
   const [kind] = select.value.split(':');
-  editorPane.classList.toggle('open', kind === 'Sketches');
+  editorPane.classList.toggle('open', isSketchKind(kind));
 
   const t0 = performance.now();
   let assembly: Assembly;
   partSpans = new Map();
 
-  if (kind === 'Sketches') {
-    const result = compile(editor.get());
+  if (isSketchKind(kind)) {
+    const result = compile(editor.get(), { resolve: resolveSketch });
     editor.report(result);
     if (result.error) {
       diagnosticText.textContent = `line ${result.error.line}: ${result.error.message}`;
@@ -409,7 +538,7 @@ function build() {
 
   const groups = groupByMesh(assembly);
   viewer.setInstanced(groups);
-  shown = kind === 'Sketches' ? groups : [];
+  shown = isSketchKind(kind) ? groups : [];
   selectFromSource(editor.view.state.selection.main.head);
 
   const bounds = assembly.bounds();
@@ -423,7 +552,7 @@ function build() {
     ? assembly.placements.flatMap((p) => p.anchors)
     : [];
   viewer.setAnchors(anchors, span * 0.02);
-  labelled = state.showAnchors && kind === 'Sketches'
+  labelled = state.showAnchors && isSketchKind(kind)
     ? assembly.placements.flatMap((p) => p.anchors.map((a) => ({ placement: p, anchor: a })))
     : [];
   layoutLabels();
