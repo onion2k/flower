@@ -574,7 +574,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let tint = orientTint(ndv, material.orient);
     let body = nacreBody(n, v, ndv, material.baseColour, ao);
     colour = (body * (1.0 - fresnel) * mix(vec3f(1.0), tint, 0.3) + reflected * fresnel * tint) * frame.exposure;
-    keyBody = material.baseColour * ao;
+    keyBody = material.baseColour * mix(1.0, ao, 0.5);
   } else if (gemstone) {
     // a hard dielectric mirror on the facet, the folded room underneath it,
     // and a flash where the facet catches something bright
@@ -627,14 +627,14 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let irradiance = env(spin * n, frame.maxLod);
     let diffuse = irradiance * body * ao;
     colour = (specular + diffuse) * frame.exposure;
-    keyBody = body * ao;
+    keyBody = body * mix(1.0, ao, 0.5);
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);
     // metal has no diffuse lobe, so this only shows where patina has taken hold
     let irradiance = env(spin * n, frame.maxLod);
     let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
     colour = (specular + diffuse) * frame.exposure;
-    keyBody = material.patinaColour * (1.0 - metallic) * ao;
+    keyBody = material.patinaColour * (1.0 - metallic) * mix(1.0, ao, 0.5);
 
     // Enamel: a glass skin over the metal, on the vertices that carry it. The
     // surface is a smooth dielectric with its own narrow highlight; under it
@@ -668,7 +668,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
       // the key sees the glass, not the metal under it
       keyF0 = mix(keyF0, vec3f(0.04), in.enamel);
       keyRough = mix(keyRough, eRough, in.enamel);
-      keyBody = mix(keyBody, material.enamelColour * material.enamelOpacity * ao, in.enamel);
+      keyBody = mix(keyBody, material.enamelColour * material.enamelOpacity * mix(1.0, ao, 0.5), in.enamel);
     }
   }
 
@@ -733,8 +733,10 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // it, and on a pale one the table is that colour with a shadow in it
   let albedo = max(ground.background, ground.albedo);
   let irradiance = env(spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod);
+  // each light carries its own shadow: the sky's the baked occlusion, the
+  // key's its shadow map — the key doesn't darken where the sky can't reach
   let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
-  let lit = albedo * (irradiance + key) * ao * frame.exposure;
+  let lit = albedo * (irradiance * ao + key) * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
