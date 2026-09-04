@@ -1,7 +1,7 @@
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { MeshBuilder, enamelWhole, mergeMeshes, recomputeNormals, type Mesh } from '../mesh/types';
-import type { Vec3 } from '../geom/types';
+import { leatherBinding } from './binding';
 import { meshBounds, type Anchor, type Part } from './types';
 
 /**
@@ -56,7 +56,8 @@ export interface AxeSpec {
    * Turns of a leather binding round the hand piece, 0 for a bare haft. The
    * binding covers `wrapLength` of the haft starting `wrapFrom` up it, both
    * as fractions of the whole — a long haft is gripped in one place, not
-   * bound end to end. Same construction as sword's grip: a cord, not a decal.
+   * bound end to end. A flat strap cut to its own pitch, so the turns abut;
+   * `wrapRadius` is half its thickness.
    */
   wrapTurns?: number;
   wrapRadius?: number;
@@ -179,24 +180,19 @@ export function axe(spec: AxeSpec): Part {
 
   const pieces: Mesh[] = spec.haft === false ? [eye, head] : [haft, eye, head];
 
-  // the hand piece: a helix round one stretch of the haft, standing a
-  // little proud of it, the same cord sword's own grip is bound with
+  // the hand piece: a flat strap wound round one stretch of the haft, each
+  // turn lying against the last so the wood under it is covered
   const wrapTurns = spec.wrapTurns ?? 0;
   if (wrapTurns > 0) {
-    const wrapRadius = spec.wrapRadius ?? haftRadius * 0.28;
     const wrapFrom = Math.min(Math.max(spec.wrapFrom ?? 0.06, 0), 0.95);
     const wrapLength = Math.min(Math.max(spec.wrapLength ?? 0.3, 0.01), 1 - wrapFrom);
-    const z0 = wrapFrom * spec.haftLength;
-    const span = wrapLength * spec.haftLength;
-    const reach = haftRadius + wrapRadius * 0.55;
-    const rows = Math.max(24, Math.round(wrapTurns * 14));
-    const path: Vec3[] = [];
-    for (let i = 0; i <= rows; i++) {
-      const t = i / rows;
-      const a = t * wrapTurns * Math.PI * 2;
-      path.push([Math.cos(a) * reach, Math.sin(a) * reach, z0 + t * span]);
-    }
-    const wrap = sweep(path, { profile: profile.circle(wrapRadius, 8), caps: true });
+    const wrap = leatherBinding({
+      shaftRadius: haftRadius,
+      z0: wrapFrom * spec.haftLength,
+      span: wrapLength * spec.haftLength,
+      turns: wrapTurns,
+      thickness: (spec.wrapRadius ?? haftRadius * 0.11) * 2,
+    });
     if (spec.enamel) enamelWhole(wrap);
     pieces.push(wrap);
   }

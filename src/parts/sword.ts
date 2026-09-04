@@ -5,6 +5,7 @@ import { blade as bladePart } from './wire';
 import { revolve } from '../mesh/revolve';
 import { sweep } from '../mesh/sweep';
 import { enamelWhole, mergeMeshes, type Mesh } from '../mesh/types';
+import { leatherBinding } from './binding';
 import { meshBounds, type Anchor, type Part } from './types';
 
 export interface SwordSpec {
@@ -25,9 +26,11 @@ export interface SwordSpec {
   gripRadius?: number;
   /**
    * Turns of a leather binding wound round the grip, 0 for a bare grip.
-   * Width and texture are the cord's own gauge and pitch — `wrapRadius` for
-   * how thick the leather reads, `wrapTurns` for how tightly it winds; there
-   * are no images anywhere in this renderer, so "texture" is geometry.
+   * A flat strap cut to the pitch of its own helix, so the turns abut and
+   * the grip under them is covered. Texture is the strap's own pitch and
+   * thickness — `wrapTurns` for how many turns it takes, `wrapRadius` for
+   * half its thickness; there are no images anywhere in this renderer, so
+   * "texture" is geometry.
    */
   wrapTurns?: number;
   wrapRadius?: number;
@@ -96,20 +99,17 @@ export function sword(spec: SwordSpec): Part {
 
   const pieces: Mesh[] = [pommel, grip];
 
-  // the leather: a helix round the grip's own surface, standing a little
-  // proud of it — a cord, not a decal, since nothing here is painted on
+  // the leather: a flat strap wound round the grip, each turn against the
+  // last, so the grip under it is covered — a binding, not a decal
   const wrapTurns = spec.wrapTurns ?? 7;
   if (wrapTurns > 0) {
-    const wrapRadius = spec.wrapRadius ?? gripRadius * 0.24;
-    const wrapReach = gripRadius + wrapRadius * 0.55;
-    const wrapRows = Math.max(24, Math.round(wrapTurns * 14));
-    const wrapPath: Vec3[] = [];
-    for (let i = 0; i <= wrapRows; i++) {
-      const t = i / wrapRows;
-      const a = t * wrapTurns * Math.PI * 2;
-      wrapPath.push([Math.cos(a) * wrapReach, Math.sin(a) * wrapReach, gripBase + t * gripLength]);
-    }
-    const wrap = sweep(wrapPath, { profile: profile.circle(wrapRadius, 8), caps: true });
+    const wrap = leatherBinding({
+      shaftRadius: gripRadius,
+      z0: gripBase,
+      span: gripLength,
+      turns: wrapTurns,
+      thickness: (spec.wrapRadius ?? gripRadius * 0.11) * 2,
+    });
     if (spec.enamel) enamelWhole(wrap);
     pieces.push(wrap);
   }
