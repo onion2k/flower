@@ -796,7 +796,7 @@ export class Viewer {
 
     this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
       bloom: this.bloom, raw: this.debugMode > 0,
-      focus: this.controls.distance * this.focusScale, dof: this.dof,
+      focus: this.controls.distance * this.focusScale, dof: this.dof, subject: this.controls.distance,
     });
     device.queue.submit([encoder.finish()]);
     this.onFrame?.();

@@ -21,6 +21,8 @@ export interface PostOptions {
    */
   focus: number;
   dof: number;
+  /** Distance to the piece's own centre — the table is kept no sharper than this. */
+  subject: number;
 }
 
 const HDR: GPUTextureFormat = 'rgba16float';
@@ -76,19 +78,27 @@ ${FULLSCREEN_VERT}
 
 const DOF = `
 ${FULLSCREEN_VERT}
-struct Params { focus: f32, strength: f32, maxRadius: f32, _p: f32 };
+struct Params { focus: f32, strength: f32, maxRadius: f32, subject: f32 };
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> params: Params;
 
-// circle of confusion in pixels for a distance: the far side blurs by how
-// far past focus it lies, the near side faster, as a lens does; the clear
-// colour (alpha 0) is the sky, and all the way out of focus
-fn coc(dist: f32) -> f32 {
-  let d = select(dist, params.focus * 8.0, dist <= 0.0);
+fn cocAt(d: f32) -> f32 {
   let rel = (d - params.focus) / params.focus;
   let r = select(rel, -rel * 1.5, rel < 0.0);
   return clamp(r * params.strength * params.maxRadius, 0.0, params.maxRadius);
+}
+
+// circle of confusion in pixels: the far side blurs by how far past focus
+// it lies, the near side faster, as a lens does. The clear colour (alpha 0)
+// is the sky, all the way out of focus. The table flags itself with a
+// negative distance, and is kept no sharper than the piece's own centre —
+// a lens focused past a subject puts a crisp band across the table behind
+// a blurred piece, which is right for a lens and wrong for a shop window.
+fn coc(a: f32) -> f32 {
+  if (a == 0.0) { return cocAt(params.focus * 8.0); }
+  if (a < 0.0) { return max(cocAt(-a), cocAt(params.subject)); }
+  return cocAt(a);
 }
 
 // A gather over a golden-angle disc, each tap weighted by whether its own
@@ -343,7 +353,7 @@ export class PostChain {
     }
     const blur = !opts.raw && opts.dof > 0;
     if (blur) {
-      this.dofData.set([opts.focus, opts.dof, Math.max(6, Math.min(this.width, this.height) * 0.03), 0]);
+      this.dofData.set([opts.focus, opts.dof, Math.max(6, Math.min(this.width, this.height) * 0.03), opts.subject]);
       device.queue.writeBuffer(this.dofParams, 0, this.dofData);
       draw(this.dofPipe, this.dofBind!, this.dofView!, 'clear');
     }

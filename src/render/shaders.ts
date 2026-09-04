@@ -741,7 +741,9 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
   else if (frame.debug > 0.5) { colour = ground.background; }
-  return vec4f(colour, length(in.world - frame.cameraPos));
+  // distance to the eye for the depth of field pass, negated: the table
+  // marks itself so it can be kept no sharper than the piece on it
+  return vec4f(colour, -length(in.world - frame.cameraPos));
 }
 `;
 
