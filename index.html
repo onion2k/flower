@@ -17,15 +17,37 @@
       * { box-sizing: border-box; }
       html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text);
         font: 13px/1.5 ui-monospace, SFMono-Regular, Menlo, monospace; }
-      #app { display: grid; grid-template-columns: minmax(0, 1fr) 300px;
+      /* The panel takes a share of the width between two bounds, so a wide
+         screen gives the viewport the room and a narrow one keeps the controls
+         usable. The editor's height is the writer's: dragged, and remembered. */
+      :root { --panel-w: clamp(250px, 21vw, 340px); --editor-h: 40vh; }
+      #app { display: grid; grid-template-columns: minmax(0, 1fr) var(--panel-w);
         grid-template-rows: minmax(0, 1fr) auto; height: 100%; overflow: hidden; }
       #stage { grid-column: 1; grid-row: 1; position: relative; overflow: hidden; min-width: 0; min-height: 0; }
-      /* max-height, not height: at a short viewport a fixed height pushed the
-         stage row past the bottom of the grid, so the canvas was sized to a box
-         taller than the space it was actually drawn into */
+      /* clamp, not height: at a short viewport a fixed height pushed the stage
+         row past the bottom of the grid, so the canvas was sized to a box taller
+         than the space it was actually drawn into */
       #editor { grid-column: 1; grid-row: 2; display: none; border-top: 1px solid var(--line);
-        background: #0e1013; height: min(500px, 55vh); min-height: 0; }
+        background: #0e1013; height: clamp(200px, var(--editor-h), calc(100vh - 160px)); min-height: 0;
+        position: relative; }
       #editor.open { display: grid; grid-template-rows: auto minmax(0, 1fr) auto; }
+      #splitter { position: absolute; left: 0; right: 0; top: -4px; height: 8px; cursor: row-resize; z-index: 2; }
+      #splitter:hover, #splitter.dragging { background: linear-gradient(transparent 3px, var(--accent) 3px, var(--accent) 5px, transparent 5px); }
+      body.resizing { cursor: row-resize; user-select: none; }
+      body.resizing #stage { pointer-events: none; }
+      /* Tablet: the source needs width more than the controls need height, so
+         the editor runs the full width and the panel sits beside the viewport only. */
+      @media (max-width: 1100px) {
+        :root { --panel-w: 230px; }
+        #app { grid-template-rows: minmax(0, 1fr) auto; }
+        #editor { grid-column: 1 / span 2; }
+        #panel { grid-row: 1; padding: 12px; }
+      }
+      /* Desktop: a little more text on a lot more pixels. */
+      @media (min-width: 1900px) {
+        html, body { font-size: 14px; }
+        #source .cm-editor { font-size: 13px; }
+      }
       #palette { display: flex; align-items: stretch; gap: 4px; padding: 6px 10px; overflow-x: auto;
         border-bottom: 1px solid var(--line); scrollbar-width: thin; }
       #palette .tile, #palette .chip { flex: none; background: transparent; border: 1px solid transparent;
@@ -85,6 +107,7 @@
     <div id="app">
       <div id="stage"></div>
       <div id="editor">
+        <div id="splitter" title="drag to resize the editor"></div>
         <div id="palette"></div>
         <div id="source"></div>
         <div id="diagnostic"></div>

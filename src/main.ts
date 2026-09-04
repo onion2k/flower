@@ -373,6 +373,37 @@ function groupByMesh(assembly: Assembly) {
   }));
 }
 
+/** The divider above the editor: drag to give the source or the viewport more room. */
+{
+  const splitter = document.getElementById('splitter')!;
+  const root = document.documentElement;
+  const saved = store.editorHeight();
+  if (saved) root.style.setProperty('--editor-h', `${saved}px`);
+  splitter.addEventListener('pointerdown', (e) => {
+    e.preventDefault();
+    splitter.classList.add('dragging');
+    document.body.classList.add('resizing');
+    const startY = e.clientY;
+    const startH = editorPane.getBoundingClientRect().height;
+    const move = (ev: PointerEvent) => {
+      root.style.setProperty('--editor-h', `${Math.round(startH + (startY - ev.clientY))}px`);
+    };
+    const up = () => {
+      window.removeEventListener('pointermove', move);
+      window.removeEventListener('pointerup', up);
+      splitter.classList.remove('dragging');
+      document.body.classList.remove('resizing');
+      store.setEditorHeight(Math.round(editorPane.getBoundingClientRect().height));
+    };
+    window.addEventListener('pointermove', move);
+    window.addEventListener('pointerup', up);
+  });
+  splitter.addEventListener('dblclick', () => {
+    root.style.removeProperty('--editor-h');
+    store.setEditorHeight(null);
+  });
+}
+
 /** The groups on screen, placement by placement, so a pick or a cursor can be traced. */
 let shown: Array<{ placements: Placement[] }> = [];
 let partSpans = new Map<Part, Span>();

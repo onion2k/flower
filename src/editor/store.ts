@@ -9,6 +9,7 @@
 const MINE = 'artshape.sketches';
 const DRAFTS = 'artshape.drafts';
 const SUBJECT = 'artshape.subject';
+const EDITOR_HEIGHT = 'artshape.editorHeight';
 
 type Shelf = Record<string, string>;
 
@@ -53,4 +54,12 @@ export const store = {
 
   subject: (): string | null => { try { return localStorage.getItem(SUBJECT); } catch { return null; } },
   setSubject(value: string) { try { localStorage.setItem(SUBJECT, value); } catch { /* as above */ } },
+
+  editorHeight: (): number | null => { try { return Number(localStorage.getItem(EDITOR_HEIGHT)) || null; } catch { return null; } },
+  setEditorHeight(px: number | null) {
+    try {
+      if (px) localStorage.setItem(EDITOR_HEIGHT, String(px));
+      else localStorage.removeItem(EDITOR_HEIGHT);
+    } catch { /* as above */ }
+  },
 };
