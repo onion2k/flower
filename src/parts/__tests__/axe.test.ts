@@ -124,3 +124,16 @@ describe('axe: hand piece and ornament anchors', () => {
     expect(findAnchor(p, 'cheek').position[0]).toBeGreaterThan(0);
   });
 });
+
+describe('axe: haft: false', () => {
+  it('leaves out the haft but keeps the head hung at haftLength, with its socket', () => {
+    const full = axe({ haftLength: 100 });
+    const headOnly = axe({ haftLength: 100, haft: false });
+    expect(headOnly.mesh.positions.length).toBeLessThan(full.mesh.positions.length);
+    // nothing reaches the butt any more; the head is still where it was
+    expect(boundsOf(headOnly.mesh).min[2]).toBeGreaterThan(50);
+    expect(findAnchor(headOnly, 'top').position).toEqual([0, 0, 100]);
+    expectWellFormed(headOnly.mesh);
+    expectWatertight(headOnly.mesh);
+  });
+});

@@ -741,7 +741,7 @@ export class Viewer {
       const f = finishes[g.source.finish ?? ''] ?? this.finish;
       const o = (k * MATERIAL_STRIDE) / 4;
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
-      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : m.model === 'gem' ? 2 : m.model === 'plastic' ? 3 : 0, 0], o + 12);
+      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : m.model === 'gem' ? 2 : m.model === 'plastic' ? 3 : m.model === 'wood' ? 4 : 0, 0], o + 12);
       f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
       const e = enamels[g.source.enamel ?? ''];
       f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);

@@ -689,7 +689,7 @@ const PARTS = {
 
   axe: define(
     [
-      'haftLength', 'haftRadius', 'headReach', 'headHeight', 'headThickness', 'doubleBit',
+      'haftLength', 'haftRadius', 'headReach', 'headHeight', 'headThickness', 'doubleBit', 'haft',
       'wrapTurns', 'wrapRadius', 'wrapFrom', 'wrapLength', 'enamel', 'segments',
     ],
     (a) =>
@@ -700,6 +700,7 @@ const PARTS = {
         headHeight: a.num('headHeight', -1, NaN) || undefined,
         headThickness: a.num('headThickness', -1, NaN) || undefined,
         doubleBit: a.flag('doubleBit', -1, false),
+        haft: a.flag('haft', -1, true),
         // a fixed default, so 0 (no binding) reads straight through
         wrapTurns: a.num('wrapTurns', -1, 0),
         wrapRadius: a.num('wrapRadius', -1, NaN) || undefined,

@@ -65,7 +65,7 @@ struct Material {
   _pad: f32,
   occlusionBase: u32,
   vertexCount: u32,
-  model: u32,          // 0 metal, 1 nacre, 2 gem, 3 plastic
+  model: u32,          // 0 metal, 1 nacre, 2 gem, 3 plastic, 4 wood
   _pad2: u32,
   baseColour: vec3f,
   orient: f32,
@@ -416,7 +416,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   if (gemstone) { roughness = min(roughness, 0.04); }
   // a display plastic is not worked metal either: no planishing, patina or wear
   let plastic = material.model == 3u;
-  let worked = !nacre && !gemstone && !plastic;
+  // wood is grain drawn through a dielectric; nothing about it is worked metal
+  let wood = material.model == 4u;
+  let worked = !nacre && !gemstone && !plastic && !wood;
 
   // --- planishing: perturb the normal by the gradient of a height field ---
   if (material.hammer > 0.0 && worked) {
@@ -516,12 +518,24 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
     let flash = gemSparkle(n, r, lit, material.gemSparkle);
     colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
-  } else if (plastic) {
+  } else if (plastic || wood) {
     // an ordinary dielectric: a low, fixed highlight over a diffuse body in
     // the finish's own colour — no patina, hammer or enamel, only ever metal
+    var body = material.baseColour;
+    if (wood) {
+      // grain: noise stretched along the part's own Z, so the figure runs
+      // the length of a haft or a stem; banded into growth lines, wobbling
+      // where a knot would pull them, and darker in the late wood between
+      let p = in.object;
+      let figure = noise3(vec3f(p.x * 0.55, p.y * 0.55, p.z * 0.045)) * 4.0
+        + noise3(vec3f(p.x * 1.6, p.y * 1.6, p.z * 0.12)) * 0.9;
+      let ring = 0.5 + 0.5 * sin(figure * 6.2831853 + length(p.xy) * 0.9);
+      let late = smoothstep(0.35, 0.85, ring);
+      body = body * mix(1.0 + 0.55 * material.orient, 1.0 - 0.8 * material.orient, late);
+    }
     let specular = reflected * (f0 * ab.x + ab.y);
     let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
-    let diffuse = irradiance * material.baseColour * ao;
+    let diffuse = irradiance * body * ao;
     colour = (specular + diffuse) * frame.exposure;
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);

@@ -14,7 +14,7 @@ export interface Metal {
   /** True where the value comes from measured data rather than judgement. */
   measured: boolean;
   /** Shading model: metal by default; nacre for pearls, gem for cut stones, plastic for display props. */
-  model?: 'nacre' | 'gem' | 'plastic';
+  model?: 'nacre' | 'gem' | 'plastic' | 'wood';
   /** Body colour, for materials that have one. Linear RGB. */
   colour?: [number, number, number];
   /** Strength of the iridescent sheen, for nacre. */
@@ -71,6 +71,15 @@ export const metals: Record<string, Metal> = {
   'white plastic': { name: 'white plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.86, 0.85, 0.82] },
   'black plastic': { name: 'black plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.03, 0.03, 0.032] },
   'grey plastic': { name: 'grey plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.32, 0.32, 0.33] },
+
+  // Woods: a dielectric like the plastics, but the shader draws grain through
+  // the body colour — streaks run the length of the part's own Z, the way a
+  // turned haft or a carved stem shows its figure. Colours by eye; `orient`
+  // is borrowed to say how strongly the figure shows, as nacre borrows it
+  // for its sheen.
+  oak: { name: 'oak', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.52, 0.34, 0.17], orient: 0.35 },
+  walnut: { name: 'walnut', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.24, 0.13, 0.07], orient: 0.45 },
+  ash: { name: 'ash', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.70, 0.56, 0.36], orient: 0.28 },
 };
 
 export interface Finish {
@@ -110,6 +119,7 @@ export const metalNames = Object.keys(metals).filter((n) => !metals[n].model);
 export const pearlNames = Object.keys(metals).filter((n) => metals[n].model === 'nacre');
 export const gemNames = Object.keys(metals).filter((n) => metals[n].model === 'gem');
 export const plasticNames = Object.keys(metals).filter((n) => metals[n].model === 'plastic');
+export const woodNames = Object.keys(metals).filter((n) => metals[n].model === 'wood');
 export const finishNames = Object.keys(finishes);
 
 /** Oxide colour for the patinated fraction, per metal family. */

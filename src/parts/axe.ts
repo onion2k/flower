@@ -47,6 +47,12 @@ export interface AxeSpec {
   /** A second head, mirrored on the other side of the haft. */
   doubleBit?: boolean;
   /**
+   * `false` leaves the haft out — head, socket and binding only, still hung
+   * at `haftLength` — for a haft that is its own part: a stem or a branch in
+   * wood, which a single-material part cannot be at the same time as steel.
+   */
+  haft?: boolean;
+  /**
    * Turns of a leather binding round the hand piece, 0 for a bare haft. The
    * binding covers `wrapLength` of the haft starting `wrapFrom` up it, both
    * as fractions of the whole — a long haft is gripped in one place, not
@@ -171,7 +177,7 @@ export function axe(spec: AxeSpec): Part {
     caps: true,
   });
 
-  const pieces: Mesh[] = [haft, eye, head];
+  const pieces: Mesh[] = spec.haft === false ? [eye, head] : [haft, eye, head];
 
   // the hand piece: a helix round one stretch of the haft, standing a
   // little proud of it, the same cord sword's own grip is bound with
