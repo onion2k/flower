@@ -950,6 +950,24 @@ form teasel {
 }
 `,
 
+  dagger: `# A dagger: sword() at shorter proportions, not a second part — nothing
+# about its shape needs its own generator, only shorter numbers for the
+# blade and the grip. Displayed point-down, the way a ceremonial piece is
+# actually shown, which is also the only way its own pommel jewel faces up
+# rather than into the table: fasten's default alignment carries a
+# cabochon's table the same way its own crown already points, so the flip
+# that turns the whole dagger over turns the jewel over with it, for free.
+material gold polished
+
+part blade = sword(bladeLength: 22, gripLength: 9, guardWidth: 9, bladeTaper: 0.5) in silver polished
+part stone = gem(cut: cabochon, width: 5) in ruby
+
+form dagger {
+  place blade at (0, 0, 33) roll 180deg
+  fasten stone to blade.base
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
