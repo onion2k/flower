@@ -12,6 +12,7 @@ import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
 import { bust, earringStand, easel, ringStand } from '../parts/display';
 import { sword } from '../parts/sword';
+import { axe } from '../parts/axe';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -201,6 +202,7 @@ export const catalogue: Record<string, () => Part> = {
   earringStand: () => earringStand({ baseRadius: 9 }),
   easel: () => easel({ width: 24, height: 30 }),
   sword: () => sword({ bladeLength: 80 }),
+  axe: () => axe({ haftLength: 100 }),
   bust: () => bust({ height: 40 }),
 };
 

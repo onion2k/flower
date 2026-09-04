@@ -14,6 +14,7 @@ import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
 import { bust, earringStand, easel, ringStand } from '../parts/display';
 import { sword } from '../parts/sword';
+import { axe } from '../parts/axe';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -673,6 +674,20 @@ const PARTS = {
         guardWidth: a.num('guardWidth', -1, NaN) || undefined,
         guardThickness: a.num('guardThickness', -1, NaN) || undefined,
         pommelRadius: a.num('pommelRadius', -1, NaN) || undefined,
+        segments: a.count('segments', -1, 24),
+      }),
+  ),
+
+  axe: define(
+    ['haftLength', 'haftRadius', 'headReach', 'headHeight', 'headThickness', 'doubleBit', 'segments'],
+    (a) =>
+      axe({
+        haftLength: a.num('haftLength', 0),
+        haftRadius: a.num('haftRadius', -1, NaN) || undefined,
+        headReach: a.num('headReach', -1, NaN) || undefined,
+        headHeight: a.num('headHeight', -1, NaN) || undefined,
+        headThickness: a.num('headThickness', -1, NaN) || undefined,
+        doubleBit: a.flag('doubleBit', -1, false),
         segments: a.count('segments', -1, 24),
       }),
   ),
