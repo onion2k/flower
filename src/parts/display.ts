@@ -1,5 +1,7 @@
 import type { Vec2, Vec3 } from '../geom/types';
 import * as profile from '../geom/profile';
+import { tombstoneOutline } from '../geom/outline';
+import { extrude } from '../mesh/extrude';
 import { revolve } from '../mesh/revolve';
 import { sweep } from '../mesh/sweep';
 import { mergeMeshes } from '../mesh/types';
@@ -202,4 +204,82 @@ export function bust(spec: BustSpec): Part {
     { name: 'neck', position: [neckRadius, 0, height * 0.94], axis: [-1, 0, 0], tangent: [0, 0, 1] },
   ];
   return { name: spec.name ?? 'bust', mesh, bounds: meshBounds(mesh), anchors };
+}
+
+export interface EaselSpec {
+  name?: string;
+  /** Width of the card. */
+  width: number;
+  /** Height of the card, its foot to its rounded top. */
+  height: number;
+  /** Radius of the two top corners. */
+  cornerRadius?: number;
+  /** Card thickness. */
+  thickness?: number;
+  bevel?: number;
+  /** Radius of the peg a chain's own hook loops over. */
+  pegRadius?: number;
+  pegLength?: number;
+  /** How far the back leg reaches behind the card, propping it upright. */
+  legDepth?: number;
+  segments?: number;
+}
+
+/**
+ * A necklace card: a flat, velvet-flocked board with a peg near the top for
+ * a chain's own hook or clasp to loop over, propped up by a simple back leg
+ * — the trade's answer for a chain too fine or too delicate to drape over a
+ * `bust`'s own neck.
+ *
+ * Built flat, like `extrude()` builds everything: width up its own local Y,
+ * width across local X, thickness along local Z. Unlike `ringStand` and
+ * `bust`, which stand in Z as drawn, an easel wants `roll 90deg` at the
+ * `place` that puts it in a sketch — `roll` turns around X, which is the one
+ * rotation that swings the card's own height (Y) up into world Z without
+ * touching its width; `pitch` (around Y) would spin it on the spot instead,
+ * since Y is exactly the axis a card's own height already lies along.
+ */
+export function easel(spec: EaselSpec): Part {
+  const cornerRadius = spec.cornerRadius ?? Math.min(spec.width, spec.height) * 0.22;
+  const thickness = spec.thickness ?? Math.min(spec.width, spec.height) * 0.06;
+  const bevel = spec.bevel ?? Math.min(thickness * 0.3, 0.4);
+  // chunkier than the card's own thickness alone would suggest — a peg has
+  // to read clearly enough at a glance to show where a piece actually hangs
+  const pegRadius = spec.pegRadius ?? thickness * 1.2;
+  const pegLength = spec.pegLength ?? pegRadius * 3;
+  const legDepth = spec.legDepth ?? spec.height * 0.55;
+  const segments = spec.segments ?? 10;
+
+  const card = extrude({
+    outline: tombstoneOutline(spec.width, spec.height, cornerRadius, segments),
+    thickness,
+    bevel,
+  });
+
+  // the peg: a short stub off the front face, tapered so a loop can't walk
+  // back off the tip the way it could off a plain cylinder
+  const pegY = spec.height * 0.86;
+  const peg = sweep(
+    [[0, pegY, thickness / 2], [0, pegY, thickness / 2 + pegLength]],
+    { profile: profile.circle(pegRadius, 12), taper: (t) => 1 - 0.3 * t, caps: true },
+  );
+
+  // the leg: a flat strut from partway up the back face down to the ground
+  // the card's own foot already stands on, propping the whole thing back at
+  // an angle rather than leaving it to balance on its edge
+  const legWidth = spec.width * 0.18;
+  const legThickness = thickness * 0.7;
+  const leg = sweep(
+    [[0, spec.height * 0.24, -thickness / 2], [0, 0, -legDepth]],
+    { profile: profile.ribbon(legWidth, legThickness, 3), caps: true, up: [1, 0, 0] },
+  );
+
+  const mesh = mergeMeshes([card, peg, leg]);
+  const anchors: Anchor[] = [
+    { name: 'base', position: [0, 0, 0], axis: [0, -1, 0], tangent: [1, 0, 0] },
+    // a landmark, not a fasten target — a necklace is a hand-built unit, the
+    // same reasoning as earringStand's left/right
+    { name: 'hook', position: [0, pegY, thickness / 2 + pegLength], axis: [0, 0, 1], tangent: [0, 1, 0] },
+  ];
+  return { name: spec.name ?? 'easel', mesh, bounds: meshBounds(mesh), anchors };
 }

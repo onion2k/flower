@@ -10,7 +10,7 @@ import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
-import { bust, earringStand, ringStand } from '../parts/display';
+import { bust, earringStand, easel, ringStand } from '../parts/display';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -198,6 +198,7 @@ export const catalogue: Record<string, () => Part> = {
   leverBack: () => leverBack({ radius: 5 }),
   ringStand: () => ringStand({ baseRadius: 10 }),
   earringStand: () => earringStand({ baseRadius: 9 }),
+  easel: () => easel({ width: 24, height: 30 }),
   bust: () => bust({ height: 40 }),
 };
 

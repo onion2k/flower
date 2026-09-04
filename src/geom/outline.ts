@@ -428,6 +428,28 @@ export function gussetOutline(radius: number, fillet: number, segments = 6): Vec
   return ensureWinding(pts, true);
 }
 
+/**
+ * A card: a flat bottom edge and two rounded top corners, the shape a
+ * display or a name tag is actually cut to — square at the foot, where it
+ * meets whatever it stands on, eased everywhere a hand or a hook might
+ * otherwise catch.
+ */
+export function tombstoneOutline(width: number, height: number, cornerRadius = 0, segments = 8): Vec2[] {
+  const hw = width / 2;
+  const r = Math.min(Math.max(cornerRadius, 0), Math.min(hw, height));
+  const pts: Vec2[] = [[hw, 0]];
+  for (let i = 0; i <= segments; i++) {
+    const a = (i / segments) * (Math.PI / 2);
+    pts.push([hw - r + Math.cos(a) * r, height - r + Math.sin(a) * r]);
+  }
+  for (let i = 0; i <= segments; i++) {
+    const a = Math.PI / 2 + (i / segments) * (Math.PI / 2);
+    pts.push([-hw + r + Math.cos(a) * r, height - r + Math.sin(a) * r]);
+  }
+  pts.push([-hw, 0]);
+  return ensureWinding(pts, true);
+}
+
 export function circleOutline(radius: number, segments = 48): Vec2[] {
   const pts: Vec2[] = [];
   for (let i = 0; i < segments; i++) {

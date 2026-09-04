@@ -12,7 +12,7 @@ import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
-import { bust, earringStand, ringStand } from '../parts/display';
+import { bust, earringStand, easel, ringStand } from '../parts/display';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -639,6 +639,22 @@ const PARTS = {
       neckRadius: a.num('neckRadius', -1, NaN) || undefined,
       segments: a.count('segments', -1, 64),
     })),
+
+  easel: define(
+    ['width', 'height', 'cornerRadius', 'thickness', 'bevel', 'pegRadius', 'pegLength', 'legDepth', 'segments'],
+    (a) =>
+      easel({
+        width: a.num('width', 0),
+        height: a.num('height', 1),
+        cornerRadius: a.num('cornerRadius', -1, NaN) || undefined,
+        thickness: a.num('thickness', -1, NaN) || undefined,
+        bevel: a.num('bevel', -1, NaN) || undefined,
+        pegRadius: a.num('pegRadius', -1, NaN) || undefined,
+        pegLength: a.num('pegLength', -1, NaN) || undefined,
+        legDepth: a.num('legDepth', -1, NaN) || undefined,
+        segments: a.count('segments', -1, 10),
+      }),
+  ),
 };
 
 /** Symmetries. Everything a form repeats around. */

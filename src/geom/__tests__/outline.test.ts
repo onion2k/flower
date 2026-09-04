@@ -3,7 +3,7 @@ import {
   apicalNotch, boltCircle, circleOutline, clearsOthers, crenate, ensureWinding, fitsInside,
   fringe, gussetOutline, leafHalfWidth, leafOutline, leafPiercings, palmateOutline, palmateVeins,
   petalHalfWidth, petalOutline, polygonOutline, serrate, signedArea, stadiumOutline, teardropOutline,
-  transformLoop, veinPiercings, type LeafShape, type PetalShape,
+  tombstoneOutline, transformLoop, veinPiercings, type LeafShape, type PetalShape,
 } from '../outline';
 
 const LEAF_SHAPES: LeafShape[] = [
@@ -283,6 +283,52 @@ describe('flat plate outlines', () => {
   it('circleOutline sits exactly at the given radius', () => {
     const loop = circleOutline(7, 40);
     for (const [x, y] of loop) expect(Math.hypot(x, y)).toBeCloseTo(7);
+  });
+
+  it('tombstoneOutline spans exactly the given width and height, wound CCW', () => {
+    const loop = tombstoneOutline(20, 30, 4);
+    expect(signedArea(loop)).toBeGreaterThan(0);
+    const xs = loop.map(([x]) => x), ys = loop.map(([, y]) => y);
+    expect(Math.max(...xs) - Math.min(...xs)).toBeCloseTo(20, 1);
+    expect(Math.max(...ys) - Math.min(...ys)).toBeCloseTo(30, 1);
+    expect(Math.min(...ys)).toBeCloseTo(0, 5);
+  });
+
+  it('tombstoneOutline keeps the bottom two corners sharp — no point strays inward there', () => {
+    const loop = tombstoneOutline(20, 30, 4);
+    // near y=0, every point should sit exactly on x=+-10 (the flat bottom
+    // corners), not rounded off toward the centre the way the top is
+    for (const [x, y] of loop) {
+      if (y < 0.5) expect(Math.abs(x)).toBeCloseTo(10, 1);
+    }
+  });
+
+  it('cornerRadius: 0 degenerates to a plain rectangle', () => {
+    const loop = tombstoneOutline(20, 30, 0);
+    for (const [x, y] of loop) {
+      expect(Math.abs(x)).toBeLessThanOrEqual(10 + 1e-6);
+      expect(y).toBeGreaterThanOrEqual(-1e-6);
+      expect(y).toBeLessThanOrEqual(30 + 1e-6);
+    }
+    // every point sits on the rectangle's own edge, not cut in from a corner
+    for (const [x, y] of loop) {
+      const onVerticalEdge = Math.abs(Math.abs(x) - 10) < 1e-6;
+      const onHorizontalEdge = Math.abs(y) < 1e-6 || Math.abs(y - 30) < 1e-6;
+      expect(onVerticalEdge || onHorizontalEdge).toBe(true);
+    }
+  });
+
+  it('a larger cornerRadius rounds the top corners further in from the edges', () => {
+    const small = tombstoneOutline(20, 30, 3);
+    const large = tombstoneOutline(20, 30, 9);
+    const topInset = (loop: ReturnType<typeof tombstoneOutline>) => {
+      // how far the outline has already pulled in from the top-right corner
+      // (10, 30) by the time it reaches y = 27 — more for a bigger radius
+      let best = -Infinity;
+      for (const [x, y] of loop) if (y > 26 && y < 28 && x > 0) best = Math.max(best, 10 - x);
+      return best;
+    };
+    expect(topInset(large)).toBeGreaterThan(topInset(small));
   });
 
   it('boltCircle returns count holes, each centred at the given radius', () => {

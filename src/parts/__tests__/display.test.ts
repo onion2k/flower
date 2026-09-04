@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bust, earringStand, ringStand } from '../display';
+import { bust, earringStand, easel, ringStand } from '../display';
 import { findAnchor } from '../types';
 import { expectWatertight, expectWellFormed, boundsOf } from '../../mesh/__tests__/helpers';
 
@@ -148,5 +148,46 @@ describe('bust', () => {
   it('base anchor sits at the bottom centre', () => {
     const p = bust({ height: 40 });
     expect(findAnchor(p, 'base').position).toEqual([0, 0, 0]);
+  });
+});
+
+describe('easel', () => {
+  it('is a well-formed, watertight solid', () => {
+    const p = easel({ width: 24, height: 30 });
+    expectWellFormed(p.mesh);
+    expectWatertight(p.mesh);
+  });
+
+  it('spans the given width and height in its own outline plane (local X/Y)', () => {
+    const p = easel({ width: 24, height: 30 });
+    const b = boundsOf(p.mesh);
+    expect(b.max[0] - b.min[0]).toBeCloseTo(24, 0);
+    // the leg reaches below y=0 and the peg above y=height, so the card's
+    // own bottom/top are the tight bound only on X, not Y
+    expect(b.min[1]).toBeLessThanOrEqual(0);
+    expect(b.max[1]).toBeGreaterThanOrEqual(30);
+  });
+
+  it('a longer legDepth reaches further behind the card', () => {
+    const short = easel({ width: 24, height: 30, legDepth: 5 });
+    const long = easel({ width: 24, height: 30, legDepth: 20 });
+    const back = (p: typeof short) => boundsOf(p.mesh).min[2];
+    expect(back(long)).toBeLessThan(back(short));
+  });
+
+  it('a bigger peg reaches further off the front face', () => {
+    const small = easel({ width: 24, height: 30, pegRadius: 0.5, pegLength: 1 });
+    const large = easel({ width: 24, height: 30, pegRadius: 3, pegLength: 6 });
+    const front = (p: typeof small) => boundsOf(p.mesh).max[2];
+    expect(front(large)).toBeGreaterThan(front(small));
+  });
+
+  it('the hook anchor sits at the peg tip, and base at the card foot', () => {
+    const p = easel({ width: 24, height: 30 });
+    const hook = findAnchor(p, 'hook');
+    const base = findAnchor(p, 'base');
+    expect(base.position).toEqual([0, 0, 0]);
+    expect(hook.position[2]).toBeCloseTo(boundsOf(p.mesh).max[2], 1);
+    expect(hook.position[1]).toBeCloseTo(30 * 0.86, 5);
   });
 });

@@ -282,6 +282,10 @@ part stone = gem(cut: brilliant, width: 7) in diamond
 part figure = bust(height: 44) in white plastic flock
 part drop   = pearl(radius: 2.8) in white pearl
 
+part card = easel(width: 24, height: 30) in grey plastic matte
+part loop = jumpRing(radius: 1.4, wireRadius: 0.3)
+part chip = pearl(radius: 2.2) in white pearl
+
 form display {
   place rest
   place band at (0, 0, 22) pitch 90deg
@@ -290,6 +294,12 @@ form display {
 
   place figure at (32, 0, 0)
   fasten drop to figure.neck
+
+  # easel is built flat and stood up with roll, not pitch — its own height
+  # runs up local Y, the axis roll turns into world Z
+  place card at (-30, 0, 0) roll 90deg
+  place loop at (-30, -3, 25.8) roll 90deg
+  fasten chip to loop.gate flip
 }
 `,
 
