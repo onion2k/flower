@@ -509,6 +509,24 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     roughness = mix(roughness, min(roughness + 0.35, 0.95), mask * material.patina);
   }
 
+  // --- micro-variation: no real surface is one roughness end to end ---
+  // Broad smudges where the polishing cloth or a hand went over it, and a
+  // finer mottle under them, each a small shift in roughness; and the
+  // faintest drift in the metal's own tint, so a wide flat face reads as a
+  // surface rather than a fill. Sized by the finish: a mirror polish moves
+  // a little, a satin or brushed finish a good deal more, since its
+  // roughness came from marks in the first place.
+  if (worked) {
+    let p = in.object;
+    let smudge = noise3(p * 0.09 + vec3f(3.1, 7.7, 1.3)) - 0.5;
+    let mottle = noise3(p * 0.7 + vec3f(11.0, 2.0, 5.0)) - 0.5;
+    let fine = noise3(p * 3.0) - 0.5;
+    let amount = 0.02 + 0.2 * roughness * (1.0 - roughness);
+    roughness = roughness + amount * (smudge * 1.6 + mottle * 0.8 + fine * 0.5);
+    let tint = 1.0 + 0.035 * (smudge * 1.2 + mottle * 0.6);
+    f0 = f0 * tint;
+  }
+
   // --- wear: edges handled bright, creases left dull ---
   let wearOn = select(material.wear, 0.0, !worked);
   let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
