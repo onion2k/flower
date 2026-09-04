@@ -17,6 +17,11 @@ struct Frame {
   occlusionOn: f32,
   // 1 while something is selected: the rest of the piece steps back
   selecting: f32,
+  // the key: one movable light over the baked environment, in world space
+  keyDir: vec3f,
+  keyStrength: f32,
+  keyColour: vec3f,
+  _keyPad: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
@@ -30,6 +35,32 @@ const COMMON = `
 fn spinZ(a: f32) -> mat3x3f {
   let c = cos(a); let s = sin(a);
   return mat3x3f(vec3f(c, -s, 0.0), vec3f(s, c, 0.0), vec3f(0.0, 0.0, 1.0));
+}
+
+// One directional light, GGX over the environment's own split-sum: the
+// baked sky gives the piece its shape, the key gives it a side. Returns the
+// specular lobe scaled by n·l; the caller adds its own diffuse.
+fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
+  let l = normalize(frame.keyDir);
+  let ndl = max(dot(n, l), 0.0);
+  if (ndl <= 0.0 || frame.keyStrength <= 0.0) { return vec3f(0.0); }
+  let h = normalize(l + v);
+  let ndh = max(dot(n, h), 0.0);
+  let ndv = max(dot(n, v), 1e-3);
+  let vdh = max(dot(v, h), 0.0);
+  let a = max(roughness * roughness, 0.002);
+  let a2 = a * a;
+  let dd = ndh * ndh * (a2 - 1.0) + 1.0;
+  let d = a2 / (3.14159265 * dd * dd);
+  let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+  let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+  let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+  return d * g * f / (4.0 * ndv) * frame.keyColour * frame.keyStrength;
+}
+
+fn keyDiffuse(n: vec3f) -> f32 {
+  let ndl = max(dot(n, normalize(frame.keyDir)), 0.0);
+  return ndl * frame.keyStrength / 3.14159265;
 }
 
 fn hash13(p0: vec3f) -> f32 {
@@ -491,6 +522,13 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
 
   let enamelled = in.enamel > 0.001;
 
+  // what the key light lands on: a diffuse body (none for metal, which has
+  // no diffuse lobe), a specular f0 and roughness. Each branch fills these
+  // in; the key is added once, after, so no branch forgets it.
+  var keyBody = vec3f(0.0);
+  var keyF0 = f0;
+  var keyRough = roughness;
+
   var colour: vec3f;
   if (material.model == 1u) {
     // nacre: a lustre over a scattering body, with the sheen on the lustre
@@ -498,6 +536,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let tint = orientTint(ndv, material.orient);
     let body = nacreBody(n, v, ndv, material.baseColour, ao);
     colour = (body * (1.0 - fresnel) * mix(vec3f(1.0), tint, 0.3) + reflected * fresnel * tint) * frame.exposure;
+    keyBody = material.baseColour * ao;
   } else if (gemstone) {
     // a hard dielectric mirror on the facet, the folded room underneath it,
     // and a flash where the facet catches something bright
@@ -518,6 +557,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
     let flash = gemSparkle(n, r, lit, material.gemSparkle);
     colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
+    keyF0 = vec3f(g0);
   } else if (plastic || wood) {
     // an ordinary dielectric: a low, fixed highlight over a diffuse body in
     // the finish's own colour — no patina, hammer or enamel, only ever metal
@@ -549,12 +589,14 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
     let diffuse = irradiance * body * ao;
     colour = (specular + diffuse) * frame.exposure;
+    keyBody = body * ao;
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);
     // metal has no diffuse lobe, so this only shows where patina has taken hold
     let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
     let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
     colour = (specular + diffuse) * frame.exposure;
+    keyBody = material.patinaColour * (1.0 - metallic) * ao;
 
     // Enamel: a glass skin over the metal, on the vertices that carry it. The
     // surface is a smooth dielectric with its own narrow highlight; under it
@@ -585,8 +627,15 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
         enamel = mix(enamel, wireColour, wire);
       }
       colour = mix(colour, enamel, in.enamel);
+      // the key sees the glass, not the metal under it
+      keyF0 = mix(keyF0, vec3f(0.04), in.enamel);
+      keyRough = mix(keyRough, eRough, in.enamel);
+      keyBody = mix(keyBody, material.enamelColour * material.enamelOpacity * ao, in.enamel);
     }
   }
+
+  // the key light, over whatever the environment gave
+  colour += (keySpecular(n, v, keyF0, keyRough) + keyBody * keyDiffuse(n) * frame.keyColour) * frame.exposure;
 
   // Selection: what the cursor is on keeps its light and takes a warm cast;
   // everything else drops back so the chosen instances read at a glance.
@@ -638,7 +687,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
   let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
   let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
   let irradiance = textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod).rgb;
-  let lit = irradiance * ground.albedo * ao * frame.exposure;
+  let lit = (irradiance * ground.albedo * ao + ground.albedo * keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * ao) * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }

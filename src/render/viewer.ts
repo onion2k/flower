@@ -26,7 +26,7 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 176;
-const FRAME_SIZE = 112;
+const FRAME_SIZE = 144;
 
 export type Quality = 'draft' | 'final';
 
@@ -115,6 +115,10 @@ export class Viewer {
   private envSpin = 0;
   private exposure = 1;
   private debugMode = 0;
+  /** The key light: direction (world, toward the light), strength, linear colour. */
+  private keyDir: Vec3 = [0.5, -0.6, 0.62];
+  private keyStrength = 0;
+  private keyColour: Vec3 = [1, 1, 1];
 
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
@@ -352,6 +356,34 @@ export class Viewer {
   }
 
   setBloom(v: number) { this.bloom = v; this.dirty = true; }
+
+  /**
+   * The key light by where it hangs: elevation above the table and azimuth
+   * round it, in radians; strength as a multiple of the environment's own
+   * brightness; warmth from -1 (cool, blue-white) through 0 (white) to 1
+   * (warm, amber). It sits over the baked environment rather than in it,
+   * so the occlusion bake does not follow it: its shadowing is the ambient
+   * occlusion's, soft, not a cast shadow.
+   */
+  setKeyLight(opts: { elevation: number; azimuth: number; strength: number; warmth: number }) {
+    const ce = Math.cos(opts.elevation);
+    this.keyDir = [Math.cos(opts.azimuth) * ce, Math.sin(opts.azimuth) * ce, Math.sin(opts.elevation)];
+    this.keyStrength = opts.strength;
+    const w = Math.max(-1, Math.min(1, opts.warmth));
+    this.keyColour = w >= 0
+      ? [1, 1 - 0.28 * w, 1 - 0.62 * w]
+      : [1 + 0.45 * w, 1 + 0.2 * w, 1];
+    this.dirty = true;
+  }
+
+  /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */
+  setBackground(rgb: Vec3) {
+    this.background = inverseTonemap(rgb);
+    this.dirty = true;
+    if (this.occlusion) {
+      this.ctx.device.queue.writeBuffer(this.groundBuffer, 16, new Float32Array([...this.background, 0]));
+    }
+  }
   setExposure(v: number) { this.exposure = v; this.dirty = true; }
 
   /** Fraction of device resolution to render at, below the pixel budget. */
@@ -622,6 +654,9 @@ export class Viewer {
     frame[22] = (this.environment?.mips ?? 1) - 1;
     frame[23] = this.occlusion ? 1 : 0;
     frame[24] = this.selecting ? 1 : 0;
+    frame.set(this.keyDir, 28);
+    frame[31] = this.keyStrength;
+    frame.set(this.keyColour, 32);
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });

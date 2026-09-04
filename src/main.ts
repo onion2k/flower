@@ -52,6 +52,11 @@ const state = {
   exposure: 1,
   bloom: 0.018,
   envSpin: 0,
+  background: '#0b0c0e',
+  keyElevation: Math.PI / 4,
+  keyAzimuth: -Math.PI / 4,
+  keyStrength: 0,
+  keyWarmth: 0.3,
   debug: 0,
   showAnchors: false,
   renderScale: 1,
@@ -95,6 +100,29 @@ function picker(
   wrap.append(row, sel);
   return wrap;
 }
+
+function colour(label: string, value: string, onInput: (hex: string) => void) {
+  const wrap = document.createElement('label');
+  const row = document.createElement('div');
+  row.className = 'row';
+  const name = document.createElement('span');
+  name.textContent = label;
+  const val = document.createElement('b');
+  val.textContent = value;
+  row.append(name, val);
+  const input = document.createElement('input');
+  input.type = 'color';
+  input.value = value;
+  input.addEventListener('input', () => {
+    val.textContent = input.value;
+    onInput(input.value);
+  });
+  wrap.append(row, input);
+  return wrap;
+}
+
+const hexToRgb = (hex: string): [number, number, number] =>
+  [1, 3, 5].map((i) => parseInt(hex.slice(i, i + 2), 16) / 255) as [number, number, number];
 
 function slider(
   label: string, min: number, max: number, step: number, value: number,
@@ -328,6 +356,22 @@ lightSet.append(
     state.envSpin = v;
     viewer.setEnvSpin(v);
   }),
+  colour('background', state.background, (hex) => {
+    state.background = hex;
+    viewer.setBackground(hexToRgb(hex));
+  }),
+);
+const degrees = (v: number) => `${Math.round((v * 180) / Math.PI)}°`;
+const applyKey = () => viewer.setKeyLight({
+  elevation: state.keyElevation, azimuth: state.keyAzimuth, strength: state.keyStrength, warmth: state.keyWarmth,
+});
+const keySet = document.createElement('fieldset');
+keySet.innerHTML = '<legend>Key light</legend>';
+keySet.append(
+  slider('strength', 0, 4, 0.05, state.keyStrength, (v) => `${v.toFixed(2)}×`, (v) => { state.keyStrength = v; applyKey(); }),
+  slider('elevation', 0, 1.55, 0.02, state.keyElevation, degrees, (v) => { state.keyElevation = v; applyKey(); }),
+  slider('azimuth', -3.142, 3.142, 0.02, state.keyAzimuth, degrees, (v) => { state.keyAzimuth = v; applyKey(); }),
+  slider('warmth', -1, 1, 0.05, state.keyWarmth, (v) => v.toFixed(2), (v) => { state.keyWarmth = v; applyKey(); }),
 );
 const hdrNote = document.createElement('div');
 hdrNote.className = 'note';
@@ -353,7 +397,9 @@ viewSet.append(
   toggle('show anchors', 'showAnchors', () => build()),
 );
 
-controlsEl.append(subjectSet, materialSet, lightSet, viewSet);
+applyKey();
+viewer.setBackground(hexToRgb(state.background));
+controlsEl.append(subjectSet, materialSet, lightSet, keySet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
