@@ -15,6 +15,7 @@ import { leverBack } from '../parts/leverback';
 import { bust, earringStand, easel, ringStand } from '../parts/display';
 import { sword } from '../parts/sword';
 import { axe } from '../parts/axe';
+import { shield } from '../parts/shield';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -698,6 +699,27 @@ const PARTS = {
         doubleBit: a.flag('doubleBit', -1, false),
         segments: a.count('segments', -1, 24),
       }),
+  ),
+
+  shield: define(
+    ['radius', 'domeHeight', 'bossRadius', 'bossHeight', 'wall', 'gripWidth', 'gripRadius', 'segments'],
+    (a) => {
+      // domeHeight/bossHeight are legitimately 0 (a flat face; no boss), so
+      // an explicit 0 has to survive rather than fall back to the part's
+      // own non-zero default the way plain `|| undefined` would collapse it
+      const domeHeight = a.num('domeHeight', -1, NaN);
+      const bossHeight = a.num('bossHeight', -1, NaN);
+      return shield({
+        radius: a.num('radius', 0),
+        domeHeight: Number.isNaN(domeHeight) ? undefined : domeHeight,
+        bossRadius: a.num('bossRadius', -1, NaN) || undefined,
+        bossHeight: Number.isNaN(bossHeight) ? undefined : bossHeight,
+        wall: a.num('wall', -1, NaN) || undefined,
+        gripWidth: a.num('gripWidth', -1, NaN) || undefined,
+        gripRadius: a.num('gripRadius', -1, NaN) || undefined,
+        segments: a.count('segments', -1, 48),
+      });
+    },
   ),
 };
 
