@@ -972,6 +972,57 @@ form dagger {
 }
 `,
 
+  battleaxe: `# A ceremonial axe, pushed as far as the catalogue will go: a long steel
+# haft bound in leather at the hand, a jewelled head, and gold growing over
+# all of it. Nothing here is new — every ornament is a leaf, a tendril, a
+# bud or a stone the flowers and brooches already use, placed with the same
+# symmetries. The head's cheeks look out along Y, so anything laid on a
+# cheek is drawn flat (in XY, the way ring() lays things out) and turned
+# onto the face with roll: -90deg for the near cheek, 90deg for the far one.
+# The finial and the poll thorn are buds fastened by their base, which
+# points away from the bud the way a pearl's seat does — hence flip.
+material platinum brushed
+
+part haft      = axe(haftLength: 120, haftRadius: 2.4, headReach: 40, headHeight: 46, wrapTurns: 16, wrapFrom: 0.08, wrapLength: 0.3, enamel: umber)
+part ferrule   = collar(inner: 2.5, wall: 1.1, length: 3) in gold satin
+part vineLeaf  = leaf(length: 10, width: 5, thickness: 0.5, cup: 25deg, curl: 15deg) in gold polished
+part calyxLeaf = leaf(length: 9, width: 4, thickness: 0.5, shape: lanceolate, cup: 30deg) in gold polished
+part cheekLeaf = leaf(length: 9, width: 4.5, thickness: 0.4, shape: ovate, cup: 15deg) in gold polished
+part tendril   = wire(path: spiral(start: 0.8, turns: 1.3, growth: 2.2), radius: 0.45, tip: 0.15, sections: 80) in gold polished
+part eye       = gem(cut: oval, width: 7, length: 10) in sapphire
+part chip      = gem(cut: brilliant, width: 2.4) in ruby
+part finial    = bud(length: 12, width: 6, lobes: 5) in gold satin
+part thorn     = bud(length: 9, width: 4, lobes: 3) in gold satin
+
+# a vine climbing the upper haft, a calyx of leaves where the head is set
+unit vine {
+  repeat vineLeaf around helical(9, radius: 2.4, rise: 46, turns: 1.6, tilt: -50deg)
+}
+unit calyx {
+  repeat calyxLeaf around ring(6, radius: 2.6, tilt: -72deg)
+}
+# the cheek: rubies round the sapphire, leaves and tendrils round those
+unit cheekWork {
+  repeat chip around ring(7, radius: 6.5)
+  repeat cheekLeaf around ring(4, radius: 8.5, phase: 45deg)
+  repeat tendril around ring(4, radius: 9.5)
+}
+
+form battleaxe {
+  place haft
+  place ferrule at (0, 0, 9.6)
+  place ferrule at (0, 0, 45.6)
+  place vine at (0, 0, 78)
+  place calyx at (0, 0, 108)
+  fasten eye to haft.cheek
+  fasten eye to haft.cheekBack
+  place cheekWork at (22.6, 1.7, 120) roll -90deg
+  place cheekWork at (22.6, -1.7, 120) roll 90deg
+  fasten finial to haft.top flip
+  fasten thorn to haft.poll flip
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);

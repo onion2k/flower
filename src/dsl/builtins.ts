@@ -688,7 +688,10 @@ const PARTS = {
   ),
 
   axe: define(
-    ['haftLength', 'haftRadius', 'headReach', 'headHeight', 'headThickness', 'doubleBit', 'segments'],
+    [
+      'haftLength', 'haftRadius', 'headReach', 'headHeight', 'headThickness', 'doubleBit',
+      'wrapTurns', 'wrapRadius', 'wrapFrom', 'wrapLength', 'enamel', 'segments',
+    ],
     (a) =>
       axe({
         haftLength: a.num('haftLength', 0),
@@ -697,6 +700,12 @@ const PARTS = {
         headHeight: a.num('headHeight', -1, NaN) || undefined,
         headThickness: a.num('headThickness', -1, NaN) || undefined,
         doubleBit: a.flag('doubleBit', -1, false),
+        // a fixed default, so 0 (no binding) reads straight through
+        wrapTurns: a.num('wrapTurns', -1, 0),
+        wrapRadius: a.num('wrapRadius', -1, NaN) || undefined,
+        wrapFrom: a.num('wrapFrom', -1, NaN) || undefined,
+        wrapLength: a.num('wrapLength', -1, NaN) || undefined,
+        enamel: enamelName(a),
         segments: a.count('segments', -1, 24),
       }),
   ),

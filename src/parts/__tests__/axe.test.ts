@@ -76,3 +76,51 @@ describe('axe: head', () => {
     expectWatertight(p.mesh);
   });
 });
+
+describe('axe: hand piece and ornament anchors', () => {
+  it('wrapTurns: 0 (the default) leaves the haft bare, with no enamel mask', () => {
+    const p = axe({ haftLength: 100 });
+    expect(p.mesh.enamel).toBeUndefined();
+  });
+
+  it('a wrap adds vertices and stays well-formed and watertight', () => {
+    const bare = axe({ haftLength: 100 });
+    const bound = axe({ haftLength: 100, wrapTurns: 12 });
+    expect(bound.mesh.positions.length).toBeGreaterThan(bare.mesh.positions.length);
+    expectWellFormed(bound.mesh);
+    expectWatertight(bound.mesh);
+  });
+
+  it('the wrap covers only its own stretch of the haft', () => {
+    const p = axe({ haftLength: 100, haftRadius: 2, wrapTurns: 12, wrapFrom: 0.1, wrapLength: 0.3 });
+    // anything wider than the haft below the head must be the binding
+    const proudAt = (z: number) => {
+      let max = 0;
+      for (let i = 0; i < p.mesh.positions.length; i += 3) {
+        if (Math.abs(p.mesh.positions[i + 2] - z) < 1) {
+          max = Math.max(max, Math.hypot(p.mesh.positions[i], p.mesh.positions[i + 1]));
+        }
+      }
+      return max;
+    };
+    expect(proudAt(25)).toBeGreaterThan(2.1);
+    expect(proudAt(70)).toBeLessThan(2.1);
+  });
+
+  it('an enamel colour marks only the binding, not the haft or head', () => {
+    const p = axe({ haftLength: 100, wrapTurns: 12, enamel: 'umber' });
+    expect(p.enamel).toBe('umber');
+    const marked = Array.from(p.mesh.enamel!).filter((v) => v > 0).length;
+    expect(marked).toBeGreaterThan(0);
+    expect(marked).toBeLessThan(p.mesh.enamel!.length);
+  });
+
+  it('cheek anchors face out along +Y and -Y from the head, top faces up, poll faces back', () => {
+    const p = axe({ haftLength: 100 });
+    expect(findAnchor(p, 'cheek').axis).toEqual([0, 1, 0]);
+    expect(findAnchor(p, 'cheekBack').axis).toEqual([0, -1, 0]);
+    expect(findAnchor(p, 'top').position).toEqual([0, 0, 100]);
+    expect(findAnchor(p, 'poll').axis).toEqual([-1, 0, 0]);
+    expect(findAnchor(p, 'cheek').position[0]).toBeGreaterThan(0);
+  });
+});

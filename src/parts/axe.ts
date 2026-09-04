@@ -2,7 +2,8 @@ import { line } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { blade as bladePart } from './wire';
 import { sweep } from '../mesh/sweep';
-import { mergeMeshes, type Mesh } from '../mesh/types';
+import { enamelWhole, mergeMeshes, type Mesh } from '../mesh/types';
+import type { Vec3 } from '../geom/types';
 import { meshBounds, type Anchor, type Part } from './types';
 
 export interface AxeSpec {
@@ -17,6 +18,18 @@ export interface AxeSpec {
   headThickness?: number;
   /** A second head, mirrored on the other side of the haft. */
   doubleBit?: boolean;
+  /**
+   * Turns of a leather binding round the hand piece, 0 for a bare haft. The
+   * binding covers `wrapLength` of the haft starting `wrapFrom` up it, both
+   * as fractions of the whole — a long haft is gripped in one place, not
+   * bound end to end. Same construction as sword's grip: a cord, not a decal.
+   */
+  wrapTurns?: number;
+  wrapRadius?: number;
+  wrapFrom?: number;
+  wrapLength?: number;
+  /** The binding's colour, by enamel name; only the binding takes it. */
+  enamel?: string;
   segments?: number;
 }
 
@@ -83,6 +96,29 @@ export function axe(spec: AxeSpec): Part {
   }).mesh;
 
   const pieces: Mesh[] = [haft, head];
+
+  // the hand piece: a helix round one stretch of the haft, standing a
+  // little proud of it, the same cord sword's own grip is bound with
+  const wrapTurns = spec.wrapTurns ?? 0;
+  if (wrapTurns > 0) {
+    const wrapRadius = spec.wrapRadius ?? haftRadius * 0.28;
+    const wrapFrom = Math.min(Math.max(spec.wrapFrom ?? 0.06, 0), 0.95);
+    const wrapLength = Math.min(Math.max(spec.wrapLength ?? 0.3, 0.01), 1 - wrapFrom);
+    const z0 = wrapFrom * spec.haftLength;
+    const span = wrapLength * spec.haftLength;
+    const reach = haftRadius + wrapRadius * 0.55;
+    const rows = Math.max(24, Math.round(wrapTurns * 14));
+    const path: Vec3[] = [];
+    for (let i = 0; i <= rows; i++) {
+      const t = i / rows;
+      const a = t * wrapTurns * Math.PI * 2;
+      path.push([Math.cos(a) * reach, Math.sin(a) * reach, z0 + t * span]);
+    }
+    const wrap = sweep(path, { profile: profile.circle(wrapRadius, 8), caps: true });
+    if (spec.enamel) enamelWhole(wrap);
+    pieces.push(wrap);
+  }
+
   if (spec.doubleBit) {
     const backHead = bladePart({
       path: line([-standoff, 0, headZ], [-headReach, 0, headZ]),
@@ -97,9 +133,16 @@ export function axe(spec: AxeSpec): Part {
   }
 
   const mesh = mergeMeshes(pieces);
+  // the head's broad face is the XZ plane, so its cheeks look out along Y;
+  // a jewel fastened to one sits where the face is widest, not at the eye
+  const cheekX = standoff + (headReach - standoff) * 0.55;
   const anchors: Anchor[] = [
     { name: 'butt', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0] },
     { name: 'edge', position: [headReach, 0, headZ], axis: [1, 0, 0], tangent: [0, 0, 1] },
+    { name: 'top', position: [0, 0, spec.haftLength], axis: [0, 0, 1], tangent: [1, 0, 0] },
+    { name: 'poll', position: [-standoff, 0, headZ], axis: [-1, 0, 0], tangent: [0, 0, 1] },
+    { name: 'cheek', position: [cheekX, headThickness / 2, headZ], axis: [0, 1, 0], tangent: [0, 0, 1] },
+    { name: 'cheekBack', position: [cheekX, -headThickness / 2, headZ], axis: [0, -1, 0], tangent: [0, 0, 1] },
   ];
-  return { name: spec.name ?? 'axe', mesh, bounds: meshBounds(mesh), anchors };
+  return { name: spec.name ?? 'axe', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }
