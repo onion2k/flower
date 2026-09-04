@@ -58,6 +58,8 @@ const state = {
   keyStrength: 1,
   keyWarmth: 0.3,
   envStrength: 1,
+  dof: 0,
+  focus: 1,
   debug: 0,
   showAnchors: false,
   renderScale: 1,
@@ -390,6 +392,14 @@ viewSet.append(
   picker('quality', ['draft', 'final'], state.quality, (v) => {
     state.quality = v as Quality;
     viewer.setQuality(state.quality);
+  }),
+  slider('depth of field', 0, 1, 0.02, state.dof, (v) => (v === 0 ? 'off' : v.toFixed(2)), (v) => {
+    state.dof = v;
+    viewer.setDepthOfField(state.dof, state.focus);
+  }),
+  slider('focus', 0.4, 2.5, 0.02, state.focus, (v) => `${v.toFixed(2)}× distance`, (v) => {
+    state.focus = v;
+    viewer.setDepthOfField(state.dof, state.focus);
   }),
   picker('debug', DEBUG_MODES, 'shaded', (v) => {
     state.debug = DEBUG_MODES.indexOf(v);

@@ -120,6 +120,9 @@ export class Viewer {
   private keyStrength = 0;
   private keyColour: Vec3 = [1, 1, 1];
   private envStrength = 1;
+  /** Depth of field: strength (0 off) and focus as a multiple of the orbit distance, so the target is what's sharp. */
+  private dof = 0;
+  private focusScale = 1;
 
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
@@ -376,6 +379,9 @@ export class Viewer {
       : [1 + 0.45 * w, 1 + 0.2 * w, 1];
     this.dirty = true;
   }
+
+  /** Depth of field: 0 off, 1 a lens wide open; focus as a multiple of the distance to the orbit target, 1 being the target itself. */
+  setDepthOfField(strength: number, focusScale: number) { this.dof = strength; this.focusScale = focusScale; this.dirty = true; }
 
   /** How much of the baked environment lights the piece: 1 as baked, 0 none — turn it down to let the key light carry the scene. */
   setEnvStrength(v: number) { this.envStrength = v; this.dirty = true; }
@@ -712,6 +718,7 @@ export class Viewer {
 
     this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
       bloom: this.bloom, raw: this.debugMode > 0,
+      focus: this.controls.distance * this.focusScale, dof: this.dof,
     });
     device.queue.submit([encoder.finish()]);
     this.onFrame?.();

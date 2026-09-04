@@ -14,6 +14,13 @@ export interface PostOptions {
   bloom: number;
   /** Debug views want their raw values shown, not tonemapped and bloomed. */
   raw: boolean;
+  /**
+   * Depth of field: the distance in focus, and how hard everything off it
+   * blurs (0 off). The scene's alpha channel carries each pixel's distance
+   * to the eye, so no depth texture has to be read back.
+   */
+  focus: number;
+  dof: number;
 }
 
 const HDR: GPUTextureFormat = 'rgba16float';
@@ -67,6 +74,51 @@ ${FULLSCREEN_VERT}
   return vec4f(sum / 12.0, 1.0);
 }`;
 
+const DOF = `
+${FULLSCREEN_VERT}
+struct Params { focus: f32, strength: f32, maxRadius: f32, _p: f32 };
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@group(0) @binding(2) var<uniform> params: Params;
+
+// circle of confusion in pixels for a distance: the far side blurs by how
+// far past focus it lies, the near side faster, as a lens does; the clear
+// colour (alpha 0) is the sky, and all the way out of focus
+fn coc(dist: f32) -> f32 {
+  let d = select(dist, params.focus * 8.0, dist <= 0.0);
+  let rel = (d - params.focus) / params.focus;
+  let r = select(rel, -rel * 1.5, rel < 0.0);
+  return clamp(r * params.strength * params.maxRadius, 0.0, params.maxRadius);
+}
+
+// A gather over a golden-angle disc, each tap weighted by whether its own
+// circle reaches this pixel — a sharp thing in front does not smear over
+// what is behind it, and an in-focus thing does not bleed into a blurred
+// background. One pass at full size: the pieces are small, the taps are few.
+// Explicit-level samples, since the in-focus early return leaves the loop
+// in non-uniform control flow, where implicit-derivative sampling isn't allowed.
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let size = vec2f(textureDimensions(src));
+  let centre = textureSampleLevel(src, samp, uv, 0.0);
+  let r0 = coc(centre.a);
+  if (r0 < 0.5) { return centre; }
+  var sum = centre.rgb;
+  var weight = 1.0;
+  let taps = 40;
+  for (var i = 1; i <= taps; i++) {
+    let t = f32(i) / f32(taps);
+    let ang = f32(i) * 2.39996323;
+    let rad = sqrt(t) * r0;
+    let off = vec2f(cos(ang), sin(ang)) * rad / size;
+    let s = textureSampleLevel(src, samp, uv + off, 0.0);
+    // a tap counts in proportion to how far its own circle reaches
+    let w = clamp(coc(s.a) / max(rad, 1e-3), 0.0, 1.0);
+    sum += s.rgb * w;
+    weight += w;
+  }
+  return vec4f(sum / weight, centre.a);
+}`;
+
 const COMPOSITE = `
 ${FULLSCREEN_VERT}
 struct Params { bloom: f32, raw: f32, _p: vec2f };
@@ -95,6 +147,7 @@ export class PostChain {
   private msaa: GPUTexture | null = null;
   private depth: GPUTexture | null = null;
   private resolve: GPUTexture | null = null;
+  private dof: GPUTexture | null = null;
   private bloom: GPUTexture[] = [];
 
   private sampler: GPUSampler;
@@ -102,8 +155,11 @@ export class PostChain {
   private downPipe: GPURenderPipeline;
   private upPipe: GPURenderPipeline;
   private compositePipe: GPURenderPipeline;
+  private dofPipe: GPURenderPipeline;
   private brightParams: GPUBuffer;
   private compositeParams: GPUBuffer;
+  private dofParams: GPUBuffer;
+  private dofData = new Float32Array(4);
 
   // Views, made once with their textures. A render pass needs one per
   // attachment, and making them per frame is a dozen driver objects a frame
@@ -119,6 +175,9 @@ export class PostChain {
   private downBinds: GPUBindGroup[] = [];
   private upBinds: GPUBindGroup[] = [];
   private compositeBind: GPUBindGroup | null = null;
+  private compositeDofBind: GPUBindGroup | null = null;
+  private dofBind: GPUBindGroup | null = null;
+  private dofView: GPUTextureView | null = null;
 
   readonly depthFormat: GPUTextureFormat = 'depth24plus';
   readonly colourFormat = HDR;
@@ -145,10 +204,12 @@ export class PostChain {
     this.downPipe = pipe(DOWN, 'bloom down');
     this.upPipe = pipe(UP, 'bloom up', additive);
     this.compositePipe = pipe(COMPOSITE, 'composite', undefined, ctx.format);
+    this.dofPipe = pipe(DOF, 'depth of field');
 
     this.brightParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.brightParams, 0, new Float32Array([1.2, 0.5, 0, 0]));
     this.compositeParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.dofParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
   resize(width: number, height: number) {
@@ -169,6 +230,9 @@ export class PostChain {
     this.resolve = device.createTexture({
       size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'scene resolve',
     });
+    this.dof = device.createTexture({
+      size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'depth of field',
+    });
 
     this.bloom = [];
     let w = width, h = height;
@@ -182,6 +246,7 @@ export class PostChain {
 
     this.msaaView = this.msaa.createView();
     this.resolveView = this.resolve.createView();
+    this.dofView = this.dof.createView();
     this.depthView = this.depth.createView();
     this.bloomViews = this.bloom.map((t) => t.createView());
 
@@ -208,13 +273,23 @@ export class PostChain {
         entries: [{ binding: 0, resource: view(this.bloom[i + 1]) }, { binding: 1, resource: this.sampler }],
       }));
     }
-    this.compositeBind = device.createBindGroup({
+    const compositeFrom = (t: GPUTexture) => device.createBindGroup({
       layout: this.compositePipe.getBindGroupLayout(0),
       entries: [
-        { binding: 0, resource: view(this.resolve) },
+        { binding: 0, resource: view(t) },
         { binding: 1, resource: this.sampler },
         { binding: 2, resource: { buffer: this.compositeParams } },
         { binding: 3, resource: view(this.bloom[0]) },
+      ],
+    });
+    this.compositeBind = compositeFrom(this.resolve);
+    this.compositeDofBind = compositeFrom(this.dof);
+    this.dofBind = device.createBindGroup({
+      layout: this.dofPipe.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: view(this.resolve) },
+        { binding: 1, resource: this.sampler },
+        { binding: 2, resource: { buffer: this.dofParams } },
       ],
     });
   }
@@ -225,7 +300,8 @@ export class PostChain {
       colorAttachments: [{
         view: this.msaaView!,
         resolveTarget: this.resolveView!,
-        clearValue: { r: clear[0], g: clear[1], b: clear[2], a: 1 },
+        // alpha 0 marks the clear colour as sky for the depth of field pass
+        clearValue: { r: clear[0], g: clear[1], b: clear[2], a: 0 },
         loadOp: 'clear',
         storeOp: 'store',
       }],
@@ -265,16 +341,23 @@ export class PostChain {
         draw(this.upPipe, this.upBinds[k++], this.bloomViews[i], 'load');
       }
     }
-    draw(this.compositePipe, this.compositeBind!, canvasView, 'clear');
+    const blur = !opts.raw && opts.dof > 0;
+    if (blur) {
+      this.dofData.set([opts.focus, opts.dof, Math.max(6, Math.min(this.width, this.height) * 0.03), 0]);
+      device.queue.writeBuffer(this.dofParams, 0, this.dofData);
+      draw(this.dofPipe, this.dofBind!, this.dofView!, 'clear');
+    }
+    draw(this.compositePipe, blur ? this.compositeDofBind! : this.compositeBind!, canvasView, 'clear');
   }
 
   private release() {
     this.msaa?.destroy();
     this.depth?.destroy();
     this.resolve?.destroy();
+    this.dof?.destroy();
     for (const t of this.bloom) t.destroy();
-    this.msaa = this.depth = this.resolve = null;
-    this.msaaView = this.resolveView = this.depthView = null;
+    this.msaa = this.depth = this.resolve = this.dof = null;
+    this.msaaView = this.resolveView = this.depthView = this.dofView = null;
     this.bloom = [];
     this.bloomViews = [];
   }
@@ -283,6 +366,7 @@ export class PostChain {
     this.release();
     this.brightParams.destroy();
     this.compositeParams.destroy();
+    this.dofParams.destroy();
   }
 }
 

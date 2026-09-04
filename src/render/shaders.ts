@@ -661,7 +661,8 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   else if (d > 1.5) { colour = vec3f(in.uv, 0.35); }
   else if (d > 0.5) { colour = n * 0.5 + 0.5; }
 
-  return vec4f(colour, 1.0);
+  // alpha carries the distance to the eye, for the depth of field pass
+  return vec4f(colour, length(in.world - frame.cameraPos));
 }
 `;
 
@@ -680,12 +681,13 @@ struct Ground {
 @group(1) @binding(0) var<uniform> ground: Ground;
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 
-struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
+struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
 
 @vertex fn vsMain(@location(0) position: vec3f) -> VsOut {
   var out: VsOut;
   out.local = position.xy;
   let world = ground.centre + vec3f(position.xy * ground.radius, 0.0);
+  out.world = world;
   out.clip = frame.viewProj * vec4f(world, 1.0);
   return out;
 }
@@ -702,7 +704,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
   else if (frame.debug > 0.5) { colour = ground.background; }
-  return vec4f(colour, 1.0);
+  return vec4f(colour, length(in.world - frame.cameraPos));
 }
 `;
 

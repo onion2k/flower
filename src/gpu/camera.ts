@@ -69,6 +69,8 @@ export class Orbit {
   private panSpeed: number;
 
   private radius = 1;
+  /** How far the camera sits from its target right now. */
+  get distance() { return this.radius; }
   private azimuth = 0;
   private polar = Math.PI / 3;
   private toRadius = 1;
