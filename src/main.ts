@@ -11,7 +11,7 @@ import type { Anchor, Part, PlateRelief } from './parts/types';
 import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
-import { Viewer, type Quality } from './render/viewer';
+import { Viewer, tableNames, type Quality, type TableName } from './render/viewer';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
 import { sketchNames } from './editor/help';
@@ -49,6 +49,7 @@ const state = {
   metal: 'gold',
   finish: 'polished',
   environment: 'studio' as EnvPreset,
+  table: 'matte' as TableName,
   exposure: 1,
   bloom: 0.018,
   envSpin: 0,
@@ -366,6 +367,10 @@ lightSet.append(
   colour('background', state.background, (hex) => {
     state.background = hex;
     viewer.setBackground(hexToRgb(hex));
+  }),
+  picker('table', tableNames, state.table, (v) => {
+    state.table = v as TableName;
+    viewer.setTable(state.table);
   }),
 );
 const degrees = (v: number) => `${Math.round((v * 180) / Math.PI)}°`;

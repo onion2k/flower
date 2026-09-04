@@ -709,8 +709,92 @@ struct Ground {
   _pad: f32,
   albedo: vec3f,
   _pad2: f32,
+  table: f32,          // which surface: 0 matte, 1 oak, 2 walnut, 3 slate, 4 linen
+  roughness: f32,
+  scale: f32,          // pattern size, mm per feature
+  _pad3: f32,
 };
 @group(1) @binding(0) var<uniform> ground: Ground;
+
+struct Surface { albedo: vec3f, roughness: f32, normal: vec3f };
+
+// Boards laid along X, each a little different in tone and in where its
+// rings fall, with a dark seam between them. Rings as in the parts' own wood:
+// a stack of warped planes, so a plank shows long stripes and cathedrals.
+fn plankSurface(p: vec2f, base: vec3f, seamWidth: f32, contrast: f32) -> Surface {
+  let boardWidth = ground.scale;
+  let board = floor(p.y / boardWidth);
+  let inBoard = fract(p.y / boardWidth);
+  let seed = hash13(vec3f(board, 0.0, 0.0));
+  let tone = mix(0.8, 1.2, seed);
+  // each board is a different cut: its rings run at their own slant and phase
+  let slant = mix(-0.25, 0.25, hash13(vec3f(board, 7.0, 0.0)));
+  let along = p.x + seed * 3000.0;
+  let across = (inBoard - 0.5) * boardWidth;
+  // rings run the length of the board, drifting slowly and closing into
+  // cathedrals where the wobble folds them back over themselves
+  let wobble = noise3(vec3f(along * 0.008, across * 0.03, seed)) * 3.0
+    + noise3(vec3f(along * 0.03, across * 0.12, seed * 3.0)) * 0.7;
+  let ringCoord = across * (0.22 + slant * 0.3) + along * 0.004 * slant + wobble;
+  let ph = fract(ringCoord);
+  let foot = clamp(fwidth(ringCoord) * 1.5, 0.02, 0.5);
+  let late = smoothstep(0.4 - foot, 0.6 + foot, ph) * (1.0 - smoothstep(0.78 - foot, 0.96 + foot, ph));
+  let fibre = noise3(vec3f(p.x * 0.6, p.y * 5.0, seed)) - 0.5;
+  var albedo = base * tone
+    * (1.0 + 0.35 * contrast * fibre)
+    * mix(1.0 + 0.2 * contrast, 1.0 - 0.9 * contrast, late)
+    * mix(vec3f(1.0), vec3f(0.92, 0.8, 0.7), late);
+  let edge = min(inBoard, 1.0 - inBoard) * boardWidth;
+  let seam = 1.0 - smoothstep(0.0, seamWidth, edge);
+  albedo = mix(albedo, base * 0.25, seam);
+  // the seam is a shallow groove; latewood stands very slightly proud
+  let dz = seam * 0.6 + late * 0.05;
+  let n = normalize(vec3f(0.0, -dz * 4.0 * select(1.0, -1.0, inBoard > 0.5), 1.0));
+  return Surface(albedo, ground.roughness + late * 0.08, n);
+}
+
+fn slateSurface(p: vec2f) -> Surface {
+  let s = ground.scale;
+  let mottle = noise3(vec3f(p.x / s, p.y / s, 1.0)) * 0.6 + noise3(vec3f(p.x / s * 4.0, p.y / s * 4.0, 2.0)) * 0.3;
+  // cleaved bedding: fine parallel ridges, wandering
+  let bed = noise3(vec3f(p.x * 0.015, p.y * 0.35 + noise3(vec3f(p.x * 0.03, p.y * 0.03, 5.0)) * 6.0, 3.0));
+  let flake = noise3(vec3f(p.x * 0.5, p.y * 0.5, 7.0));
+  let base = mix(vec3f(0.03, 0.034, 0.042), vec3f(0.085, 0.09, 0.1), mottle);
+  let albedo = base * (0.94 + 0.12 * bed) * (0.9 + 0.2 * flake);
+  let n = normalize(vec3f(0.0, (bed - 0.5) * 0.08, 1.0));
+  return Surface(albedo, ground.roughness + (0.5 - flake) * 0.2, n);
+}
+
+fn linenSurface(p: vec2f) -> Surface {
+  let s = ground.scale;
+  // a plain weave: warp and weft alternately on top, each thread a soft ridge
+  let u = p.x / s; let v = p.y / s;
+  let warp = 0.5 + 0.5 * cos(u * 6.2831853);
+  let weft = 0.5 + 0.5 * cos(v * 6.2831853);
+  let check = fract(floor(u) * 0.5 + floor(v) * 0.5) * 2.0;   // 0 or 1
+  let ridge = mix(warp, weft, check);
+  let foot = clamp(fwidth(u) * 2.0, 0.0, 1.0);
+  let thread = mix(ridge, 0.5, foot);      // averaged away when finer than a pixel
+  let slub = noise3(vec3f(p.x * 0.15, p.y * 0.15, 9.0));
+  let base = vec3f(0.62, 0.56, 0.46) * mix(0.9, 1.1, slub);
+  let albedo = base * mix(0.82, 1.0, thread);
+  return Surface(albedo, ground.roughness, vec3f(0.0, 0.0, 1.0));
+}
+
+fn tableSurface(p: vec2f) -> Surface {
+  let t = ground.table;
+  if (t < 0.5) {
+    // a matte table in the page's colour, never darker than a dark cloth
+    return Surface(max(ground.background, ground.albedo), ground.roughness, vec3f(0.0, 0.0, 1.0));
+  } else if (t < 1.5) {
+    return plankSurface(p, vec3f(0.42, 0.28, 0.15), 0.7, 0.4);
+  } else if (t < 2.5) {
+    return plankSurface(p, vec3f(0.16, 0.09, 0.055), 0.9, 0.5);
+  } else if (t < 3.5) {
+    return slateSurface(p);
+  }
+  return linenSurface(p);
+}
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 
 struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
@@ -731,12 +815,26 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // matte table, and is lit by the sky and the key like anything else —
   // so on a black page there is still a pool of light with a shadow in
   // it, and on a pale one the table is that colour with a shadow in it
-  let albedo = max(ground.background, ground.albedo);
-  let irradiance = env(spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod);
+  let surface = tableSurface(in.world.xy);
+  let n = surface.normal;
+  let v = normalize(frame.cameraPos - in.world);
+  let ndv = max(dot(n, v), 1e-3);
+  let spin = spinZ(frame.envSpin);
+  let irradiance = env(spin * n, frame.maxLod);
   // each light carries its own shadow: the sky's the baked occlusion, the
   // key's its shadow map — the key doesn't darken where the sky can't reach
-  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
-  let lit = albedo * (irradiance * ao + key) * frame.exposure;
+  let keyLit = keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
+  let key = keyDiffuse(n) * frame.keyColour * keyLit;
+  let diffuse = surface.albedo * (irradiance * ao + key);
+  // the table's own sheen: a dielectric's low highlight, dulled by roughness
+  // and by the piece standing over it, so a waxed board holds a soft
+  // reflection of the sky and the key while a cloth holds none
+  let rough = clamp(surface.roughness, 0.05, 1.0);
+  let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, rough), 0.0).rg;
+  let fresnel = vec3f(0.04) * ab.x + ab.y;
+  let reflected = env(spin * reflect(-v, n), rough * frame.maxLod) * mix(ao, 1.0, 0.3);
+  let specular = reflected * fresnel + keySpecular(n, v, vec3f(0.04), rough) * keyLit;
+  let lit = (diffuse * (1.0 - fresnel) + specular) * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }

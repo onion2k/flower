@@ -85,6 +85,18 @@ function wearOf(mesh: PartMesh) {
   return w;
 }
 
+export type TableName = 'matte' | 'oak' | 'walnut' | 'slate' | 'linen';
+export const tableNames: TableName[] = ['matte', 'oak', 'walnut', 'slate', 'linen'];
+
+/** The ground shader's surfaces: which one, how glossy, and the size of its pattern in mm. */
+const TABLES: Record<TableName, { kind: number; roughness: number; scale: number }> = {
+  matte: { kind: 0, roughness: 0.9, scale: 1 },
+  oak: { kind: 1, roughness: 0.35, scale: 60 },
+  walnut: { kind: 2, roughness: 0.35, scale: 75 },
+  slate: { kind: 3, roughness: 0.55, scale: 90 },
+  linen: { kind: 4, roughness: 0.95, scale: 1.8 },
+};
+
 export class Viewer {
   readonly camera = new Camera();
   bloom = 0.018;
@@ -96,6 +108,7 @@ export class Viewer {
   private observer: ResizeObserver;
   private raf = 0;
   private background: [number, number, number];
+  private table: TableName = 'matte';
 
   private frameLayout: GPUBindGroupLayout;
   private materialLayout: GPUBindGroupLayout;
@@ -357,7 +370,7 @@ export class Viewer {
 
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.dummyLookup = emptyBuffer(device, 8, GPUBufferUsage.STORAGE, 'no occlusion');
-    this.groundBuffer = device.createBuffer({ label: 'ground', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.groundBuffer = device.createBuffer({ label: 'ground', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     const disc = unitDisc(96);
     this.discPosition = bufferFrom(device, disc.positions, GPUBufferUsage.VERTEX, 'disc');
@@ -438,6 +451,18 @@ export class Viewer {
 
   /** How much of the baked environment lights the piece: 1 as baked, 0 none — turn it down to let the key light carry the scene. */
   setEnvStrength(v: number) { this.envStrength = v; this.dirty = true; }
+
+  /** What the piece stands on. `matte` is a cloth in the page's colour; the rest are their own material. */
+  setTable(name: TableName) {
+    this.table = name;
+    this.writeTable();
+    this.dirty = true;
+  }
+
+  private writeTable() {
+    const t = TABLES[this.table];
+    this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([t.kind, t.roughness, t.scale, 0]));
+  }
 
   /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */
   setBackground(rgb: Vec3) {
@@ -929,6 +954,7 @@ export class Viewer {
       // a dark matte table: enough to pool a little light, not enough to compete
       0.04, 0.04, 0.043, 0,
     ]));
+    this.writeTable();
     this.groundBind = device.createBindGroup({
       label: 'ground',
       layout: this.groundLayout,
