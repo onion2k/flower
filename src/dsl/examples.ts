@@ -154,6 +154,73 @@ form cluster {
 }
 `,
 
+  ring: `# A solitaire. "size" on a shank is the inner diameter — the finger it has
+# to fit round, which is the one measurement a ring actually answers for —
+# and everything else is built outward from it. The shoulder swells toward
+# the crown, the seam a closed sweep starts and ends on, so that is where
+# fasten lands the setting.
+material gold polished
+
+part band  = shank(size: 17, width: 2.6, thickness: 1.8, shoulder: 0.55)
+part mount = setting(width: 7, style: claw, claws: 6, height: 3.2)
+part stone = gem(cut: brilliant, width: 7) in diamond
+
+form ring {
+  place band
+  fasten mount to band.crown
+  fasten stone to mount.seat
+}
+`,
+
+  necklace: `# A pendant on a chain. mirror() reflects across a fixed plane — the one
+# containing the front-to-back and up-down axes — so a strand drawn once,
+# offset to one side, comes back with its mirror image on the other: two
+# hand-drawn wires for the price of one, and they meet exactly because they
+# are reflections of the same curve rather than two curves eyeballed to match.
+material gold polished
+
+part strand = wire(path: through((-22, 0, 58), (-8, 38, 52), (16, 52, 32), (28, 30, 14), (26, 10, 15)), radius: 0.55, sections: 80)
+part clasp  = collar(inner: 2.2, wall: 1.1, length: 3) in gold satin
+part bail   = collar(inner: 2.4, wall: 1, length: 2.6) in gold satin
+part stone  = gem(cut: pear, width: 11, length: 15) in aquamarine
+part mount  = setting(width: 11, style: bezel, height: 5)
+
+unit side {
+  place strand
+}
+
+form necklace {
+  repeat side around mirror()
+  place clasp at (-22, 0, 58) pitch 90deg turn 90deg
+  place bail at (26, 0, 15) pitch 90deg turn 90deg
+  place mount at (25, 0, 9) pitch 90deg
+  fasten stone to mount.seat
+}
+`,
+
+  earrings: `# A pair of pearl drops. The hook is drawn the same way the trellis strand
+# and the tendrils elsewhere are — a handful of points and through() — because
+# a fishhook curve is not a shape any of the parametric parts already draws,
+# and one drawn by hand is exactly what "wire" is for. mirror() then does for
+# a pair of earrings what it did for the necklace's two strands: draw the
+# right one, and the left is its reflection, not a second hand-fitted curve.
+material gold polished
+
+part hook = wire(path: through((0, 30, 42), (2.5, 30, 40), (5, 30, 34), (4, 30, 27), (1.5, 30, 22)), radius: 0.45, tip: 0.7, sections: 60)
+part cap  = collar(inner: 1, wall: 0.8, length: 1) in gold satin
+part drop = pearl(radius: 2.6) in white pearl
+
+unit ear {
+  place hook
+  fasten cap to hook.tip
+  fasten drop to cap.b
+}
+
+form earrings {
+  repeat ear around mirror()
+}
+`,
+
   brooch: `# A pearl brooch: the rosette's leaves round a pearl, a seed pearl on each stud
 # Pearls are the first non-metal here. They take their names from the trade —
 # white, cream, pink, grey, black, gold — and need no finish word.

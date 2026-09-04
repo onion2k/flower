@@ -6,6 +6,7 @@ import { bead, bell, bud, collar, egg, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
 import { gem, type GemCut } from '../parts/gem';
 import { setting } from '../parts/setting';
+import { shank } from '../parts/ring';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -186,6 +187,8 @@ export const catalogue: Record<string, () => Part> = {
 
   'setting · claw': () => setting({ width: 14, style: 'claw', claws: 4, height: 6 }),
   'setting · bezel': () => setting({ width: 14, style: 'bezel', height: 5 }),
+
+  shank: () => shank({ size: 17, width: 2.4, thickness: 1.7, shoulder: 0.5 }),
 };
 
 /** A stone of a given cut, in its own species rather than the panel's metal. */

@@ -1,4 +1,4 @@
-import { arc, bezier3, bow, catmullRom, helix, logSpiral, type Curve } from '../geom/curve';
+import { arc, bezier3, bow, catmullRom, ellipse, helix, logSpiral, type Curve } from '../geom/curve';
 import type { Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
 import { enamels, enamelNames, metalNames } from '../render/materials';
@@ -8,6 +8,7 @@ import { petal } from '../parts/petal';
 import { pearl } from '../parts/pearl';
 import { gem, type GemCut } from '../parts/gem';
 import { setting, type SettingStyle } from '../parts/setting';
+import { shank } from '../parts/ring';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -174,7 +175,7 @@ export class Args {
     if (!arg) throw new DslError(`${this.callee} needs a path`, this.span);
     if (!isCurve(arg.value)) {
       throw new DslError(
-        `"${name}" must be a path — try spiral, arc, circle, helix, bezier, through or bow`,
+        `"${name}" must be a path — try spiral, arc, circle, ellipse, helix, bezier, through or bow`,
         arg.span,
       );
     }
@@ -235,6 +236,9 @@ const CURVES = {
 
   circle: define(['radius', 'z'], (a) =>
     arc(a.num('radius', 0), 0, Math.PI * 2, a.num('z', 1, 0))),
+
+  ellipse: define(['rx', 'ry', 'z'], (a) =>
+    ellipse(a.num('rx', 0), a.num('ry', 1), a.num('z', 2, 0))),
 
   helix: define(['radius', 'height', 'turns'], (a) =>
     helix(a.num('radius', 0), a.num('height', 1), a.num('turns', 2, 1))),
@@ -556,6 +560,16 @@ const PARTS = {
       length: a.num('length', 2),
       belly: a.num('belly', -1, 0.6),
       segments: a.count('segments', -1, 24),
+    })),
+
+  shank: define(['size', 'width', 'thickness', 'shoulder', 'shoulderSpread', 'segments'], (a) =>
+    shank({
+      size: a.num('size', 0),
+      width: a.num('width', 1),
+      thickness: a.num('thickness', 2),
+      shoulder: a.num('shoulder', -1, 0) || undefined,
+      shoulderSpread: a.num('shoulderSpread', -1, 0.9),
+      segments: a.count('segments', -1, 96),
     })),
 };
 

@@ -314,7 +314,7 @@ function complete(context: CompletionContext) {
   return { from: word.from, options, validFor: /^[a-zA-Z_][a-zA-Z0-9_]*$/ };
 }
 
-const CURVES = new Set(['spiral', 'arc', 'circle', 'helix', 'bezier', 'bow', 'through']);
+const CURVES = new Set(['spiral', 'arc', 'circle', 'ellipse', 'helix', 'bezier', 'bow', 'through']);
 const SYMMETRIES = new Set(['radial', 'ring', 'dihedral', 'mirror', 'helical', 'phyllotaxis', 'shell', 'along', 'spray', 'nested', 'compose']);
 const isKind = (name: string, kind: string) =>
   kind === 'path' ? CURVES.has(name) : kind === 'symmetry' ? SYMMETRIES.has(name) : false;

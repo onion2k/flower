@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
-  arc, bezier3, bow, catmullRom, curveLength, helix, line, logSpiral,
+  arc, bezier3, bow, catmullRom, curveLength, ellipse, helix, line, logSpiral,
   pathTangent, resample, samplePath,
 } from '../curve';
 import { len } from '../vec';
@@ -26,6 +26,32 @@ describe('arc', () => {
   it('carries a constant z', () => {
     const c = arc(5, 0, Math.PI, 3);
     expect(c.at(0.5)[2]).toBe(3);
+  });
+});
+
+describe('ellipse', () => {
+  it('reaches rx along x and ry along y, a quarter turn apart', () => {
+    const c = ellipse(10, 4);
+    expectVec(c.at(0), [10, 0, 0]);
+    expectVec(c.at(0.25), [0, 4, 0]);
+    expectVec(c.at(0.5), [-10, 0, 0]);
+    expectVec(c.at(0.75), [0, -4, 0]);
+  });
+
+  it('is a circle when rx equals ry', () => {
+    const c = ellipse(6, 6);
+    for (const t of [0.1, 0.37, 0.6, 0.9]) expect(len(c.at(t))).toBeCloseTo(6);
+  });
+
+  it('carries a constant z', () => {
+    const c = ellipse(10, 4, 7);
+    expect(c.at(0.3)[2]).toBe(7);
+    expect(c.at(0.8)[2]).toBe(7);
+  });
+
+  it('closes on itself: t=0 and t=1 land at the same point', () => {
+    const c = ellipse(8, 3);
+    expectVec(c.at(0), c.at(1));
   });
 });
 

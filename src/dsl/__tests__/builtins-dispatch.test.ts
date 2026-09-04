@@ -6,7 +6,7 @@ import { transformDirection, transformPoint } from '../../geom/transform';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray, sphereShell,
 } from '../../pattern/symmetry';
-import { arc, logSpiral } from '../../geom/curve';
+import { arc, ellipse, logSpiral } from '../../geom/curve';
 import { expectVec } from '../../geom/__tests__/helpers';
 
 /**
@@ -69,6 +69,13 @@ describe('curve builtins: DSL wiring matches the geometry function directly', ()
     expectVec(got.base, want.at(0), 2);
     // start and end coincide on a closed circle
     expectVec(got.tip, want.at(0), 1);
+  });
+
+  it('ellipse maps rx/ry/z independently, defaulting z to 0', () => {
+    const want = ellipse(10, 4, 2);
+    const got = wireEndpoints('ellipse(rx: 10, ry: 4, z: 2)');
+    expectVec(got.base, want.at(0), 2);
+    expectVec(got.tip, want.at(0), 1); // closed, same as circle
   });
 
   it('helix maps radius/height/turns, defaulting turns to 1', () => {
@@ -314,5 +321,25 @@ describe('part builtins: a tessellation count of 0 or less is a compile error, n
 
   it('still accepts segments: 1, the boundary case', () => {
     expect(() => build('part p = pearl(radius: 4, segments: 1)\nform f { place p }')).not.toThrow();
+  });
+});
+
+describe('shank builtin: DSL wiring reaches the crown anchor a setting fastens onto', () => {
+  it('fastens a setting to the crown, seating it at the shank\'s own outer radius', () => {
+    const sketch = build(`
+      part band = shank(size: 17, width: 2.4, thickness: 1.7, shoulder: 0.5)
+      part mount = setting(width: 6, style: claw, claws: 6)
+      form f { place band\n fasten mount to band.crown }
+    `);
+    // the shank, the setting, and the solder fillet solderFillet adds at the join
+    expect(sketch.assembly.placements).toHaveLength(3);
+    const radius = 17 / 2 + 1.7 / 2;
+    const mount = sketch.assembly.placements[1];
+    expect(mount.anchor('base').position[0]).toBeCloseTo(radius, 3);
+  });
+
+  it('rejects shank with no shape at all — size, width and thickness are all required', () => {
+    const err = buildErr('part p = shank(width: 2.4, thickness: 1.7)\nform f { place p }');
+    expect(err.message).toMatch(/shank needs "size"/);
   });
 });

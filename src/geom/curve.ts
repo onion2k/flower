@@ -18,6 +18,14 @@ export const arc = (radius: number, from: number, to: number, z = 0): Curve => (
   },
 });
 
+/** Ellipse in the XY plane, its own full turn — an oval jump ring or a stretched loop. */
+export const ellipse = (rx: number, ry: number, z = 0): Curve => ({
+  at: (t) => {
+    const a = t * Math.PI * 2;
+    return [Math.cos(a) * rx, Math.sin(a) * ry, z];
+  },
+});
+
 export const helix = (radius: number, height: number, turns: number): Curve => ({
   at: (t) => {
     const a = t * turns * Math.PI * 2;
