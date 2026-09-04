@@ -105,6 +105,14 @@ export function extrude(opts: ExtrudeOptions): Mesh {
   }
 
   const mesh = mb.build();
+  mesh.uvSpan = [span.minX, span.minY, span.width, span.height];
+  // engraving coordinates: the plate's own flat coordinates on the caps. The
+  // walls and bevels carry uv of their own kind and are not engraved.
+  mesh.engrave = new Float32Array(mesh.positions.length / 3 * 2);
+  for (let i = 0; i < mesh.positions.length / 3; i++) {
+    mesh.engrave[i * 2] = span.minX + mesh.uvs[i * 2] * span.width;
+    mesh.engrave[i * 2 + 1] = span.minY + mesh.uvs[i * 2 + 1] * span.height;
+  }
   mesh.cap = new Float32Array(mesh.positions.length / 3);
   mesh.cap.fill(1, topCap[0], topCap[1]);
   mesh.cap.fill(-1, bottomCap[0], bottomCap[1]);

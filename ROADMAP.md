@@ -97,6 +97,18 @@ Generalise the chased-relief path:
 
 Do this before item 5; glyphs then reuse the depth path.
 
+**Status, September 2026:** done. `part x = ... engraved hatch(scale, depth,
+angle)` cuts any of seven patterns (hatch, crosshatch, guilloche,
+basketweave, rays, wave, stipple) into any part. The design differs from the
+sketch above in one way: instead of a per-vertex flag, every mesh carries a
+second coordinate set in millimetres (`Mesh.engrave`) — flat coordinates on a
+plate's caps, arc length and perimeter on a sweep, angle times local radius
+and silhouette distance on a revolve — and the viewer derives one from uv and
+extent for anything else. Plates engrave their caps only. The pattern fades
+out as its pitch approaches a pixel. See the `engraved` sampler and the
+`deco` brooch. Glyphs (item 5) should evaluate their distance field in the
+same coordinates and go through `engraveHeight`.
+
 ### 4. Natural forms
 
 **Cost: low to moderate. Mostly content, one new symmetry.**
@@ -180,7 +192,7 @@ The light array is a new uniform buffer; the frame struct grows.
 2. **Parametric surface generator** beside extrude, sweep, and revolve.
    Unblocks 2, helps 4. Curves done; surfaces not.
 3. **Generalised engraving field** in the shader, keyed by an enum, with a
-   flat surface coordinate on every part type. Unblocks 3 and 5.
+   flat surface coordinate on every part type. Unblocks 3 and 5. Done.
 4. **Texture binding in the material bind group** plus an SDF atlas builder.
    Unblocks font glyphs in 5.
 5. **Emissive model**, then a local light array. Unblocks 6.
@@ -191,10 +203,10 @@ The light array is a new uniform buffer; the frame struct grows.
 
 Items 3, 5, 6, and 7 all add uniforms to `Material` or `Frame`. WGSL struct
 layout and the matching TypeScript packing are hand-maintained, and every
-addition has cost a relayout. Before starting item 3, reserve a block of
-generic slots in `Material`: two `vec4f` for pattern parameters, one `vec4f`
-for emission, a `u32` for pattern and glyph selectors. Fill them as items
-land rather than relaying out each time.
+addition has cost a relayout. Item 3 used 32 of the 80 spare bytes at
+the end of the record (`pattern`, `patternFaces`, two pads, `patternParams`);
+48 remain before the 256-byte stride is full, enough for emission and a glyph
+selector. Fill them as items land rather than relaying out each time.
 
 ### DSL grammar changes
 

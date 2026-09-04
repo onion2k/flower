@@ -1,8 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import {
-  enamelConcave, enamelInside, enamelWhole, mergeMeshes, MeshBuilder, recomputeNormals, type Mesh,
+  enamelConcave, enamelInside, enamelWhole, mergeMeshes, MeshBuilder, recomputeNormals, uvExtent, type Mesh,
 } from '../types';
 import type { Vec3 } from '../../geom/types';
+import { sweep } from '../sweep';
+import { extrude } from '../extrude';
+import { circle } from '../../geom/profile';
+import { line, samplePath } from '../../geom/curve';
 
 function flatQuad(): Mesh {
   // a unit quad in the XY plane, facing +Z if wound correctly
@@ -194,5 +198,33 @@ describe('enamelConcave', () => {
       expect(mesh.enamel![i * 2]).toBe(1);
       expect(mesh.enamel![i * 2 + 1]).toBe(0);
     }
+  });
+});
+
+describe('uvExtent', () => {
+  it('reads a flat plate as its own width and height in millimetres', () => {
+    const mb = new MeshBuilder();
+    // a 20 x 8 rectangle with uv 0..1 across each
+    mb.vertex(0, 0, 0, 0, 0, 1, 0, 0);
+    mb.vertex(20, 0, 0, 0, 0, 1, 1, 0);
+    mb.vertex(20, 8, 0, 0, 0, 1, 1, 1);
+    mb.vertex(0, 8, 0, 0, 0, 1, 0, 1);
+    mb.quad(0, 1, 2, 3);
+    const [su, sv] = uvExtent(mb.build());
+    expect(su).toBeCloseTo(20);
+    expect(sv).toBeCloseTo(8);
+  });
+
+  it('reads a swept tube as its length along u and its circumference around v', () => {
+    const mesh = sweep(samplePath(line([0, 0, 0], [30, 0, 0]), 10), { profile: circle(2, 16) });
+    const [su, sv] = uvExtent(mesh);
+    // the end caps carry odd uv and pull the estimate a little; within 5% is what it is for
+    expect(Math.abs(su - 30) / 30).toBeLessThan(0.05);
+    expect(Math.abs(sv - 2 * Math.PI * 2) / (2 * Math.PI * 2)).toBeLessThan(0.05);
+  });
+
+  it('a plate records its span at extrusion', () => {
+    const mesh = extrude({ outline: [[-5, -2], [5, -2], [5, 2], [-5, 2]], thickness: 1 });
+    expect(mesh.uvSpan).toEqual([-5, -2, 10, 4]);
   });
 });

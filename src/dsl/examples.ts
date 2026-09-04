@@ -433,12 +433,13 @@ form frame {
   deco: `# Art deco: a sunburst brooch. plate() cuts a flat member to any outline —
 # fan, chevron, sunburst, ziggurat, keystone, scallop, lozenge, polygon,
 # roundel, stadium or card — and stacks face to back the way a disc does.
-# The motifs are drawn once; the symmetries do the repeating.
+# The motifs are drawn once; the symmetries do the repeating. "engraved rays"
+# cuts sunray lines into a plate, radiating from its outline's origin.
 material gold satin
 
-part burst = plate(sunburst(radius: 22, rays: 16, inner: 0.7, tip: 0.25), thickness: 1.2)
+part burst = plate(sunburst(radius: 22, rays: 16, inner: 0.7, tip: 0.25), thickness: 1.2) engraved rays(scale: 0.9, depth: 0.04)
 part field = plate(roundel(radius: 15), thickness: 1, enamel: black) in platinum polished
-part wing  = plate(fan(radius: 11, spread: 150deg, blades: 7, inner: 3.4), thickness: 1) in platinum polished
+part wing  = plate(fan(radius: 11, spread: 150deg, blades: 7, inner: 3.4), thickness: 1) in platinum polished engraved rays(scale: 0.6, depth: 0.04)
 part rib   = plate(chevron(width: 6, rise: 2.2, bar: 1.2), thickness: 0.8)
 part drop  = plate(ziggurat(width: 12, height: 9, steps: 4, top: 4), thickness: 1, enamel: black) in platinum polished
 part mount = setting(width: 6, style: bezel, height: 1.8) in platinum polished
@@ -484,6 +485,32 @@ form pendant {
   repeat dot around along(lissajous(width: 21, height: 15, a: 3, b: 2), 36, from: 0, to: 0.972)
   place knot
   place bail at (0, 22.2, 0) pitch 90deg
+}
+`,
+
+  engraved: `# Engraving. Write "engraved <pattern>(scale, depth, angle)" after a part
+# and the pattern is cut into its surface per pixel — a groove keeps its
+# width however coarse the mesh under it. scale is the pitch in mm, depth
+# the cut (negative raises it, as chasing does), angle a turn in the surface.
+# Patterns: hatch, crosshatch, guilloche, basketweave, rays, wave, stipple.
+material silver polished
+
+part turned  = plate(card(width: 26, height: 18, corner: 2), thickness: 1.2) engraved guilloche(scale: 0.7, depth: 0.05)
+part woven   = plate(roundel(radius: 10), thickness: 1.2) in gold satin engraved basketweave(scale: 0.6, depth: 0.05)
+part sunray  = plate(fan(radius: 13, spread: 120deg, blades: 5), thickness: 1.2) in gold polished engraved rays(scale: 0.8, depth: 0.05)
+part lined   = plate(lozenge(length: 22, width: 12), thickness: 1.2) engraved crosshatch(scale: 0.5, depth: 0.04)
+part rippled = wire(path: circle(radius: 9), radius: 2.2, closed: yes, sections: 96) in rose gold satin engraved wave(scale: 0.6, depth: 0.05)
+part dotted  = bead(radius: 5, point: 4) engraved stipple(scale: 0.7, depth: 0.06)
+part ruled   = collar(inner: 3, wall: 1.4, length: 9) in gold polished engraved hatch(scale: 0.4, depth: 0.04, angle: 90deg)
+
+form sampler {
+  place turned at (-18, 12, 0)
+  place woven at (16, 14, 0)
+  place sunray at (-6, -8, 0) turn -90deg
+  place lined at (18, -10, 0)
+  place rippled at (-22, -12, 0)
+  place dotted at (2, 10, 4)
+  place ruled at (22, 0, 0) pitch 90deg
 }
 `,
 

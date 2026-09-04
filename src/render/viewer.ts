@@ -15,6 +15,8 @@ import type { Anchor, PlateRelief } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
 import { invert, transformDirection, transformPoint } from '../geom/transform';
 import { computeWear } from '../mesh/wear';
+import { engraveCoords } from '../mesh/types';
+import { ENGRAVING_PATTERNS, type Engraving } from '../parts/types';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
@@ -25,7 +27,7 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 176;
+const MATERIAL_SIZE = 208;
 const FRAME_SIZE = 224;
 
 export type Quality = 'draft' | 'final';
@@ -44,6 +46,8 @@ export interface InstanceGroup {
   veinMetal?: string;
   /** Facets round a stone's pavilion. */
   pavilionFacets?: number;
+  /** A pattern cut into the surface. */
+  engraving?: Engraving;
 }
 
 interface GpuGroup {
@@ -54,6 +58,8 @@ interface GpuGroup {
   wear: GPUBuffer;
   /** Per vertex: enamel 0 or 1, and which cap (+1 top, -1 bottom, 0 neither). */
   face: GPUBuffer;
+  /** Per vertex: surface coordinates in millimetres, for engraving. */
+  engrave: GPUBuffer;
   instance: GPUBuffer;
   /** One float per instance: 1 when it is selected. */
   selected: GPUBuffer;
@@ -72,6 +78,23 @@ function faceOf(mesh: PartMesh): Float32Array {
     out[i * 2 + 1] = mesh.cap?.[i] ?? 0;
   }
   return out;
+}
+
+/** Half the larger extent of a mesh's engraving coordinates, once per mesh: a radius for a ray pattern. */
+const extentCache = new WeakMap<PartMesh, number>();
+function extentOf(mesh: PartMesh): number {
+  let e = extentCache.get(mesh);
+  if (e === undefined) {
+    const c = engraveCoords(mesh);
+    let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+    for (let i = 0; i < c.length; i += 2) {
+      minX = Math.min(minX, c[i]); maxX = Math.max(maxX, c[i]);
+      minY = Math.min(minY, c[i + 1]); maxY = Math.max(maxY, c[i + 1]);
+    }
+    e = Math.max(maxX - minX, maxY - minY, 1e-3) / 2;
+    extentCache.set(mesh, e);
+  }
+  return e;
 }
 
 /** Wear belongs to the mesh, so it is computed once however often the mesh is placed. */
@@ -328,6 +351,7 @@ export class Viewer {
           instanceLayout,
           { arrayStride: 8, attributes: [{ shaderLocation: 8, offset: 0, format: 'float32x2' }] },
           { arrayStride: 4, stepMode: 'instance', attributes: [{ shaderLocation: 9, offset: 0, format: 'float32' }] },
+          { arrayStride: 8, attributes: [{ shaderLocation: 10, offset: 0, format: 'float32x2' }] },
         ],
       },
       fragment: { module: pbr, entryPoint: 'fsMain', targets: [target] },
@@ -515,7 +539,7 @@ export class Viewer {
     }
     this.shadowDirty = true;
     for (const g of this.groups) {
-      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.instance, g.selected, g.index]) b.destroy();
+      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.engrave, g.instance, g.selected, g.index]) b.destroy();
     }
     const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
     this.groups = groups.map((g) => ({
@@ -525,6 +549,7 @@ export class Viewer {
       uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
       wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
       face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
+      engrave: bufferFrom(device, engraveCoords(g.mesh), GPUBufferUsage.VERTEX, 'engrave'),
       instance: bufferFrom(device, g.matrices, shared, 'instances'),
       selected: emptyBuffer(device, (g.matrices.length / 16) * 4, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, 'selected'),
       index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
@@ -820,6 +845,7 @@ export class Viewer {
         pass.setVertexBuffer(3, g.wear);
         pass.setVertexBuffer(4, g.instance);
         pass.setVertexBuffer(5, g.face);
+        pass.setVertexBuffer(7, g.engrave);
         pass.setVertexBuffer(6, g.selected);
         pass.setIndexBuffer(g.index, 'uint32');
         pass.drawIndexed(g.indexCount, g.instanceCount);
@@ -917,6 +943,10 @@ export class Viewer {
       const v = metals[g.source.veinMetal ?? ''];
       f32.set(v && e && !v.model ? [...v.f0, 1] : [0, 0, 0, 0], o + 36);
       f32.set([m.ior ?? 1.5, m.dispersion ?? 0, m.sparkle ?? 0, g.source.pavilionFacets ?? 8], o + 40);
+      const eng = g.source.engraving;
+      const patternIndex = eng ? ENGRAVING_PATTERNS.indexOf(eng.pattern) + 1 : 0;
+      u32.set([patternIndex, g.source.mesh.cap ? 0 : 1, 0, 0], o + 44);
+      f32.set(eng ? [eng.scale, eng.depth, eng.angle, extentOf(g.source.mesh)] : [1, 0, 0, 1], o + 48);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

@@ -61,6 +61,9 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
   const edgeDirs = new Float64Array(sections * cols * 2);
   const outward = new Float64Array(sections * cols * 2);
   const vCoord = new Float64Array(cols);
+  // the perimeter of each section, so a pattern drawn round the tube keeps
+  // its pitch where the tube tapers
+  const perimeter = new Float64Array(sections);
 
   for (let s = 0; s < sections; s++) {
     const t = sections > 1 ? s / (sections - 1) : 0;
@@ -69,6 +72,7 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
     profile = scaleProfile(profile, taper(t));
 
     const cl = columnsOf(profile);
+    perimeter[s] = cl.length;
     const a = twist(t);
     const ca = Math.cos(a), sa = Math.sin(a);
     const f = fr[s];
@@ -96,6 +100,8 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
   const mb = new MeshBuilder();
   const base = 0;
   const uCoord = arcLengthParam(path);
+  const pathLength = pathLengthOf(path);
+  const engrave: number[] = [];
 
   for (let s = 0; s < sections; s++) {
     for (let c = 0; c < cols; c++) {
@@ -106,6 +112,7 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
         n[0], n[1], n[2],
         uCoord[s], vCoord[c],
       );
+      engrave.push(uCoord[s] * pathLength, (vCoord[c] - 0.5) * perimeter[s]);
     }
   }
   // Wound (v then u) so the face normal comes out as cross(dv, du), which is the
@@ -131,7 +138,17 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
     capRing(mb, positions, cols, sections - 1, fr[sections - 1], 1);
   }
 
-  return mb.build();
+  const mesh = mb.build();
+  // the caps' vertices have no place in the unrolled surface; give them the
+  // end they sit on, so a pattern simply runs out there
+  const engraveAll = new Float32Array(mesh.positions.length / 3 * 2);
+  engraveAll.set(engrave);
+  for (let i = engrave.length; i < engraveAll.length; i += 2) {
+    engraveAll[i] = i < engraveAll.length / 2 + engrave.length / 2 ? 0 : pathLength;
+    engraveAll[i + 1] = 0;
+  }
+  mesh.engrave = engraveAll;
+  return mesh;
 }
 
 interface Columns {
@@ -143,6 +160,8 @@ interface Columns {
   v: number[];
   /** skip[c] = the quad between column c and c+1 is a crease pair, and has no area. */
   skip: boolean[];
+  /** The profile's perimeter. */
+  length: number;
 }
 
 /**
@@ -195,7 +214,7 @@ function columnsOf(p: Profile): Columns {
   // seam duplicate: same as the first column, at v = 1
   points.push(points[0]); edges.push(edges[0]); outward.push(outward[0]); v.push(1);
 
-  return { count: points.length, points, edges, outward, v, skip };
+  return { count: points.length, points, edges, outward, v, skip, length: perimeter };
 }
 
 function surfaceNormal(
@@ -285,6 +304,15 @@ function capRing(
     if (sign > 0) mb.triangle(centre, ring[c], ring[c + 1]);
     else mb.triangle(centre, ring[c + 1], ring[c]);
   }
+}
+
+function pathLengthOf(path: Vec3[]): number {
+  let total = 0;
+  for (let i = 1; i < path.length; i++) {
+    const a = path[i - 1], b = path[i];
+    total += Math.hypot(b[0] - a[0], b[1] - a[1], b[2] - a[2]);
+  }
+  return total;
 }
 
 function arcLengthParam(path: Vec3[]): number[] {

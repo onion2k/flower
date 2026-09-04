@@ -1,7 +1,7 @@
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { EditorSelection, type EditorState } from '@codemirror/state';
 import { EditorView, showPanel } from '@codemirror/view';
-import { BUILTIN_NAMES, CURVE_NAMES, OUTLINE_NAMES, PART_NAMES, SYMMETRY_NAMES, type ParamInfo, signature } from '../dsl/builtins';
+import { BUILTIN_NAMES, CURVE_NAMES, ENGRAVING_NAMES, OUTLINE_NAMES, PART_NAMES, SYMMETRY_NAMES, type ParamInfo, signature } from '../dsl/builtins';
 
 /**
  * Inline parameter help: a strip under the text that shows what the call
@@ -310,6 +310,8 @@ function complete(context: CompletionContext) {
       options = BUILTIN_NAMES.map((n) => ({ label: n, type: 'function', apply: n + '(' }));
     } else if (/\baround\s*$/.test(before)) {
       options = BUILTIN_NAMES.filter((n) => isKind(n, 'symmetry')).map((n) => ({ label: n, type: 'function', apply: n + '(' }));
+    } else if (/\bengraved\s*$/.test(before)) {
+      options = ENGRAVING_NAMES.map((n) => ({ label: n, type: 'function', apply: n + '(' }));
     } else return null;
   }
   return { from: word.from, options, validFor: /^[a-zA-Z_][a-zA-Z0-9_]*$/ };

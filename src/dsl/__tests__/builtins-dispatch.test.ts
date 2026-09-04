@@ -416,3 +416,42 @@ describe('mathematical curve builtins', () => {
     expect(sketch.assembly.placements[0].part.mesh.indices.length).toBeGreaterThan(0);
   });
 });
+
+describe('engraving', () => {
+  it('"engraved" after a part attaches a pattern with pitch, depth and angle', () => {
+    const sketch = build('part p = disc(radius: 10, thickness: 1) in gold satin engraved guilloche(scale: 0.8, depth: 0.05, angle: 0.3)\nform f { place p }');
+    const part = sketch.assembly.placements[0].part;
+    expect(part.engraving).toEqual({ pattern: 'guilloche', scale: 0.8, depth: 0.05, angle: 0.3 });
+    expect(part.material).toEqual({ metal: 'gold', finish: 'satin' });
+  });
+
+  it('works without a material clause, and every pattern is known', () => {
+    for (const name of ['hatch', 'crosshatch', 'guilloche', 'basketweave', 'rays', 'wave', 'stipple']) {
+      const sketch = build(`part p = disc(radius: 10, thickness: 1) engraved ${name}(0.5)\nform f { place p }`);
+      expect(sketch.assembly.placements[0].part.engraving?.pattern).toBe(name);
+    }
+  });
+
+  it('crosshatch turns a quarter by default so its two families cross the grain', () => {
+    const sketch = build('part p = disc(radius: 10, thickness: 1) engraved crosshatch(0.5)\nform f { place p }');
+    expect(sketch.assembly.placements[0].part.engraving?.angle).toBeCloseTo(Math.PI / 4);
+  });
+
+  it('rejects something that is not a pattern, naming the patterns', () => {
+    const e = buildErr('part p = disc(radius: 10, thickness: 1) engraved circle(radius: 3)\nform f { place p }');
+    expect(e.message).toMatch(/"engraved" needs a pattern — try hatch, crosshatch/);
+  });
+
+  it('an engraving is not a part', () => {
+    const e = buildErr('part p = hatch(0.5)\nform f { place p }');
+    expect(e.message).toMatch(/is not a part — it is an engraving/);
+  });
+
+  it('the same call in two materials still yields two distinct parts', () => {
+    const sketch = build('part a = bead(radius: 3, point: 2) in gold polished\npart b = bead(radius: 3, point: 2) in silver polished engraved stipple(0.4)\nform f { place a\n place b at (10, 0, 0) }');
+    const [a, b] = sketch.assembly.placements.map((p) => p.part);
+    expect(a.mesh).toBe(b.mesh);
+    expect(a.engraving).toBeUndefined();
+    expect(b.engraving?.pattern).toBe('stipple');
+  });
+});

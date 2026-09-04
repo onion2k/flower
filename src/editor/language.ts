@@ -13,7 +13,7 @@ import { BUILTIN_NAMES } from '../dsl/builtins';
 const STATEMENT = new Set(['use', 'material', 'let', 'part', 'unit', 'form']);
 const ACTION = new Set(['place', 'fasten', 'repeat']);
 const MODIFIER = new Set([
-  'at', 'turn', 'pitch', 'roll', 'scale', 'offset', 'flip', 'as', 'in', 'to', 'around',
+  'at', 'turn', 'pitch', 'roll', 'scale', 'offset', 'flip', 'as', 'in', 'to', 'around', 'engraved',
 ]);
 const BUILTIN = new Set(BUILTIN_NAMES);
 

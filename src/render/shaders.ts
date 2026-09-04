@@ -208,6 +208,12 @@ struct Material {
   gemDispersion: f32,
   gemSparkle: f32,
   gemPavilion: f32,   // facets round the pavilion; a step cut has fewer than a brilliant
+  // an engraved pattern, evaluated per pixel in surface millimetres
+  pattern: u32,        // 0 none; then hatch, crosshatch, guilloche, basketweave, rays, wave, stipple
+  patternFaces: u32,   // 0 the caps of a plate only, 1 the whole surface
+  _pad3: u32,
+  _pad4: u32,
+  patternParams: vec4f, // pitch mm, depth mm, angle, the surface's half extent
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -222,6 +228,7 @@ struct VsIn {
   @location(7) im3: vec4f,
   @location(8) face: vec2f,     // enamel, cap
   @location(9) selected: f32,
+  @location(10) engrave: vec2f,  // surface millimetres, for engraving
   @builtin(vertex_index) vid: u32,
   @builtin(instance_index) iid: u32,
 };
@@ -243,6 +250,7 @@ struct VsOut {
   @location(9) axis: vec3f,
   @location(10) side: vec3f,
   @location(11) @interpolate(flat) selected: f32,
+  @location(12) engrave: vec2f,
 };
 
 @vertex fn vsMain(in: VsIn) -> VsOut {
@@ -268,6 +276,7 @@ struct VsOut {
   out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
   out.cap = in.face.y;
   out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
+  out.engrave = in.engrave;
   let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
   out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
   out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
@@ -367,6 +376,80 @@ fn reliefField(x: f32, y: f32) -> f32 {
 }
 
 fn reliefHeight(x: f32, y: f32) -> f32 { return material.relief * reliefField(x, y); }
+
+/*
+ * Engraved patterns.
+ *
+ * Each is a unit field of grooves — 1 at the bottom of a cut, 0 on untouched
+ * metal — in surface millimetres, rotated by the pattern's angle. The depth
+ * scales it and the normal is bent by its gradient, exactly as the vein relief
+ * is, so a groove finer than the mesh still reads as a groove.
+ */
+
+/** A rounded groove of half-width w, centred where s is 0. */
+fn groove(s: f32, w: f32) -> f32 {
+  let t = clamp(abs(s) / w, 0.0, 1.0);
+  return 1.0 - t * t * (3.0 - 2.0 * t);
+}
+
+/** Parallel grooves at a pitch, each of half-width w. */
+fn stripes(x: f32, pitch: f32, w: f32) -> f32 {
+  return groove((fract(x / pitch) - 0.5) * pitch, w);
+}
+
+fn patternField(xIn: f32, yIn: f32) -> f32 {
+  let pitch = material.patternParams.x;
+  let a = material.patternParams.z;
+  let ca = cos(a); let sa = sin(a);
+  let x = ca * xIn + sa * yIn;
+  let y = -sa * xIn + ca * yIn;
+  switch material.pattern {
+    case 1u: {  // hatch
+      return stripes(y, pitch, 0.22 * pitch);
+    }
+    case 2u: {  // crosshatch
+      return max(stripes(y, pitch, 0.2 * pitch), stripes(x, pitch, 0.2 * pitch));
+    }
+    case 3u: {  // guilloche: two families of sinuous lines crossing, engine turned
+      let wave = 0.32 * pitch * sin(6.2831853 * x / (3.0 * pitch));
+      return max(stripes(y + wave, pitch, 0.16 * pitch), stripes(y - wave, pitch, 0.16 * pitch));
+    }
+    case 4u: {  // basketweave: cells of stripes, alternately across and along
+      let cell = 3.0 * pitch;
+      let parity = i32(floor(x / cell)) + i32(floor(y / cell));
+      let across = stripes(y, pitch, 0.22 * pitch);
+      let along = stripes(x, pitch, 0.22 * pitch);
+      let fill = select(along, across, (parity & 1) == 0);
+      let seams = max(stripes(x, cell, 0.12 * pitch), stripes(y, cell, 0.12 * pitch));
+      return max(fill, seams);
+    }
+    case 5u: {  // rays: grooves radiating from the surface's origin, a deco sunray
+      let r = length(vec2f(x, y));
+      let extent = max(material.patternParams.w, pitch);
+      let dth = pitch / extent;
+      let theta = atan2(y, x);
+      let s = (fract(theta / dth) - 0.5) * dth * r;
+      // the rays would pile up at the centre; let them fade out there
+      return groove(s, 0.2 * pitch) * smoothstep(pitch, 3.0 * pitch, r);
+    }
+    case 6u: {  // wave
+      let wave = 0.35 * pitch * sin(6.2831853 * x / (3.0 * pitch));
+      return stripes(y + wave, pitch, 0.22 * pitch);
+    }
+    case 7u: {  // stipple: a lattice of round pits, rows staggered
+      let row = floor(y / pitch);
+      let shift = select(0.0, 0.5 * pitch, (i32(row) & 1) == 1);
+      let cx = (fract((x + shift) / pitch) - 0.5) * pitch;
+      let cy = (fract(y / pitch) - 0.5) * pitch;
+      let d2 = (cx * cx + cy * cy) / (0.32 * pitch * 0.32 * pitch);
+      return max(0.0, 1.0 - d2);
+    }
+    default: { return 0.0; }
+  }
+}
+
+/** Engraved height: grooves cut in by the depth, or raised by a negative one. */
+fn engraveHeight(x: f32, y: f32, depth: f32) -> f32 { return -depth * patternField(x, y); }
 
 /**
  * Signed distance to the edge of the cloisonné wire: negative inside it. The
@@ -508,6 +591,8 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   var tbn = tangentFrame(n, in.world, in.uv);
   // how much of the flat plate one pixel covers, for antialiasing anything drawn on it
   let plateFootprint = max(0.75 * length(vec2f(dpdx(in.plate.x), dpdy(in.plate.x))), 0.005);
+  // and of the engraving coordinates, taken here where every pixel takes them
+  let engraveFootprint = max(0.75 * length(vec2f(dpdx(in.engrave.x), dpdy(in.engrave.x))), 0.005);
 
   // --- chased relief: bend the normal by the height field's gradient, per pixel ---
   // The relief was applied as a shear along the flat plate's normal; the cup and
@@ -524,6 +609,27 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     // re-square the frame to the new normal without touching the derivatives,
     // which may not be taken inside a branch this pixel's neighbours may skip
     tbn = mat3x3f(normalize(t - n * dot(t, n)), normalize(b - n * dot(b, n)), n);
+  }
+
+  // --- engraving: the same bend, from a pattern field, on whatever face carries coordinates ---
+  if (material.pattern > 0u && (material.patternFaces > 0u || abs(in.cap) > 0.5)) {
+    let pitch = material.patternParams.x;
+    // grooves finer than a pixel would only shimmer; let the pattern fade to
+    // plain metal as it gets there
+    let fade = 1.0 - smoothstep(0.12, 0.45, engraveFootprint / pitch);
+    let depth = material.patternParams.y * fade;
+    if (depth != 0.0) {
+      let eps = pitch * 0.02;
+      let e = in.engrave;
+      let fx = (engraveHeight(e.x + eps, e.y, depth) - engraveHeight(e.x - eps, e.y, depth)) / (2.0 * eps);
+      let fy = (engraveHeight(e.x, e.y + eps, depth) - engraveHeight(e.x, e.y - eps, depth)) / (2.0 * eps);
+      let t = normalize(tbn[0] - n * dot(tbn[0], n));
+      let b = normalize(tbn[1] - n * dot(tbn[1], n));
+      // a plate's bottom cap sees the field mirrored; anywhere else the field is cut along the outward normal
+      let sign = select(1.0, in.cap, abs(in.cap) > 0.5) * select(1.0, -1.0, !frontFacing);
+      n = normalize(n - sign * (fx * t + fy * b));
+      tbn = mat3x3f(normalize(t - n * dot(t, n)), normalize(b - n * dot(b, n)), n);
+    }
   }
 
   var roughness = material.roughness;

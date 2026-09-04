@@ -17,6 +17,66 @@ export interface Mesh {
    * pixel on the caps, where the flat coordinates are known.
    */
   cap?: Float32Array;
+  /**
+   * The box a plate's cap uv is measured against — minX, minY, width, height
+   * in the plate's own flat coordinates — so a shader can turn uv back into
+   * millimetres and draw an engraving at a real size.
+   */
+  uvSpan?: [number, number, number, number];
+  /**
+   * Surface coordinates in millimetres, two per vertex, for drawing an
+   * engraving at a real size: along and around a sweep, round and up a
+   * revolve, across a plate's face. Where absent the viewer derives them
+   * from uv and the mesh's extent.
+   */
+  engrave?: Float32Array;
+}
+
+/**
+ * Millimetres per unit of u and of v, averaged over the surface. Sweeps and
+ * revolves parameterise 0..1 along and around, so this is what turns their uv
+ * into a coordinate an engraving can be scaled in. Weighted by triangle area,
+ * so a wide belly counts for more than a pinched tip.
+ */
+/**
+ * Engraving coordinates for any mesh: its own where the generator wrote them,
+ * the flat plate coordinates for a plate, and uv scaled by the average extent
+ * for anything else.
+ */
+export function engraveCoords(mesh: Mesh): Float32Array {
+  if (mesh.engrave) return mesh.engrave;
+  const n = mesh.positions.length / 3;
+  const out = new Float32Array(n * 2);
+  const [x0, y0, sx, sy] = mesh.uvSpan ?? [0, 0, ...uvExtent(mesh)];
+  for (let i = 0; i < n; i++) {
+    out[i * 2] = x0 + mesh.uvs[i * 2] * sx;
+    out[i * 2 + 1] = y0 + mesh.uvs[i * 2 + 1] * sy;
+  }
+  return out;
+}
+
+export function uvExtent(mesh: Mesh): [number, number] {
+  const p = mesh.positions, uv = mesh.uvs, idx = mesh.indices;
+  let su = 0, sv = 0, weight = 0;
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i], b = idx[i + 1], c = idx[i + 2];
+    const e1 = [p[b * 3] - p[a * 3], p[b * 3 + 1] - p[a * 3 + 1], p[b * 3 + 2] - p[a * 3 + 2]];
+    const e2 = [p[c * 3] - p[a * 3], p[c * 3 + 1] - p[a * 3 + 1], p[c * 3 + 2] - p[a * 3 + 2]];
+    const du1 = uv[b * 2] - uv[a * 2], dv1 = uv[b * 2 + 1] - uv[a * 2 + 1];
+    const du2 = uv[c * 2] - uv[a * 2], dv2 = uv[c * 2 + 1] - uv[a * 2 + 1];
+    const det = du1 * dv2 - du2 * dv1;
+    if (Math.abs(det) < 1e-12) continue;
+    // dP/du and dP/dv from the two edges
+    const inv = 1 / det;
+    const tu = [(e1[0] * dv2 - e2[0] * dv1) * inv, (e1[1] * dv2 - e2[1] * dv1) * inv, (e1[2] * dv2 - e2[2] * dv1) * inv];
+    const tv = [(e2[0] * du1 - e1[0] * du2) * inv, (e2[1] * du1 - e1[1] * du2) * inv, (e2[2] * du1 - e1[2] * du2) * inv];
+    const cx = e1[1] * e2[2] - e1[2] * e2[1], cy = e1[2] * e2[0] - e1[0] * e2[2], cz = e1[0] * e2[1] - e1[1] * e2[0];
+    const area = Math.hypot(cx, cy, cz);
+    su += Math.hypot(tu[0], tu[1], tu[2]) * area;
+    sv += Math.hypot(tv[0], tv[1], tv[2]) * area;
+    weight += area;
+  }
+  return weight > 0 ? [su / weight, sv / weight] : [1, 1];
 }
 
 export type Vec2 = [number, number];
@@ -208,6 +268,9 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
   const indices = new Uint32Array(tris);
   const enamel = meshes.some((m) => m.enamel) ? new Float32Array(verts) : undefined;
   const cap = meshes.some((m) => m.cap) ? new Float32Array(verts) : undefined;
+  // each piece keeps its own engraving coordinates; a piece without any gets
+  // them derived, so the whole is engravable if any part of it is
+  const engrave = meshes.some((m) => m.engrave) ? new Float32Array(verts * 2) : undefined;
 
   let vo = 0, io = 0;
   for (const m of meshes) {
@@ -216,6 +279,7 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
     uvs.set(m.uvs, vo * 2);
     if (enamel && m.enamel) enamel.set(m.enamel, vo);
     if (cap && m.cap) cap.set(m.cap, vo);
+    if (engrave) engrave.set(engraveCoords(m), vo * 2);
     for (let i = 0; i < m.indices.length; i++) indices[io + i] = m.indices[i] + vo;
     vo += m.positions.length / 3;
     io += m.indices.length;
@@ -223,5 +287,6 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
   const out: Mesh = { positions, normals, uvs, indices };
   if (enamel) out.enamel = enamel;
   if (cap) out.cap = cap;
+  if (engrave) out.engrave = engrave;
   return out;
 }

@@ -244,7 +244,8 @@ export function parse(source: string): Program {
       expect('=', 'after a part name');
       const value = parseExpr();
       const material = at('in') ? (next(), parseMaterial()) : undefined;
-      return { kind: 'part', name, value, material, span: spanFrom(start) };
+      const engraving = at('engraved') ? (next(), parseExpr()) : undefined;
+      return { kind: 'part', name, value, material, engraving, span: spanFrom(start) };
     }
 
     if (at('unit') || at('form')) {
@@ -266,7 +267,7 @@ export function parse(source: string): Program {
 
 const ACTION_KEYWORDS = [
   'place', 'fasten', 'repeat', 'at', 'turn', 'pitch', 'roll',
-  'scale', 'offset', 'flip', 'as', 'in', 'to', 'around',
+  'scale', 'offset', 'flip', 'as', 'in', 'to', 'around', 'engraved',
 ];
 const isActionKeyword = (text: string) => ACTION_KEYWORDS.includes(text);
 

@@ -43,6 +43,28 @@ export interface Part {
   solderable?: boolean;
   /** Facets round a stone's pavilion, for the shader to bounce light off. */
   pavilionFacets?: number;
+  /** A pattern cut into the surface, drawn per pixel by the shader. */
+  engraving?: Engraving;
+}
+
+export const ENGRAVING_PATTERNS = [
+  'hatch', 'crosshatch', 'guilloche', 'basketweave', 'rays', 'wave', 'stipple',
+] as const;
+export type EngravingPattern = (typeof ENGRAVING_PATTERNS)[number];
+
+/**
+ * An engraved pattern: a height field the shader evaluates in the surface's
+ * own millimetre coordinates, so a groove keeps its width however coarse the
+ * mesh under it. `depth` positive cuts in; negative raises, as chasing does.
+ */
+export interface Engraving {
+  pattern: EngravingPattern;
+  /** Pitch of the pattern's features, in millimetres. */
+  scale: number;
+  /** Groove depth in millimetres; negative for a raised pattern. */
+  depth: number;
+  /** Rotation of the pattern in the surface, radians. */
+  angle: number;
 }
 
 /**

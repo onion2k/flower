@@ -52,6 +52,11 @@ export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
     return [Math.cos(a) * r * w, Math.sin(a) * r * w, z];
   };
 
+  // engraving coordinates: round the form at its local radius, and up the
+  // silhouette by distance, both in millimetres. Measured from the middle of
+  // the arc, so where the radius changes the pattern shears half as far at
+  // the seam as it would measured from one end
+  const engrave: number[] = [];
   for (let i = 0; i < rows; i++) {
     const u = i / segments;
     const a = u * arc;
@@ -61,9 +66,11 @@ export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
       const [nr, nz] = cols.normals[k];
       if (!warp) {
         mb.vertex(ca * r, sa * r, z, ca * nr, sa * nr, nz, u, cols.v[k]);
+        engrave.push((a - arc / 2) * r, cols.v[k] * cols.length);
         continue;
       }
       const [x, y, zz] = at(i, k);
+      engrave.push((a - arc / 2) * Math.hypot(x, y), cols.v[k] * cols.length);
       const nrm = warpedNormal(at, cols, i, k, rows, n, closedRing);
       mb.vertex(
         x, y, zz,
@@ -89,7 +96,9 @@ export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
     }
   }
 
-  return mb.build();
+  const mesh = mb.build();
+  mesh.engrave = new Float32Array(engrave);
+  return mesh;
 }
 
 /**
@@ -145,6 +154,8 @@ interface Columns {
   v: number[];
   /** skip[k] = the band between column k and k+1 is a crease pair with no area. */
   skip: boolean[];
+  /** Length of the silhouette. */
+  length: number;
 }
 
 /**
@@ -201,5 +212,5 @@ function columnsOf(sil: Silhouette): Columns {
     points.push(points[0]); normals.push(normals[0]); v.push(1); skip.push(false);
   }
 
-  return { points, normals, v, skip };
+  return { points, normals, v, skip, length: total };
 }

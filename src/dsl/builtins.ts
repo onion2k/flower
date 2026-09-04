@@ -26,7 +26,7 @@ import { shield } from '../parts/shield';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset, plate } from '../parts/panel';
-import type { Part } from '../parts/types';
+import { ENGRAVING_PATTERNS, type Engraving, type Part } from '../parts/types';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
   sphereShell, type Symmetry,
@@ -39,7 +39,7 @@ import { DslError, type Span } from './lexer';
  */
 export interface Outline { loop: Vec2[] }
 
-export type Value = number | string | Vec3 | Curve | Outline | Part | Symmetry;
+export type Value = number | string | Vec3 | Curve | Outline | Engraving | Part | Symmetry;
 
 export const isVec = (v: Value): v is Vec3 =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
@@ -52,6 +52,9 @@ export const isCurve = (v: Value): v is Curve =>
 
 export const isOutline = (v: Value): v is Outline =>
   typeof v === 'object' && v !== null && Array.isArray((v as Outline).loop);
+
+export const isEngraving = (v: Value): v is Engraving =>
+  typeof v === 'object' && v !== null && typeof (v as Engraving).pattern === 'string';
 
 export const isPart = (v: Value): v is Part =>
   typeof v === 'object' && v !== null && 'mesh' in (v as Part) && 'anchors' in (v as Part);
@@ -384,6 +387,24 @@ const OUTLINES = {
     loop: tombstoneOutline(a.num('width', 0), a.num('height', 1), a.num('corner', 2, 0), a.count('segments', -1, 8)),
   })),
 };
+
+/**
+ * Engravings. `part x = ... engraved hatch(scale: 0.6, depth: 0.05)` cuts the
+ * pattern into x's surface. Each takes the same three: the pitch of its
+ * features in millimetres, how deep the grooves go (negative raises them),
+ * and a turn in the surface.
+ */
+const engravingOf = (pattern: Engraving['pattern'], defaultAngle = 0) =>
+  define(['scale', 'depth', 'angle'], (a): Engraving => ({
+    pattern,
+    scale: a.num('scale', 0, 1),
+    depth: a.num('depth', 1, 0.06),
+    angle: a.num('angle', 2, defaultAngle),
+  }));
+
+const ENGRAVINGS = Object.fromEntries(
+  ENGRAVING_PATTERNS.map((name) => [name, engravingOf(name, name === 'crosshatch' ? Math.PI / 4 : 0)]),
+) as Record<Engraving['pattern'], ReturnType<typeof define>>;
 
 /** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
 const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
@@ -931,8 +952,10 @@ const SYMMETRIES = {
 };
 
 export const BUILTINS: Record<string, { known: string[]; fn: Builtin }> = {
-  ...CURVES, ...OUTLINES, ...PARTS, ...SYMMETRIES,
+  ...CURVES, ...OUTLINES, ...ENGRAVINGS, ...PARTS, ...SYMMETRIES,
 };
+
+export const ENGRAVING_NAMES = Object.keys(ENGRAVINGS);
 
 export const OUTLINE_NAMES = Object.keys(OUTLINES);
 export const CURVE_NAMES = Object.keys(CURVES);
