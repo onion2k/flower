@@ -38,6 +38,7 @@ export const PARTS: PartEntry[] = [
   { name: 'rivet', call: 'rivet(head: 3.5, height: 1.2, shank: 2, grip: 1)' },
   { name: 'collar', call: 'collar(inner: 3, wall: 1, length: 3)' },
   { name: 'shank', call: 'shank(size: 17, width: 2.4, thickness: 1.7, shoulder: 0.5)' },
+  { name: 'clasp', call: 'clasp(radius: 0.6, hookRadius: 4)' },
   { name: 'band', call: 'band(radius: 20, width: 3, thickness: 0.9)' },
   { name: 'bar', call: 'bar(length: 30, width: 5, thickness: 1.4)' },
   { name: 'disc', call: 'disc(radius: 9, thickness: 1.2, bore: 2)' },

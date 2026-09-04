@@ -172,6 +172,25 @@ form ring {
 }
 `,
 
+  tension: `# A tension setting: the stone is gripped directly by the band's own
+# spring, no claw or bezel between. shank's gap cuts the band at the crown
+# instead of closing it, and the same shoulder swell that thickens a plain
+# ring toward the crown now falls on the two cut jaws either side of the
+# gap, which is where a tension setting wants the extra metal anyway — that
+# is where the grip actually happens. Widening the gap toward the stone's
+# own width is what reads as gripped rather than merely adjacent; too narrow
+# a gap and the stone sits on top of the band rather than caught in it.
+material gold polished
+
+part band  = shank(size: 17, width: 3.4, thickness: 2.4, gap: 0.62, shoulder: 0.3, shoulderSpread: 0.3)
+part stone = gem(cut: brilliant, width: 6.5) in diamond
+
+form tension {
+  place band
+  fasten stone to band.crown
+}
+`,
+
   necklace: `# A pendant on a chain. mirror() reflects across a fixed plane — the one
 # containing the front-to-back and up-down axes — so a strand drawn once,
 # offset to one side, comes back with its mirror image on the other: two
@@ -180,7 +199,7 @@ form ring {
 material gold polished
 
 part strand = wire(path: through((-22, 0, 58), (-8, 38, 52), (16, 52, 32), (28, 30, 14), (26, 10, 15)), radius: 0.55, sections: 80)
-part clasp  = collar(inner: 2.2, wall: 1.1, length: 3) in gold satin
+part hook   = clasp(radius: 0.6, hookRadius: 4)
 part bail   = collar(inner: 2.4, wall: 1, length: 2.6) in gold satin
 part stone  = gem(cut: pear, width: 11, length: 15) in aquamarine
 part mount  = setting(width: 11, style: bezel, height: 5)
@@ -191,7 +210,7 @@ unit side {
 
 form necklace {
   repeat side around mirror()
-  place clasp at (-22, 0, 58) pitch 90deg turn 90deg
+  place hook at (-22, 0, 58) pitch 90deg turn 90deg
   place bail at (26, 0, 15) pitch 90deg turn 90deg
   place mount at (25, 0, 9) pitch 90deg
   fasten stone to mount.seat
@@ -217,6 +236,29 @@ unit ear {
 }
 
 form earrings {
+  repeat ear around mirror()
+}
+`,
+
+  studs: `# A pair of stud earrings. rivet was built for exactly this, though every
+# other use of it in these examples is decorative: seat and tail are a
+# front and a back, a place for a visible stone or pearl to hide the head,
+# and a place for a friction nut to grip from behind — a stud earring is a
+# post through the lobe with something at each end, which is what the part
+# already models, not a new one.
+material gold polished
+
+part post = rivet(head: 1.6, height: 0.8, shank: 0.9, grip: 9, tail: 0.6)
+part drop = pearl(radius: 3.2) in white pearl
+part back = bead(radius: 1.8, bore: 1)
+
+unit ear {
+  place post at (0, 30, 0) pitch 90deg
+  fasten drop to post.seat
+  fasten back to post.tail
+}
+
+form studs {
   repeat ear around mirror()
 }
 `,

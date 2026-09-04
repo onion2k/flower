@@ -9,6 +9,7 @@ import { pearl } from '../parts/pearl';
 import { gem, type GemCut } from '../parts/gem';
 import { setting, type SettingStyle } from '../parts/setting';
 import { shank } from '../parts/ring';
+import { clasp } from '../parts/clasp';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -562,14 +563,25 @@ const PARTS = {
       segments: a.count('segments', -1, 24),
     })),
 
-  shank: define(['size', 'width', 'thickness', 'shoulder', 'shoulderSpread', 'segments'], (a) =>
+  shank: define(['size', 'width', 'thickness', 'shoulder', 'shoulderSpread', 'gap', 'segments'], (a) =>
     shank({
       size: a.num('size', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2),
       shoulder: a.num('shoulder', -1, 0) || undefined,
       shoulderSpread: a.num('shoulderSpread', -1, 0.9),
+      gap: a.num('gap', -1, 0) || undefined,
       segments: a.count('segments', -1, 96),
+    })),
+
+  clasp: define(['radius', 'hookRadius', 'sweep', 'tip', 'sections', 'sides'], (a) =>
+    clasp({
+      radius: a.num('radius', 0),
+      hookRadius: a.num('hookRadius', 1),
+      sweep: a.num('sweep', -1, Math.PI * 2 * 0.72),
+      tip: a.num('tip', -1, 0.55),
+      sections: a.count('sections', -1, 64),
+      sides: a.count('sides', -1, 12),
     })),
 };
 

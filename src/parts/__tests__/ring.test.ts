@@ -102,3 +102,65 @@ describe('shank: shoulder', () => {
     expect(Math.abs(justBefore - justAfter)).toBeLessThan(0.05);
   });
 });
+
+describe('shank: gap (tension setting)', () => {
+  it('leaves a gap of no material centred on the crown', () => {
+    const p = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0.6 });
+    for (let i = 0; i < p.mesh.positions.length; i += 3) {
+      const [x, y] = [p.mesh.positions[i], p.mesh.positions[i + 1]];
+      const a = Math.abs(Math.atan2(y, x));
+      // no vertex should fall inside the gap's own half-angle
+      expect(a).toBeGreaterThanOrEqual(0.6 / 2 - 0.02);
+    }
+  });
+
+  it('a wider gap opens a wider empty wedge, not the same one', () => {
+    // segments (and so vertex count) is fixed by the spec either way; what
+    // changes with gap is how much of the angular range those segments cover
+    const nearestMaterialAngle = (p: ReturnType<typeof shank>) => {
+      let best = Math.PI;
+      for (let i = 0; i < p.mesh.positions.length; i += 3) {
+        const [x, y] = [p.mesh.positions[i], p.mesh.positions[i + 1]];
+        best = Math.min(best, Math.abs(Math.atan2(y, x)));
+      }
+      return best;
+    };
+    const narrow = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0.3 });
+    const wide = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 1.2 });
+    expect(nearestMaterialAngle(wide)).toBeGreaterThan(nearestMaterialAngle(narrow));
+  });
+
+  it('caps the two cut ends rather than leaving them open', () => {
+    const p = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0.6 });
+    expectWatertight(p.mesh);
+  });
+
+  it('gap: 0 is identical in shape to no gap at all', () => {
+    const withZero = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0 });
+    const without = shank({ size: 17, width: 2.4, thickness: 1.7 });
+    expect(withZero.mesh.positions).toEqual(without.mesh.positions);
+  });
+
+  it('the crown anchor still sits at the outer radius, in the middle of the gap', () => {
+    const p = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0.6 });
+    const crown = findAnchor(p, 'crown');
+    const radius = 17 / 2 + 1.7 / 2;
+    expect(crown.position).toEqual([radius, 0, 0]);
+  });
+
+  it('a shoulder swell now peaks at the two cut jaws either side of the gap', () => {
+    const p = shank({ size: 17, width: 2.4, thickness: 1.7, gap: 0.5, shoulder: 0.6, shoulderSpread: 0.3 });
+    const heightAt = (targetAngle: number) => {
+      const z: number[] = [];
+      for (let i = 0; i < p.mesh.positions.length; i += 3) {
+        const [x, y] = [p.mesh.positions[i], p.mesh.positions[i + 1]];
+        const a = Math.atan2(y, x);
+        if (Math.abs(a - targetAngle) < 0.03) z.push(p.mesh.positions[i + 2]);
+      }
+      return z.length ? Math.max(...z) - Math.min(...z) : 0;
+    };
+    const nearJaw = heightAt(0.3); // just past the gap's own edge
+    const atBack = heightAt(Math.PI); // directly opposite the gap
+    expect(nearJaw).toBeGreaterThan(atBack);
+  });
+});
