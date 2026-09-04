@@ -10,6 +10,7 @@ import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
+import { bust, ringStand } from '../parts/display';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -195,6 +196,8 @@ export const catalogue: Record<string, () => Part> = {
   clasp: () => clasp({ radius: 0.6, hookRadius: 4 }),
   jumpRing: () => jumpRing({ radius: 3, wireRadius: 0.5, gap: 0.5 }),
   leverBack: () => leverBack({ radius: 5 }),
+  ringStand: () => ringStand({ baseRadius: 10 }),
+  bust: () => bust({ height: 40 }),
 };
 
 /** A stone of a given cut, in its own species rather than the panel's metal. */

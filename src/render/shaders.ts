@@ -65,7 +65,7 @@ struct Material {
   _pad: f32,
   occlusionBase: u32,
   vertexCount: u32,
-  model: u32,          // 0 metal, 1 nacre
+  model: u32,          // 0 metal, 1 nacre, 2 gem, 3 plastic
   _pad2: u32,
   baseColour: vec3f,
   orient: f32,
@@ -414,7 +414,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   // and nothing is hammered, patinated or worn but metal
   let gemstone = material.model == 2u;
   if (gemstone) { roughness = min(roughness, 0.04); }
-  let worked = !nacre && !gemstone;
+  // a display plastic is not worked metal either: no planishing, patina or wear
+  let plastic = material.model == 3u;
+  let worked = !nacre && !gemstone && !plastic;
 
   // --- planishing: perturb the normal by the gradient of a height field ---
   if (material.hammer > 0.0 && worked) {
@@ -514,6 +516,13 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
     let flash = gemSparkle(n, r, lit, material.gemSparkle);
     colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
+  } else if (plastic) {
+    // an ordinary dielectric: a low, fixed highlight over a diffuse body in
+    // the finish's own colour — no patina, hammer or enamel, only ever metal
+    let specular = reflected * (f0 * ab.x + ab.y);
+    let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+    let diffuse = irradiance * material.baseColour * ao;
+    colour = (specular + diffuse) * frame.exposure;
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);
     // metal has no diffuse lobe, so this only shows where patina has taken hold

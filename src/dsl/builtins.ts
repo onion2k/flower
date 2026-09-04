@@ -12,6 +12,7 @@ import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
+import { bust, ringStand } from '../parts/display';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -604,6 +605,25 @@ const PARTS = {
       leverThickness: a.num('leverThickness', -1, NaN) || undefined,
       sections: a.count('sections', -1, 64),
       sides: a.count('sides', -1, 12),
+    })),
+
+  ringStand: define(['baseRadius', 'baseHeight', 'postRadius', 'postHeight', 'segments'], (a) =>
+    ringStand({
+      baseRadius: a.num('baseRadius', 0),
+      baseHeight: a.num('baseHeight', -1, NaN) || undefined,
+      postRadius: a.num('postRadius', -1, NaN) || undefined,
+      postHeight: a.num('postHeight', -1, NaN) || undefined,
+      segments: a.count('segments', -1, 48),
+    })),
+
+  bust: define(['height', 'baseRadius', 'shoulderRadius', 'shoulderSpan', 'neckRadius', 'segments'], (a) =>
+    bust({
+      height: a.num('height', 0),
+      baseRadius: a.num('baseRadius', -1, NaN) || undefined,
+      shoulderRadius: a.num('shoulderRadius', -1, NaN) || undefined,
+      shoulderSpan: a.num('shoulderSpan', -1, NaN) || undefined,
+      neckRadius: a.num('neckRadius', -1, NaN) || undefined,
+      segments: a.count('segments', -1, 64),
     })),
 };
 

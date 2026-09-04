@@ -263,6 +263,33 @@ form studs {
 }
 `,
 
+  display: `# A jeweller's window: a solitaire on its stand, a pendant on its bust.
+# Display fixtures are never metal — a plain plastic, in matte or flock,
+# reads as inexpensive and dead beside whatever it is showing off, which is
+# the whole point of a prop rather than a piece. ringStand's peg and bust's
+# neck are landmarks like any other anchor, so a piece fastens to them, or
+# simply sits near them, the same as it would to a setting or a mount.
+material gold polished
+
+part rest  = ringStand(baseRadius: 9) in grey plastic matte
+part band  = shank(size: 17, width: 2.6, thickness: 1.8, shoulder: 0.55)
+part mount = setting(width: 7, style: claw, claws: 6, height: 3.2)
+part stone = gem(cut: brilliant, width: 7) in diamond
+
+part figure = bust(height: 44) in white plastic flock
+part drop   = pearl(radius: 2.8) in white pearl
+
+form display {
+  place rest
+  place band at (0, 0, 22) pitch 90deg
+  fasten mount to band.crown
+  fasten stone to mount.seat
+
+  place figure at (32, 0, 0)
+  fasten drop to figure.neck
+}
+`,
+
   brooch: `# A pearl brooch: the rosette's leaves round a pearl, a seed pearl on each stud
 # Pearls are the first non-metal here. They take their names from the trade —
 # white, cream, pink, grey, black, gold — and need no finish word.

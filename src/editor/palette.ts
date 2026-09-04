@@ -41,6 +41,8 @@ export const PARTS: PartEntry[] = [
   { name: 'clasp', call: 'clasp(radius: 0.6, hookRadius: 4)' },
   { name: 'jumpRing', call: 'jumpRing(radius: 3, wireRadius: 0.5, gap: 0.5)' },
   { name: 'leverBack', call: 'leverBack(radius: 5)' },
+  { name: 'ringStand', call: 'ringStand(baseRadius: 10)', material: 'grey plastic matte' },
+  { name: 'bust', call: 'bust(height: 40)', material: 'white plastic matte' },
   { name: 'band', call: 'band(radius: 20, width: 3, thickness: 0.9)' },
   { name: 'bar', call: 'bar(length: 30, width: 5, thickness: 1.4)' },
   { name: 'disc', call: 'disc(radius: 9, thickness: 1.2, bore: 2)' },

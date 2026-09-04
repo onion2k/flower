@@ -13,8 +13,8 @@ export interface Metal {
   f0: [number, number, number];
   /** True where the value comes from measured data rather than judgement. */
   measured: boolean;
-  /** Shading model: metal by default; nacre for pearls, gem for cut stones. */
-  model?: 'nacre' | 'gem';
+  /** Shading model: metal by default; nacre for pearls, gem for cut stones, plastic for display props. */
+  model?: 'nacre' | 'gem' | 'plastic';
   /** Body colour, for materials that have one. Linear RGB. */
   colour?: [number, number, number];
   /** Strength of the iridescent sheen, for nacre. */
@@ -64,6 +64,13 @@ export const metals: Record<string, Metal> = {
   citrine: { name: 'citrine', f0: [0.046, 0.046, 0.046], measured: true, model: 'gem', colour: [0.88, 0.60, 0.10], ior: 1.55, dispersion: 0.013, sparkle: 0.6 },
   onyx: { name: 'onyx', f0: [0.046, 0.046, 0.046], measured: false, model: 'gem', colour: [0.02, 0.02, 0.025], ior: 1.55, dispersion: 0.010, sparkle: 0.3 },
   moonstone: { name: 'moonstone', f0: [0.043, 0.043, 0.043], measured: false, model: 'gem', colour: [0.80, 0.84, 0.88], ior: 1.52, dispersion: 0.012, sparkle: 0.35 },
+
+  // Display plastics: plain props — busts, ring stands — never the piece
+  // itself. An ordinary dielectric reflectance, so with a `matte` or `flock`
+  // finish the whole thing stays dead beside whatever it is showing off.
+  'white plastic': { name: 'white plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.86, 0.85, 0.82] },
+  'black plastic': { name: 'black plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.03, 0.03, 0.032] },
+  'grey plastic': { name: 'grey plastic', f0: [0.035, 0.035, 0.035], measured: false, model: 'plastic', colour: [0.32, 0.32, 0.33] },
 };
 
 export interface Finish {
@@ -90,12 +97,19 @@ export const finishes: Record<string, Finish> = {
   sandblasted: { name: 'sandblasted', roughness: 0.52, anisotropy: 0, hammer: 0, patina: 0 },
   antiqued: { name: 'antiqued', roughness: 0.38, anisotropy: 0.2, hammer: 0.35, patina: 0.45 },
   verdigris: { name: 'verdigris', roughness: 0.62, anisotropy: 0, hammer: 0.2, patina: 0.9 },
+  // For the display plastics, chiefly — an injection-moulded matte and a
+  // flocked (velvet-coated) surface, meaningfully rougher than any metal
+  // finish above. Nothing stops a metal from asking for one, it just reads
+  // as an oddly rough metal rather than a broken combination.
+  matte: { name: 'matte', roughness: 0.55, anisotropy: 0, hammer: 0, patina: 0 },
+  flock: { name: 'flock', roughness: 0.93, anisotropy: 0, hammer: 0, patina: 0 },
 };
 
 /** Metals proper, for the picker: pearls are chosen per part in a sketch. */
 export const metalNames = Object.keys(metals).filter((n) => !metals[n].model);
 export const pearlNames = Object.keys(metals).filter((n) => metals[n].model === 'nacre');
 export const gemNames = Object.keys(metals).filter((n) => metals[n].model === 'gem');
+export const plasticNames = Object.keys(metals).filter((n) => metals[n].model === 'plastic');
 export const finishNames = Object.keys(finishes);
 
 /** Oxide colour for the patinated fraction, per metal family. */
