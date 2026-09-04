@@ -254,7 +254,10 @@ part back = bead(radius: 1.8, bore: 1)
 
 unit ear {
   place post at (0, 30, 0) pitch 90deg
-  fasten drop to post.seat
+  # flip: a pearl's own seat anchor points outward, away from its body, the
+  # opposite sense from a rivet's or a gem's — fastened "same" it would sit
+  # behind the head rather than in front of it, hiding the shank instead
+  fasten drop to post.seat flip
   fasten back to post.tail
 }
 
