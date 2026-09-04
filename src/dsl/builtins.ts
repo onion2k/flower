@@ -13,6 +13,7 @@ import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
 import { leverBack } from '../parts/leverback';
 import { bust, earringStand, easel, ringStand } from '../parts/display';
+import { sword } from '../parts/sword';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -653,6 +654,26 @@ const PARTS = {
         pegLength: a.num('pegLength', -1, NaN) || undefined,
         legDepth: a.num('legDepth', -1, NaN) || undefined,
         segments: a.count('segments', -1, 10),
+      }),
+  ),
+
+  sword: define(
+    [
+      'bladeLength', 'bladeWidth', 'bladeThickness', 'bladeTaper', 'gripLength', 'gripRadius',
+      'guardWidth', 'guardThickness', 'pommelRadius', 'segments',
+    ],
+    (a) =>
+      sword({
+        bladeLength: a.num('bladeLength', 0),
+        bladeWidth: a.num('bladeWidth', -1, NaN) || undefined,
+        bladeThickness: a.num('bladeThickness', -1, NaN) || undefined,
+        bladeTaper: a.num('bladeTaper', -1, NaN) || undefined,
+        gripLength: a.num('gripLength', -1, NaN) || undefined,
+        gripRadius: a.num('gripRadius', -1, NaN) || undefined,
+        guardWidth: a.num('guardWidth', -1, NaN) || undefined,
+        guardThickness: a.num('guardThickness', -1, NaN) || undefined,
+        pommelRadius: a.num('pommelRadius', -1, NaN) || undefined,
+        segments: a.count('segments', -1, 24),
       }),
   ),
 };

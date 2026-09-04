@@ -44,6 +44,7 @@ export const PARTS: PartEntry[] = [
   { name: 'ringStand', call: 'ringStand(baseRadius: 10)', material: 'grey plastic matte' },
   { name: 'earringStand', call: 'earringStand(baseRadius: 9)', material: 'grey plastic matte' },
   { name: 'easel', call: 'easel(width: 24, height: 30)', material: 'grey plastic matte' },
+  { name: 'sword', call: 'sword(bladeLength: 80)' },
   { name: 'bust', call: 'bust(height: 40)', material: 'white plastic matte' },
   { name: 'band', call: 'band(radius: 20, width: 3, thickness: 0.9)' },
   { name: 'bar', call: 'bar(length: 30, width: 5, thickness: 1.4)' },
