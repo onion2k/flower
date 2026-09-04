@@ -154,3 +154,34 @@ describe('chordLimit edge cases', () => {
     expect(both).toBeLessThanOrEqual(curlOnly);
   });
 });
+
+describe('deform edge cases: twist also guards against a zero length', () => {
+  it('throws the same non-finite guard as curl and cup', () => {
+    const mesh = plate(0.001, 5);
+    expect(() => deform(mesh, { twist: 1, length: 0, halfWidth: 5 })).toThrow(/non-finite/);
+  });
+
+  it('stays finite through many full turns', () => {
+    const mesh = plate(20, 5);
+    deform(mesh, { twist: Math.PI * 20, length: 20, halfWidth: 5 });
+    expect(allFinite(mesh)).toBe(true);
+  });
+});
+
+describe('deform edge cases: ruffleWaves = 0 degenerates to no ruffle at all', () => {
+  it('leaves every z coordinate untouched (sin(0 * x) is 0 everywhere)', () => {
+    const mesh = plate(20, 5);
+    deform(mesh, { ruffle: 1, ruffleWaves: 0, length: 20, halfWidth: 5 });
+    for (let i = 0; i < mesh.positions.length; i += 3) expect(mesh.positions[i + 2]).toBeCloseTo(0, 6);
+  });
+});
+
+describe('deform edge cases: a negative reliefVeins count is simply no laterals', () => {
+  it('does not throw, and still raises the midrib ridge on its own', () => {
+    const mesh = plate(20, 5);
+    // veinField's lateral loop is `for (i = 0; i < veins; i++)`, so a
+    // negative count just never runs it — only the midrib term applies
+    expect(() => deform(mesh, { relief: 0.3, reliefVeins: -2, length: 20, halfWidth: 5 })).not.toThrow();
+    expect(mesh.positions[(1 * (COLS + 1) + COLS / 2) * 3 + 2]).toBeGreaterThan(0);
+  });
+});
