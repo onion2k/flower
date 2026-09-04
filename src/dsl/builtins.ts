@@ -1,8 +1,12 @@
 import { arc, bezier3, bow, catmullRom, ellipse, helix, logSpiral, type Curve } from '../geom/curve';
-import type { Vec3 } from '../geom/types';
+import type { Vec2, Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
 import { enamels, enamelNames, metalNames } from '../render/materials';
-import type { LeafShape, PetalEdge, PetalShape } from '../geom/outline';
+import {
+  chevronOutline, circleOutline, fanOutline, keystoneOutline, lozengeOutline, polygonOutline,
+  scallopOutline, stadiumOutline, sunburstOutline, tombstoneOutline, zigguratOutline,
+  type LeafShape, type PetalEdge, type PetalShape,
+} from '../geom/outline';
 import { bead, bell, bud, collar, egg, pod, rivet } from '../parts/fastener';
 import { petal } from '../parts/petal';
 import { pearl } from '../parts/pearl';
@@ -18,7 +22,7 @@ import { axe } from '../parts/axe';
 import { shield } from '../parts/shield';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
-import { bar, disc, gusset } from '../parts/panel';
+import { bar, disc, gusset, plate } from '../parts/panel';
 import type { Part } from '../parts/types';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
@@ -26,7 +30,13 @@ import {
 } from '../pattern/symmetry';
 import { DslError, type Span } from './lexer';
 
-export type Value = number | string | Vec3 | Curve | Part | Symmetry;
+/**
+ * A closed 2D outline, as a value a plate can be cut to. Plain data on purpose,
+ * so the evaluator's memo key sees through it.
+ */
+export interface Outline { loop: Vec2[] }
+
+export type Value = number | string | Vec3 | Curve | Outline | Part | Symmetry;
 
 export const isVec = (v: Value): v is Vec3 =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
@@ -36,6 +46,9 @@ export const isSymmetry = (v: Value): v is Symmetry =>
 
 export const isCurve = (v: Value): v is Curve =>
   typeof v === 'object' && v !== null && typeof (v as Curve).at === 'function';
+
+export const isOutline = (v: Value): v is Outline =>
+  typeof v === 'object' && v !== null && Array.isArray((v as Outline).loop);
 
 export const isPart = (v: Value): v is Part =>
   typeof v === 'object' && v !== null && 'mesh' in (v as Part) && 'anchors' in (v as Part);
@@ -54,7 +67,7 @@ export interface CallArg {
  * silently falling back to a default would leave someone staring at a shape that
  * ignored what they wrote.
  */
-export type ParamKind = 'number' | 'word' | 'flag' | 'point' | 'path' | 'symmetry' | 'points';
+export type ParamKind = 'number' | 'word' | 'flag' | 'point' | 'path' | 'outline' | 'symmetry' | 'points';
 
 /** What a builtin asked for, as recorded by a probe call. */
 export interface ParamInfo {
@@ -189,6 +202,25 @@ export class Args {
     return arg.value;
   }
 
+  outline(name: string, positional: number, required = true): Outline | undefined {
+    if (this.recorder) {
+      this.record({ name, kind: 'outline', required });
+      return required ? { loop: polygonOutline(4, 1) } : undefined;
+    }
+    const arg = this.find(name, positional);
+    if (!arg) {
+      if (!required) return undefined;
+      throw new DslError(`${this.callee} needs an outline for "${name}"`, this.span);
+    }
+    if (!isOutline(arg.value)) {
+      throw new DslError(
+        `"${name}" must be an outline — try fan, chevron, sunburst, ziggurat, keystone, scallop, lozenge, polygon, roundel, stadium or card`,
+        arg.span,
+      );
+    }
+    return arg.value;
+  }
+
   symmetry(name: string, positional: number): Symmetry {
     if (this.recorder) {
       this.record({ name, kind: 'symmetry', required: true });
@@ -264,6 +296,71 @@ const CURVES = {
     }
     return catmullRom(points as Vec3[]);
   }),
+};
+
+/**
+ * Outlines. A plate is cut to one of these. The deco set first, then the plain
+ * geometric shapes the other flat parts are already cut from.
+ */
+const OUTLINES = {
+  fan: define(['radius', 'spread', 'blades', 'bladeDepth', 'inner', 'segments'], (a) => ({
+    loop: fanOutline(a.num('radius', 0), {
+      spread: a.num('spread', -1, Math.PI),
+      blades: a.num('blades', -1, 0),
+      bladeDepth: a.num('bladeDepth', -1, 0.12),
+      inner: a.num('inner', -1, 0),
+      segments: a.count('segments', -1, 48),
+    }),
+  })),
+
+  chevron: define(['width', 'rise', 'bar'], (a) => ({
+    loop: chevronOutline(a.num('width', 0), a.num('rise', 1), a.num('bar', 2)),
+  })),
+
+  sunburst: define(['radius', 'rays', 'inner', 'tip', 'rotate'], (a) => ({
+    loop: sunburstOutline(a.num('radius', 0), a.count('rays', 1, 12), {
+      inner: a.num('inner', -1, 0.55),
+      tip: a.num('tip', -1, 0),
+      rotate: a.num('rotate', -1, Math.PI / 2),
+    }),
+  })),
+
+  ziggurat: define(['width', 'height', 'steps', 'top'], (a) => {
+    const width = a.num('width', 0);
+    return { loop: zigguratOutline(width, a.num('height', 1), a.count('steps', 2, 3), a.num('top', -1, width * 0.4)) };
+  }),
+
+  keystone: define(['width', 'height', 'flare', 'corner', 'segments'], (a) => ({
+    loop: keystoneOutline(
+      a.num('width', 0), a.num('height', 1), a.num('flare', 2, 0.4),
+      a.num('corner', -1, 0), a.count('segments', -1, 6),
+    ),
+  })),
+
+  scallop: define(['radius', 'lobes', 'depth', 'segments'], (a) => {
+    const radius = a.num('radius', 0);
+    return { loop: scallopOutline(radius, a.count('lobes', 1, 8), a.num('depth', 2, radius * 0.1), a.count('segments', -1, 96)) };
+  }),
+
+  lozenge: define(['length', 'width', 'bulge', 'segments'], (a) => ({
+    loop: lozengeOutline(a.num('length', 0), a.num('width', 1), a.num('bulge', 2, 0), a.count('segments', -1, 8)),
+  })),
+
+  polygon: define(['sides', 'radius', 'rotate'], (a) => ({
+    loop: polygonOutline(a.count('sides', 0, 6), a.num('radius', 1), a.num('rotate', 2, Math.PI / 2)),
+  })),
+
+  roundel: define(['radius', 'segments'], (a) => ({
+    loop: circleOutline(a.num('radius', 0), a.count('segments', -1, 64)),
+  })),
+
+  stadium: define(['length', 'width', 'segments'], (a) => ({
+    loop: stadiumOutline(a.num('length', 0), a.num('width', 1), a.count('segments', -1, 14)),
+  })),
+
+  card: define(['width', 'height', 'corner', 'segments'], (a) => ({
+    loop: tombstoneOutline(a.num('width', 0), a.num('height', 1), a.num('corner', 2, 0), a.count('segments', -1, 8)),
+  })),
 };
 
 /** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
@@ -550,6 +647,16 @@ const PARTS = {
       bevel: a.num('bevel', -1, NaN) || undefined,
     })),
 
+  plate: define(['outline', 'thickness', 'cut', 'bore', 'bevel', 'enamel'], (a) =>
+    plate({
+      outline: a.outline('outline', 0)!.loop,
+      thickness: a.num('thickness', 1, 1.2),
+      holes: [a.outline('cut', -1, false)?.loop].filter((h): h is Vec2[] => !!h),
+      bore: a.num('bore', -1, 0) || undefined,
+      bevel: a.num('bevel', -1, NaN) || undefined,
+      enamel: enamelName(a),
+    })),
+
   gusset: define(['radius', 'thickness', 'bore', 'fillet', 'lighten', 'bevel'], (a) =>
     gusset({
       radius: a.num('radius', 0),
@@ -802,8 +909,12 @@ const SYMMETRIES = {
 };
 
 export const BUILTINS: Record<string, { known: string[]; fn: Builtin }> = {
-  ...CURVES, ...PARTS, ...SYMMETRIES,
+  ...CURVES, ...OUTLINES, ...PARTS, ...SYMMETRIES,
 };
+
+export const OUTLINE_NAMES = Object.keys(OUTLINES);
+export const CURVE_NAMES = Object.keys(CURVES);
+export const SYMMETRY_NAMES = Object.keys(SYMMETRIES);
 
 export const PART_NAMES = Object.keys(PARTS);
 

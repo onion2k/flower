@@ -430,6 +430,37 @@ form frame {
 }
 `,
 
+  deco: `# Art deco: a sunburst brooch. plate() cuts a flat member to any outline —
+# fan, chevron, sunburst, ziggurat, keystone, scallop, lozenge, polygon,
+# roundel, stadium or card — and stacks face to back the way a disc does.
+# The motifs are drawn once; the symmetries do the repeating.
+material gold satin
+
+part burst = plate(sunburst(radius: 22, rays: 16, inner: 0.7, tip: 0.25), thickness: 1.2)
+part field = plate(roundel(radius: 15), thickness: 1, enamel: black) in platinum polished
+part wing  = plate(fan(radius: 11, spread: 150deg, blades: 7, inner: 3.4), thickness: 1) in platinum polished
+part rib   = plate(chevron(width: 6, rise: 2.2, bar: 1.2), thickness: 0.8)
+part drop  = plate(ziggurat(width: 12, height: 9, steps: 4, top: 4), thickness: 1, enamel: black) in platinum polished
+part mount = setting(width: 6, style: bezel, height: 1.8) in platinum polished
+part stone = gem(cut: step, width: 6) in onyx
+
+# a fan opens along +X from its apex; turned a quarter it opens upward, and
+# radial(2) hangs its twin opening downward
+unit half {
+  place wing at (0, 2, 2.1) turn 90deg
+  place rib at (0, 12.6, 3.1) turn 90deg
+}
+
+form brooch {
+  place burst
+  place field at (0, 0, 1.1)
+  repeat half around radial(2)
+  place mount at (0, 0, 2.1)
+  fasten stone to mount.seat
+  place drop at (0, -20.5, 1.1) turn 180deg
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 

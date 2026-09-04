@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { bar, disc, gusset } from '../panel';
+import { bar, disc, gusset, plate } from '../panel';
+import { chevronOutline, circleOutline, fanOutline, sunburstOutline, zigguratOutline } from '../../geom/outline';
 import { findAnchor } from '../types';
 import { expectWellFormed, boundsOf } from '../../mesh/__tests__/helpers';
 
@@ -90,5 +91,39 @@ describe('gusset', () => {
     const loose = gusset({ radius: 9, thickness: 1.4, bore: 2.4, fillet: 4 });
     const rOf = (p: typeof tight) => Math.hypot(p.anchors[0].position[0], p.anchors[0].position[1]);
     expect(rOf(loose)).toBeLessThan(rOf(tight));
+  });
+});
+
+describe('plate', () => {
+  it('is well-formed cut to a deco outline, with a bore and a piercing', () => {
+    expectWellFormed(plate({ outline: fanOutline(12, { blades: 5 }), thickness: 1 }).mesh);
+    expectWellFormed(plate({ outline: sunburstOutline(12, 10), thickness: 1, bore: 2 }).mesh);
+    expectWellFormed(plate({
+      outline: zigguratOutline(20, 12, 4), thickness: 1,
+      holes: [circleOutline(2).map(([x, y]) => [x, y + 6])],
+    }).mesh);
+  });
+
+  it('fixes the winding of whatever outline it is handed', () => {
+    const cw = [...fanOutline(10)].reverse();
+    expectWellFormed(plate({ outline: cw, thickness: 1 }).mesh);
+  });
+
+  it('puts face and back anchors at the outline centroid, not the origin', () => {
+    const p = plate({ outline: fanOutline(10), thickness: 2 });
+    const face = findAnchor(p, 'face');
+    const back = findAnchor(p, 'back');
+    expect(face.position[0]).toBeGreaterThan(3);
+    expect(face.position[1]).toBeCloseTo(0, 5);
+    expect(face.position[2]).toBeCloseTo(1);
+    expect(back.position[2]).toBeCloseTo(-1);
+    expect(back.axis[2]).toBe(-1);
+  });
+
+  it('marks the top face for enamel when asked', () => {
+    const p = plate({ outline: chevronOutline(20, 8, 3), thickness: 1, enamel: 'ruby' });
+    expect(p.enamel).toBe('ruby');
+    expect(p.mesh.enamel).toBeDefined();
+    expect(Array.from(p.mesh.enamel!).some((v) => v > 0.5)).toBe(true);
   });
 });

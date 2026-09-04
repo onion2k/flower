@@ -6,7 +6,7 @@ import { finishes, metals } from '../render/materials';
 import type { Part } from '../parts/types';
 import type { Action, Expr, Placement, Program } from './ast';
 import { parse } from './parser';
-import { Args, BUILTINS, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
+import { Args, BUILTINS, isOutline, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
 import { DslError, type Span } from './lexer';
 /**
  * Part geometry survives across compiles. The editor recompiles on every
@@ -546,6 +546,7 @@ function describeValue(value: Value): string {
   if (typeof value === 'string') return 'it is a word';
   if (isVec(value)) return 'it is a point';
   if (isSymmetry(value)) return 'it is a symmetry';
+  if (isOutline(value)) return 'it is an outline';
   return 'it is a path';
 }
 

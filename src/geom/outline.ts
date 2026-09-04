@@ -534,3 +534,236 @@ function distanceToLoop([x, y]: Vec2, loop: Vec2[]): number {
   }
   return best;
 }
+
+/*
+ * Art deco outlines.
+ *
+ * Deco is built from a handful of geometric motifs — the fan, the chevron, the
+ * sunburst, the stepped ziggurat, the keystone — stacked, mirrored and repeated.
+ * Each here is a plain outline for a plate. Where a motif is usually repeated it
+ * is drawn once: the symmetries do the repetition, which is the whole point of
+ * the vocabulary.
+ *
+ * Orientation follows the plates: a motif with a direction grows along +X.
+ * Widths lie along Y.
+ */
+
+export interface FanOptions {
+  /** Angle the fan opens through, in radians. Default a half circle. */
+  spread?: number;
+  /** Scallops round the rim; 0 leaves a plain arc. */
+  blades?: number;
+  /** How deep each scallop is cut, as a fraction of the radius. */
+  bladeDepth?: number;
+  /** Inner radius; leaves the fan as a band with the apex cut away. */
+  inner?: number;
+  segments?: number;
+}
+
+/**
+ * A fan: a sector of a disc opening along +X from the origin, with a rim that
+ * may be scalloped into blades. The commonest deco motif of all.
+ */
+export function fanOutline(radius: number, opts: FanOptions = {}): Vec2[] {
+  const spread = opts.spread ?? Math.PI;
+  const blades = Math.max(0, Math.floor(opts.blades ?? 0));
+  const depth = (opts.bladeDepth ?? 0.12) * radius;
+  const inner = Math.max(0, Math.min(opts.inner ?? 0, radius * 0.95));
+  // a whole number of samples per blade, so every crest lands on a sample
+  const perBlade = blades > 0 ? Math.max(8, Math.ceil((opts.segments ?? 48) / blades)) : 0;
+  const segments = blades > 0 ? perBlade * blades : (opts.segments ?? 48);
+  const pts: Vec2[] = [];
+  for (let i = 0; i <= segments; i++) {
+    const t = i / segments;
+    const a = -spread / 2 + t * spread;
+    // a blade is a half-cosine bump: full radius at its crest, cut back
+    // between blades, and the two ends of the rim sit on crests
+    const bump = blades > 0 ? (1 - Math.cos(t * blades * Math.PI * 2)) / 2 : 0;
+    const r = radius - depth * bump;
+    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  if (inner > 0) {
+    for (let i = segments; i >= 0; i--) {
+      const a = -spread / 2 + (i / segments) * spread;
+      pts.push([Math.cos(a) * inner, Math.sin(a) * inner]);
+    }
+  } else if (spread < Math.PI * 2 - 1e-6) {
+    pts.push([0, 0]);
+  } else {
+    pts.pop();
+  }
+  return ensureWinding(pts, true);
+}
+
+/**
+ * A chevron: a bent band, its arms spanning `width` across Y and meeting at a
+ * point `rise` along +X. `bar` is the band's thickness measured along X.
+ */
+export function chevronOutline(width: number, rise: number, bar: number): Vec2[] {
+  const hw = width / 2;
+  const pts: Vec2[] = [
+    [0, -hw], [rise, 0], [0, hw],
+    [-bar, hw], [rise - bar, 0], [-bar, -hw],
+  ];
+  return ensureWinding(pts, true);
+}
+
+export interface SunburstOptions {
+  /** Radius the rays rise from, as a fraction of the outer radius. */
+  inner?: number;
+  /** Width of a ray's tip as a fraction of the gap between rays; 0 is a sharp point. */
+  tip?: number;
+  /** Where the first ray points, in radians. */
+  rotate?: number;
+}
+
+/** A sunburst: `rays` triangular rays from an inner disc, tips optionally flattened. */
+export function sunburstOutline(radius: number, rays: number, opts: SunburstOptions = {}): Vec2[] {
+  const count = Math.max(3, Math.floor(rays));
+  const inner = radius * (opts.inner ?? 0.55);
+  const tip = Math.min(Math.max(opts.tip ?? 0, 0), 0.9);
+  const rotate = opts.rotate ?? Math.PI / 2;
+  const step = (Math.PI * 2) / count;
+  const pts: Vec2[] = [];
+  for (let i = 0; i < count; i++) {
+    const a = rotate + i * step;
+    if (tip > 0) {
+      const half = (step / 2) * tip;
+      pts.push([Math.cos(a - half) * radius, Math.sin(a - half) * radius]);
+      pts.push([Math.cos(a + half) * radius, Math.sin(a + half) * radius]);
+    } else {
+      pts.push([Math.cos(a) * radius, Math.sin(a) * radius]);
+    }
+    const b = a + step / 2;
+    pts.push([Math.cos(b) * inner, Math.sin(b) * inner]);
+  }
+  return ensureWinding(pts, true);
+}
+
+/**
+ * A ziggurat: a stepped pyramid, `width` across the foot at y = 0 rising
+ * through `steps` terraces to a top slab `top` wide. Each terrace is a riser
+ * and a tread; the top slab's upper face is the head, so the widths fall
+ * from `width` to `top` across steps - 1 treads. Symmetric about the y axis,
+ * like a card, since it is usually stood up or stacked.
+ */
+export function zigguratOutline(width: number, height: number, steps: number, top = width * 0.4): Vec2[] {
+  const n = Math.max(1, Math.floor(steps));
+  const topWidth = Math.min(Math.max(top, 0), width);
+  const inset = n > 1 ? (width - topWidth) / 2 / (n - 1) : 0;
+  const rise = height / n;
+  const right: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const x = width / 2 - inset * i;
+    right.push([x, rise * i]);
+    right.push([x, rise * (i + 1)]);
+  }
+  const left = right.map(([x, y]): Vec2 => [-x, y]).reverse();
+  return ensureWinding(dedupePoints([...right, ...left]), true);
+}
+
+/**
+ * A keystone: a trapezoid `width` wide at the foot flaring by `flare` at the
+ * head, `height` tall from y = 0. Optional rounded corners, since a keystone
+ * cut in sheet is eased the way a card is.
+ */
+export function keystoneOutline(width: number, height: number, flare: number, cornerRadius = 0, segments = 6): Vec2[] {
+  const foot = width / 2;
+  const head = (width * (1 + flare)) / 2;
+  const corners: Vec2[] = [[foot, 0], [head, height], [-head, height], [-foot, 0]];
+  if (cornerRadius <= 0) return ensureWinding(corners, true);
+  return ensureWinding(roundCorners(corners, cornerRadius, segments), true);
+}
+
+/** A disc whose edge is scalloped into `lobes` bumps, each `depth` deep. */
+export function scallopOutline(radius: number, lobes: number, depth: number, segments?: number): Vec2[] {
+  const n = Math.max(1, Math.floor(lobes));
+  const count = Math.max(segments ?? 96, n * 12);
+  const pts: Vec2[] = [];
+  for (let i = 0; i < count; i++) {
+    const a = (i / count) * Math.PI * 2;
+    const r = radius - depth * (1 - Math.cos(a * n)) / 2;
+    pts.push([Math.cos(a) * r, Math.sin(a) * r]);
+  }
+  return ensureWinding(pts, true);
+}
+
+/**
+ * A lozenge: a rhombus `length` along X and `width` across Y, its sides bowed
+ * outward by `bulge` (a fraction of the half-width; 0 is straight-sided).
+ */
+export function lozengeOutline(length: number, width: number, bulge = 0, segments = 8): Vec2[] {
+  const corners: Vec2[] = [[length / 2, 0], [0, width / 2], [-length / 2, 0], [0, -width / 2]];
+  if (bulge === 0) return ensureWinding(corners, true);
+  const pts: Vec2[] = [];
+  for (let c = 0; c < 4; c++) {
+    const a = corners[c];
+    const b = corners[(c + 1) % 4];
+    const mx = (a[0] + b[0]) / 2, my = (a[1] + b[1]) / 2;
+    // push the side's midpoint away from the centre, and bow through it
+    const len = Math.hypot(mx, my) || 1;
+    const ctrl: Vec2 = [mx + (mx / len) * bulge * width, my + (my / len) * bulge * width];
+    for (let i = 0; i < segments; i++) {
+      const t = i / segments;
+      const u = 1 - t;
+      pts.push([
+        u * u * a[0] + 2 * u * t * ctrl[0] + t * t * b[0],
+        u * u * a[1] + 2 * u * t * ctrl[1] + t * t * b[1],
+      ]);
+    }
+  }
+  return ensureWinding(pts, true);
+}
+
+/** Replace each corner of a polygon with an arc of the given radius, shrunk where sides are short. */
+export function roundCorners(loop: Vec2[], radius: number, segments = 6): Vec2[] {
+  const n = loop.length;
+  const out: Vec2[] = [];
+  for (let i = 0; i < n; i++) {
+    const p = loop[(i + n - 1) % n];
+    const c = loop[i];
+    const q = loop[(i + 1) % n];
+    const d1: Vec2 = [p[0] - c[0], p[1] - c[1]];
+    const d2: Vec2 = [q[0] - c[0], q[1] - c[1]];
+    const l1 = Math.hypot(d1[0], d1[1]);
+    const l2 = Math.hypot(d2[0], d2[1]);
+    const u1: Vec2 = [d1[0] / l1, d1[1] / l1];
+    const u2: Vec2 = [d2[0] / l2, d2[1] / l2];
+    const cosTheta = Math.max(-1, Math.min(1, u1[0] * u2[0] + u1[1] * u2[1]));
+    const theta = Math.acos(cosTheta);
+    if (theta < 1e-6 || Math.PI - theta < 1e-6) { out.push(c); continue; }
+    // tangent length along each side for a fillet of this radius; shrink to fit
+    let r = radius;
+    let tan = r / Math.tan(theta / 2);
+    const limit = Math.min(l1, l2) / 2;
+    if (tan > limit) { tan = limit; r = tan * Math.tan(theta / 2); }
+    const a: Vec2 = [c[0] + u1[0] * tan, c[1] + u1[1] * tan];
+    const b: Vec2 = [c[0] + u2[0] * tan, c[1] + u2[1] * tan];
+    const bis: Vec2 = [u1[0] + u2[0], u1[1] + u2[1]];
+    const bl = Math.hypot(bis[0], bis[1]);
+    const dist = r / Math.sin(theta / 2);
+    const centre: Vec2 = [c[0] + (bis[0] / bl) * dist, c[1] + (bis[1] / bl) * dist];
+    const a0 = Math.atan2(a[1] - centre[1], a[0] - centre[0]);
+    let a1 = Math.atan2(b[1] - centre[1], b[0] - centre[0]);
+    // take the short way round
+    while (a1 - a0 > Math.PI) a1 -= Math.PI * 2;
+    while (a1 - a0 < -Math.PI) a1 += Math.PI * 2;
+    for (let k = 0; k <= segments; k++) {
+      const t = a0 + ((a1 - a0) * k) / segments;
+      out.push([centre[0] + Math.cos(t) * r, centre[1] + Math.sin(t) * r]);
+    }
+  }
+  return out;
+}
+
+function dedupePoints(loop: Vec2[], eps = 1e-9): Vec2[] {
+  const out: Vec2[] = [];
+  for (const p of loop) {
+    const last = out[out.length - 1];
+    if (last && Math.abs(last[0] - p[0]) < eps && Math.abs(last[1] - p[1]) < eps) continue;
+    out.push(p);
+  }
+  const first = out[0], last = out[out.length - 1];
+  if (out.length > 1 && Math.abs(first[0] - last[0]) < eps && Math.abs(first[1] - last[1]) < eps) out.pop();
+  return out;
+}

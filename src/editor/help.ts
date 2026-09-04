@@ -1,7 +1,7 @@
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { EditorSelection, type EditorState } from '@codemirror/state';
 import { EditorView, showPanel } from '@codemirror/view';
-import { BUILTIN_NAMES, PART_NAMES, type ParamInfo, signature } from '../dsl/builtins';
+import { BUILTIN_NAMES, CURVE_NAMES, OUTLINE_NAMES, PART_NAMES, SYMMETRY_NAMES, type ParamInfo, signature } from '../dsl/builtins';
 
 /**
  * Inline parameter help: a strip under the text that shows what the call
@@ -102,7 +102,7 @@ function describeDefault(callee: string, p: ParamInfo): string {
   }
   if (p.kind === 'flag') return v ? 'yes' : 'no';
   if (p.kind === 'word') return v === '' ? 'none' : String(v);
-  return { point: 'point', path: 'path', symmetry: 'symmetry', points: 'points…' }[p.kind];
+  return { point: 'point', path: 'path', outline: 'outline', symmetry: 'symmetry', points: 'points…' }[p.kind];
 }
 
 /** Something to write for a parameter that is not there yet. */
@@ -120,6 +120,7 @@ function starter(callee: string, p: ParamInfo): string {
     case 'point': return '(0, 0, 0)';
     case 'points': return '(0, 0, 0), (10, 0, 5)';
     case 'path': return 'circle(radius: 10)';
+    case 'outline': return 'fan(radius: 10, blades: 5)';
     case 'symmetry': return 'ring(6, radius: 10)';
   }
 }
@@ -283,7 +284,7 @@ function complete(context: CompletionContext) {
     if (named && afterColon) {
       if (named.choices) {
         options = named.choices.map((c) => ({ label: c, type: 'enum' }));
-      } else if (named.kind === 'path' || named.kind === 'symmetry') {
+      } else if (named.kind === 'path' || named.kind === 'outline' || named.kind === 'symmetry') {
         options = BUILTIN_NAMES.filter((n) => isKind(n, named.kind)).map((n) => ({ label: n, type: 'function', apply: n + '(' }));
       } else if (named.kind === 'flag') {
         options = [{ label: 'yes' }, { label: 'no' }];
@@ -298,7 +299,7 @@ function complete(context: CompletionContext) {
         boost: p.required ? 1 : 0,
       }));
       const positional = params[call.current];
-      if (positional && (positional.kind === 'path' || positional.kind === 'symmetry')) {
+      if (positional && (positional.kind === 'path' || positional.kind === 'outline' || positional.kind === 'symmetry')) {
         options.push(...BUILTIN_NAMES.filter((n) => isKind(n, positional.kind))
           .map((n) => ({ label: n, type: 'function', apply: n + '(' })));
       }
@@ -314,10 +315,14 @@ function complete(context: CompletionContext) {
   return { from: word.from, options, validFor: /^[a-zA-Z_][a-zA-Z0-9_]*$/ };
 }
 
-const CURVES = new Set(['spiral', 'arc', 'circle', 'ellipse', 'helix', 'bezier', 'bow', 'through']);
-const SYMMETRIES = new Set(['radial', 'ring', 'dihedral', 'mirror', 'helical', 'phyllotaxis', 'shell', 'along', 'spray', 'nested', 'compose']);
+const CURVES = new Set(CURVE_NAMES);
+const OUTLINES = new Set(OUTLINE_NAMES);
+const SYMMETRIES = new Set(SYMMETRY_NAMES);
 const isKind = (name: string, kind: string) =>
-  kind === 'path' ? CURVES.has(name) : kind === 'symmetry' ? SYMMETRIES.has(name) : false;
+  kind === 'path' ? CURVES.has(name)
+  : kind === 'outline' ? OUTLINES.has(name)
+  : kind === 'symmetry' ? SYMMETRIES.has(name)
+  : false;
 
 const helpTheme = EditorView.theme({
   '.cm-panels': { backgroundColor: 'transparent', color: 'inherit' },

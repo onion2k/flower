@@ -47,6 +47,13 @@ and stacked concentric plates.
 
 No shader work.
 
+**Status, September 2026:** the outlines (fan, chevron, sunburst, ziggurat,
+keystone, scallop, lozenge, plus polygon, roundel, stadium and card) and the
+`plate` builtin with `cut`, `bore` and `enamel` are in; see the `deco` example
+sketch. Outlines are a DSL value kind of their own, with completions. The
+stepped extrude option is not done; a ziggurat is a stacked set of plates
+for now.
+
 ### 2. Math curves and surfaces
 
 **Cost: low for curves, moderate for surfaces.**
@@ -164,7 +171,7 @@ The light array is a new uniform buffer; the frame struct grows.
 ## Infrastructure the list implies, in order
 
 1. **Generic outline and `plate` builtin** in the DSL. Unblocks 1, and makes
-   every later geometric part data instead of code.
+   every later geometric part data instead of code. Done.
 2. **Parametric surface generator** beside extrude, sweep, and revolve.
    Unblocks 2, helps 4.
 3. **Generalised engraving field** in the shader, keyed by an enum, with a

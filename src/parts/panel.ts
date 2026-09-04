@@ -156,3 +156,57 @@ export function gusset(spec: GussetSpec): Part {
   });
   return { name: spec.name ?? 'gusset', mesh, bounds: meshBounds(mesh), anchors };
 }
+
+export interface PlateSpec {
+  name?: string;
+  /** Closed outer boundary; winding is fixed here. */
+  outline: Vec2[];
+  thickness: number;
+  /** Piercings, any winding. Each must lie inside the outline; that is not checked. */
+  holes?: Vec2[][];
+  /** Central drilled hole. */
+  bore?: number;
+  bevel?: number;
+  /** Enamel the top face inside the bevel. */
+  enamel?: string;
+}
+
+/**
+ * A plate cut to any outline: the generic flat member the deco motifs — fans,
+ * chevrons, sunbursts, ziggurats — are all made of. Anchors `face` and `back`
+ * sit at the outline's centroid on either side, so it can be stacked or built on
+ * the way a disc can.
+ */
+export function plate(spec: PlateSpec): Part {
+  const outline = ensureWinding(spec.outline, true);
+  const holes = (spec.holes ?? []).map((h) => ensureWinding(h, false));
+  if (spec.bore) holes.push(ensureWinding(circleOutline(spec.bore / 2, 32), false));
+
+  const [cx, cy] = centroid(outline);
+  const anchors: Anchor[] = [
+    { name: 'face', position: [cx, cy, spec.thickness / 2], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.bore },
+    { name: 'back', position: [cx, cy, -spec.thickness / 2], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.bore },
+  ];
+
+  const mesh = extrude({
+    outline, holes,
+    thickness: spec.thickness,
+    bevel: bevelFor(spec.thickness, spec.bevel),
+    enamelTop: !!spec.enamel,
+  });
+  return { name: spec.name ?? 'plate', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
+}
+
+/** Area centroid of a simple polygon. */
+function centroid(loop: Vec2[]): Vec2 {
+  let a = 0, x = 0, y = 0;
+  for (let i = 0; i < loop.length; i++) {
+    const p = loop[i], q = loop[(i + 1) % loop.length];
+    const cross = p[0] * q[1] - q[0] * p[1];
+    a += cross;
+    x += (p[0] + q[0]) * cross;
+    y += (p[1] + q[1]) * cross;
+  }
+  if (Math.abs(a) < 1e-12) return [0, 0];
+  return [x / (3 * a), y / (3 * a)];
+}

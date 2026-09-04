@@ -343,3 +343,48 @@ describe('shank builtin: DSL wiring reaches the crown anchor a setting fastens o
     expect(err.message).toMatch(/shank needs "size"/);
   });
 });
+
+describe('outline builtins and plate', () => {
+  it('plate cuts a part to an outline value, positional or named', () => {
+    const a = build('part p = plate(fan(radius: 10, blades: 5), thickness: 1)\nform f { place p }');
+    const b = build('part p = plate(outline: fan(radius: 10, blades: 5), thickness: 1)\nform f { place p }');
+    expect(a.assembly.placements[0].part.mesh.positions.length)
+      .toBe(b.assembly.placements[0].part.mesh.positions.length);
+    expect(a.assembly.placements[0].part.mesh.positions.length).toBeGreaterThan(0);
+  });
+
+  it('every outline builtin makes a plate', () => {
+    const calls = [
+      'fan(radius: 10)', 'chevron(width: 20, rise: 8, bar: 3)', 'sunburst(radius: 10, rays: 8)',
+      'ziggurat(width: 20, height: 10, steps: 3)', 'keystone(width: 10, height: 6, corner: 1)',
+      'scallop(radius: 10, lobes: 8)', 'lozenge(length: 20, width: 10, bulge: 0.2)',
+      'polygon(sides: 8, radius: 10)', 'roundel(radius: 10)', 'stadium(length: 20, width: 6)',
+      'card(width: 10, height: 14, corner: 2)',
+    ];
+    for (const call of calls) {
+      const sketch = build(`part p = plate(${call}, thickness: 1)\nform f { place p }`);
+      expect(sketch.assembly.placements[0].part.mesh.indices.length, call).toBeGreaterThan(0);
+    }
+  });
+
+  it('cut pierces the plate with a second outline', () => {
+    const cut = build('part p = plate(roundel(radius: 10), thickness: 1, cut: sunburst(radius: 5, rays: 6))\nform f { place p }');
+    const pos = cut.assembly.placements[0].part.mesh.positions;
+    // the sunburst's sharp ray tips are on the hole's wall, so they appear as vertices
+    let tips = 0;
+    for (let i = 0; i < pos.length; i += 3) {
+      if (Math.abs(Math.hypot(pos[i], pos[i + 1]) - 5) < 1e-3) tips++;
+    }
+    expect(tips).toBeGreaterThan(0);
+  });
+
+  it('names the outline shapes when handed something else', () => {
+    const e = buildErr('part p = plate(circle(radius: 10), thickness: 1)\nform f { place p }');
+    expect(e.message).toMatch(/must be an outline — try fan/);
+  });
+
+  it('an outline is not a part', () => {
+    const e = buildErr('part p = fan(radius: 10)\nform f { place p }');
+    expect(e.message).toMatch(/is not a part — it is an outline/);
+  });
+});

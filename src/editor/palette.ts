@@ -52,6 +52,7 @@ export const PARTS: PartEntry[] = [
   { name: 'bar', call: 'bar(length: 30, width: 5, thickness: 1.4)' },
   { name: 'disc', call: 'disc(radius: 9, thickness: 1.2, bore: 2)' },
   { name: 'gusset', call: 'gusset(radius: 9, thickness: 1.4)' },
+  { name: 'plate', call: 'plate(fan(radius: 12, blades: 5), thickness: 1.2)' },
 ];
 
 export const SYMMETRIES: Array<{ name: string; call: string }> = [
