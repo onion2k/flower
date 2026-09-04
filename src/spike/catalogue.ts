@@ -8,6 +8,7 @@ import { gem, type GemCut } from '../parts/gem';
 import { setting } from '../parts/setting';
 import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
+import { jumpRing } from '../parts/jumpring';
 import { branch, stem } from '../parts/stem';
 import type { Part } from '../parts/types';
 
@@ -191,6 +192,7 @@ export const catalogue: Record<string, () => Part> = {
 
   shank: () => shank({ size: 17, width: 2.4, thickness: 1.7, shoulder: 0.5 }),
   clasp: () => clasp({ radius: 0.6, hookRadius: 4 }),
+  jumpRing: () => jumpRing({ radius: 3, wireRadius: 0.5, gap: 0.5 }),
 };
 
 /** A stone of a given cut, in its own species rather than the panel's metal. */

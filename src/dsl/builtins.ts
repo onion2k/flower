@@ -10,6 +10,7 @@ import { gem, type GemCut } from '../parts/gem';
 import { setting, type SettingStyle } from '../parts/setting';
 import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
+import { jumpRing } from '../parts/jumpring';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -580,6 +581,15 @@ const PARTS = {
       hookRadius: a.num('hookRadius', 1),
       sweep: a.num('sweep', -1, Math.PI * 2 * 0.72),
       tip: a.num('tip', -1, 0.55),
+      sections: a.count('sections', -1, 64),
+      sides: a.count('sides', -1, 12),
+    })),
+
+  jumpRing: define(['radius', 'wireRadius', 'gap', 'sections', 'sides'], (a) =>
+    jumpRing({
+      radius: a.num('radius', 0),
+      wireRadius: a.num('wireRadius', 1),
+      gap: a.num('gap', -1, 0) || undefined,
       sections: a.count('sections', -1, 64),
       sides: a.count('sides', -1, 12),
     })),
