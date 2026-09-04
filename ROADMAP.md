@@ -186,8 +186,11 @@ placement of a glowing part is sampled as up to six spheres down its longest
 axis, each carrying its share of the surface area as radiant intensity, into
 a 48-light uniform buffer at frame binding 7. Both the piece and the table
 take diffuse and a representative-point GGX highlight from them. The
-shadowed local light remains its own project. See the `neon` example. The
-material record is now full (256 bytes).
+shadowed local light remains its own project. Brightness is controllable
+twice over: `glow n` after a part's material (or on a placement) sets its
+radiance in sky units, and a glow slider in the light panel scales every
+emitter, 0 putting them out. See the `neon` example. The material record is
+now full (256 bytes).
 
 ### 7. Silk and velvet, with deformation
 

@@ -148,6 +148,7 @@ export function parse(source: string): Program {
       if (at('flip')) { next(); placement.flip = true; continue; }
       if (at('as')) { next(); placement.as = expectIdent('after "as"').text; continue; }
       if (at('in')) { next(); placement.material = parseMaterial(); continue; }
+      if (at('glow')) { next(); placement.glow = parseExpr(); continue; }
       break;
     }
     placement.span = spanFrom(start);
@@ -244,10 +245,14 @@ export function parse(source: string): Program {
       expect('=', 'after a part name');
       const value = parseExpr();
       const material = at('in') ? (next(), parseMaterial()) : undefined;
-      // a part may carry a pattern and an inscription, in either order
+      // a part may carry a pattern and an inscription, in either order, and a glow
       const engravings: Expr[] = [];
-      while (at('engraved')) { next(); engravings.push(parseExpr()); }
-      return { kind: 'part', name, value, material, engravings, span: spanFrom(start) };
+      let glow: Expr | undefined;
+      while (at('engraved') || at('glow')) {
+        if (at('glow')) { next(); glow = parseExpr(); }
+        else { next(); engravings.push(parseExpr()); }
+      }
+      return { kind: 'part', name, value, material, glow, engravings, span: spanFrom(start) };
     }
 
     if (at('unit') || at('form')) {
@@ -269,7 +274,7 @@ export function parse(source: string): Program {
 
 const ACTION_KEYWORDS = [
   'place', 'fasten', 'repeat', 'at', 'turn', 'pitch', 'roll',
-  'scale', 'offset', 'flip', 'as', 'in', 'to', 'around', 'engraved',
+  'scale', 'offset', 'flip', 'as', 'in', 'to', 'around', 'engraved', 'glow',
 ];
 const isActionKeyword = (text: string) => ACTION_KEYWORDS.includes(text);
 

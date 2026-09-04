@@ -29,6 +29,8 @@ export interface Placement {
   flip?: boolean;
   /** Raw words; a metal name may be two of them. */
   material?: string[];
+  /** Radiance of a light, in sky units, overriding its material's. */
+  glow?: Expr;
   as?: string;
   span: Span;
 }
@@ -50,7 +52,7 @@ export type Stmt =
   | { kind: 'use'; names: string[]; span: Span }
   | { kind: 'material'; words: string[]; span: Span }
   | { kind: 'let'; name: string; value: Expr; span: Span }
-  | { kind: 'part'; name: string; value: Expr; material?: string[]; engravings: Expr[]; span: Span }
+  | { kind: 'part'; name: string; value: Expr; material?: string[]; glow?: Expr; engravings: Expr[]; span: Span }
   | { kind: 'unit'; name: string; actions: Action[]; span: Span }
   | { kind: 'form'; name: string; actions: Action[]; span: Span };
 

@@ -335,6 +335,22 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
     part.material = { metal: placement.metal, finish: placement.finish };
   }
 
+  /** A light's radiance, on the part, with the same one-value-per-part rule as its material. */
+  function applyGlow(part: Part, expr: Expr | undefined) {
+    if (!expr) return;
+    const value = evalExpr(expr);
+    if (typeof value !== 'number' || value < 0) {
+      throw new DslError('"glow" is a brightness: 1 is as bright as the sky, 0 is off', expr.span);
+    }
+    if (part.glow !== undefined && part.glow !== value) {
+      throw new DslError(
+        `"${part.name}" already glows at ${part.glow} — give it its own "part" declaration to glow differently`,
+        expr.span,
+      );
+    }
+    part.glow = value;
+  }
+
   function checkMaterial(m: { metal?: string; finish?: string }, span: Span) {
     if (m.metal && !metals[m.metal]) {
       throw new DslError(
@@ -371,6 +387,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
 
         const part = evalPart(action.part);
         applyMaterial(part, action.placement.material, action.span);
+        applyGlow(part, action.placement.glow);
         const placement = assembly.place(part, placementMatrix(action.placement), action.span);
         if (name) placed.set(name, placement);
         continue;
@@ -499,6 +516,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         }
         value.name = statement.name;
         applyMaterial(value, statement.material, statement.span);
+        applyGlow(value, statement.glow);
         for (const expr of statement.engravings) {
           const engraving = evalExpr(expr);
           if (isEngraving(engraving)) value.engraving = engraving;

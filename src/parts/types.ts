@@ -29,6 +29,8 @@ export interface Part {
   anchors: Anchor[];
   /** Optional override, so one form can mix metals the way real work does. */
   material?: { metal?: string; finish?: string };
+  /** Radiance of a light, in sky units, overriding what its material says. */
+  glow?: number;
   /** Enamel colour name, for a part whose mesh marks an enamelled face. */
   enamel?: string;
   /** Chased relief on a plate, for the shader to shade per pixel. */

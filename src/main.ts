@@ -52,6 +52,7 @@ const state = {
   table: 'matte' as TableName,
   exposure: 1,
   bloom: 0.018,
+  glow: 1,
   envSpin: 0,
   background: '#0b0c0e',
   keyElevation: Math.PI / 4,
@@ -357,6 +358,10 @@ lightSet.append(
     state.bloom = v;
     viewer.setBloom(v);
   }),
+  slider('glow', 0, 4, 0.05, state.glow, (v) => `${v.toFixed(2)}×`, (v) => {
+    state.glow = v;
+    viewer.setGlow(v);
+  }),
   slider('rotate env', 0, 6.283, 0.02, state.envSpin, (v) => `${Math.round((v * 180) / Math.PI)}°`, (v) => {
     state.envSpin = v;
     viewer.setEnvSpin(v);
@@ -425,19 +430,19 @@ controlsEl.append(subjectSet, materialSet, lightSet, keySet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription };
+  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription; glow?: number };
   // Two parts made by the same call share a mesh, so the mesh alone is not
   // the group: what is drawn on the surface has to match as well.
   const byMesh = new Map<Mesh, Group[]>();
   const sameSurface = (g: Group, part: Part) =>
     g.metal === part.material?.metal && g.finish === part.material?.finish && g.enamel === part.enamel
-    && g.veinMetal === part.veinMetal && g.engraving === part.engraving && g.inscription === part.inscription;
+    && g.veinMetal === part.veinMetal && g.engraving === part.engraving && g.inscription === part.inscription && g.glow === part.glow;
   for (const p of assembly.placements) {
     let groups = byMesh.get(p.part.mesh);
     if (!groups) { groups = []; byMesh.set(p.part.mesh, groups); }
     let group = groups.find((g) => sameSurface(g, p.part));
     if (!group) {
-      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription };
+      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription, glow: p.part.glow };
       groups.push(group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -455,6 +460,7 @@ function groupByMesh(assembly: Assembly) {
     pavilionFacets: g.pavilionFacets,
     engraving: g.engraving,
     inscription: g.inscription,
+    glow: g.glow,
   }));
 }
 

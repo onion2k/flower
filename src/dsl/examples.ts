@@ -538,13 +538,15 @@ form sampler {
   neon: `# Light. A part in a neon or diode material is a light source: it glows,
 # blooms, and lights what is near it, the table included, though it casts no
 # shadow yet. Neons: red, pink, amber, green, cyan, blue, violet, white.
-# Diodes are the same idea, far brighter over far less surface.
+# Diodes are the same idea, far brighter over far less surface. "glow n"
+# after the material sets how bright: 1 is as bright as the sky, 0 is off.
+# The glow slider in the panel scales them all.
 material blackened steel brushed
 
 part back = plate(sunburst(radius: 26, rays: 12, inner: 0.72, tip: 0.3), thickness: 1.5) engraved rays(scale: 1.2, depth: 0.04)
-part tube = wire(path: lissajous(width: 14, height: 9, a: 3, b: 2), radius: 1.1, closed: yes, sections: 300) in pink neon
-part halo = wire(path: circle(radius: 20), radius: 0.9, closed: yes, sections: 160) in cyan neon
-part lamp = bead(radius: 1.2, point: 0.5) in amber diode
+part tube = wire(path: lissajous(width: 14, height: 9, a: 3, b: 2), radius: 1.1, closed: yes, sections: 300) in pink neon glow 3
+part halo = wire(path: circle(radius: 20), radius: 0.9, closed: yes, sections: 160) in cyan neon glow 1.6
+part lamp = bead(radius: 1.2, point: 0.5) in amber diode glow 10
 
 unit pip {
   place lamp

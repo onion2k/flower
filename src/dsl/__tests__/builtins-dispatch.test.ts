@@ -486,3 +486,24 @@ describe('lettering', () => {
     expect(e.message).toMatch(/no font called "gothic" — try serif, sans, mono/);
   });
 });
+
+describe('glow', () => {
+  it('sets a light\'s radiance on the part, after its material or on its own', () => {
+    const a = build('part t = bead(radius: 2, point: 1) in red neon glow 4\nform f { place t }');
+    expect(a.assembly.placements[0].part.glow).toBe(4);
+    const b = build('part t = bead(radius: 2, point: 1) glow 0.5 engraved stipple(0.3)\nform f { place t }');
+    expect(b.assembly.placements[0].part.glow).toBe(0.5);
+    expect(b.assembly.placements[0].part.engraving?.pattern).toBe('stipple');
+  });
+
+  it('may be given at the placement instead', () => {
+    const s = build('part t = bead(radius: 2, point: 1) in red diode\nform f { place t glow 20 at (0, 0, 3) }');
+    expect(s.assembly.placements[0].part.glow).toBe(20);
+  });
+
+  it('refuses a negative or non-numeric glow, and two different glows on one part', () => {
+    expect(buildErr('part t = bead(radius: 2, point: 1) glow -1\nform f { place t }').message).toMatch(/"glow" is a brightness/);
+    expect(buildErr('part t = bead(radius: 2, point: 1) glow bright\nform f { place t }').message).toMatch(/"glow" is a brightness/);
+    expect(buildErr('part t = bead(radius: 2, point: 1) glow 2\nform f { place t glow 3 }').message).toMatch(/already glows at 2/);
+  });
+});

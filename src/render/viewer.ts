@@ -53,6 +53,8 @@ export interface InstanceGroup {
   engraving?: Engraving;
   /** Lettering cut into the surface. */
   inscription?: Inscription;
+  /** Radiance of a light, in sky units, overriding its material's. */
+  glow?: number;
 }
 
 interface GpuGroup {
@@ -234,6 +236,7 @@ export class Viewer {
   private materialBind: GPUBindGroup | null = null;
   /** The piece's own lights: the glowing parts, sampled as spheres. */
   private lightsBuffer: GPUBuffer;
+  private glowScale = 1;
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
   private atlas: GlyphAtlas | null = null;
   private atlasTexture: GPUTexture | null = null;
@@ -523,6 +526,9 @@ export class Viewer {
   }
 
   setBloom(v: number) { this.bloom = v; this.dirty = true; }
+
+  /** Scale every light in the piece, tubes and diodes alike: 0 puts them out. */
+  setGlow(v: number) { this.glowScale = v; this.writeMaterials(); this.dirty = true; }
 
   /**
    * The key light by where it hangs: elevation above the table and azimuth
@@ -1089,7 +1095,7 @@ export class Viewer {
         f32[o + 54] = 1;
         f32.set([0, 0, 0, 0], o + 56);
       }
-      const glow = m.model === 'light' ? m.glow ?? 1 : 0;
+      const glow = m.model === 'light' ? (g.source.glow ?? m.glow ?? 1) * this.glowScale : 0;
       const c = m.colour ?? [1, 1, 1];
       f32.set(glow > 0 ? [c[0] * glow, c[1] * glow, c[2] * glow, 1] : [0, 0, 0, 0], o + 60);
     });
@@ -1110,8 +1116,9 @@ export class Viewer {
     for (const g of this.groups) {
       const m = metals[g.source.metal ?? ''] ?? this.metal;
       if (m.model !== 'light' || count >= MAX_LIGHTS) continue;
+      const glow = (g.source.glow ?? m.glow ?? 1) * this.glowScale;
+      if (glow <= 0) continue;
       const samples = emitterSamples(g.source.mesh);
-      const glow = m.glow ?? 1;
       const c = m.colour ?? [1, 1, 1];
       const matrices = g.source.matrices;
       for (let k = 0; k < matrices.length / 16 && count < MAX_LIGHTS; k++) {
