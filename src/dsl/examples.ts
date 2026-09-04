@@ -1016,8 +1016,8 @@ form battleaxe {
   place calyx at (0, 0, 108)
   fasten eye to haft.cheek
   fasten eye to haft.cheekBack
-  place cheekWork at (22.6, 1.7, 120) roll -90deg
-  place cheekWork at (22.6, -1.7, 120) roll 90deg
+  place cheekWork at (22.6, 1.1, 120) roll -90deg
+  place cheekWork at (22.6, -1.1, 120) roll 90deg
   fasten finial to haft.top flip
   fasten thorn to haft.poll flip
 }
