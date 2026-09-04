@@ -29,7 +29,8 @@ struct Frame {
   shadowOffset: f32,
   shadowBias: f32,
   shadowOn: f32,
-  _shadowPad: f32,
+  // the key's angular radius in radians: 0 a point, a softbox a good fraction of a radian
+  keySize: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
@@ -56,28 +57,61 @@ fn env(dir: vec3f, lod: f32) -> vec3f {
 // One directional light, GGX over the environment's own split-sum: the
 // baked sky gives the piece its shape, the key gives it a side. Returns the
 // specular lobe scaled by n·l; the caller adds its own diffuse.
+//
+// The key has a size. A disc of light rather than a point, so its
+// highlight is a shape on a mirror and a soft bloom on satin: the lobe is
+// evaluated toward the point of the disc nearest the reflection ray, and
+// widened by the disc's own radius with the energy that widening spreads
+// divided back out (Karis's sphere-light approximation).
 fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
-  let l = normalize(frame.keyDir);
+  let l0 = normalize(frame.keyDir);
+  if (dot(n, l0) <= -sin(frame.keySize) || frame.keyStrength <= 0.0) { return vec3f(0.0); }
+  let size = frame.keySize;
+  let r = reflect(-v, n);
+  let rl = dot(r, l0);
+  let cosCone = cos(size);
+  var l = l0;
+  if (rl < cosCone) {
+    // the closest point on the disc's rim to the reflection ray
+    let perp = r - l0 * rl;
+    let pl = length(perp);
+    if (pl > 1e-4) { l = normalize(l0 * cosCone + perp / pl * sin(size)); }
+  } else {
+    l = r;
+  }
   let ndl = max(dot(n, l), 0.0);
-  if (ndl <= 0.0 || frame.keyStrength <= 0.0) { return vec3f(0.0); }
   let h = normalize(l + v);
   let ndh = max(dot(n, h), 0.0);
   let ndv = max(dot(n, v), 1e-3);
   let vdh = max(dot(v, h), 0.0);
   let a = max(roughness * roughness, 0.002);
-  let a2 = a * a;
+  let aw = clamp(a + 0.5 * tan(size), a, 1.0);
+  let norm = (a / aw) * (a / aw);
+  let a2 = aw * aw;
   let dd = ndh * ndh * (a2 - 1.0) + 1.0;
   let d = a2 / (3.14159265 * dd * dd);
   let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
   let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
   let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-  return d * g * f / (4.0 * ndv) * frame.keyColour * frame.keyStrength * 3.0;
+  return d * g * f * norm / (4.0 * ndv) * frame.keyColour * frame.keyStrength * 3.0;
 }
 
-// how much of the key reaches a point: its shadow map, tapped in a small
-// disc so the edge is a penumbra rather than a staircase. The lookup steps
-// off the surface along the normal first, which is what keeps a lit face
-// from shadowing itself where the map's texels are coarser than the mesh.
+// a point in a disc: Vogel's spiral, evenly spread at any count
+fn vogel(i: i32, count: i32, phase: f32) -> vec2f {
+  let r = sqrt((f32(i) + 0.5) / f32(count));
+  let a = f32(i) * 2.3999632 + phase;
+  return vec2f(cos(a), sin(a)) * r;
+}
+
+// how much of the key reaches a point: its shadow map, filtered over a
+// disc the size of the penumbra there. The penumbra is the light's own
+// size seen from the blocker: a search over the map finds how far above
+// the point the nearest occluders sit, and the filter widens with that
+// distance, so a leaf's shadow is crisp at its stem and soft at its tip.
+// The map's ortho frame covers 2R across and 4R deep, so a depth gap of
+// dz is 2·dz·tan(size) of uv, whatever R is. The lookup steps off the
+// surface along the normal first, which is what keeps a lit face from
+// shadowing itself where the map's texels are coarser than the mesh.
 fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
   if (frame.shadowOn < 0.5 || frame.keyStrength <= 0.0) { return 1.0; }
   let p = world + n * frame.shadowOffset;
@@ -85,19 +119,39 @@ fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
   let uv = vec2f(clip.x, -clip.y) * 0.5 + 0.5;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || clip.z > 1.0) { return 1.0; }
   let depth = clip.z - frame.shadowBias;
-  let texel = 1.0 / vec2f(textureDimensions(keyShadow));
-  var lit = 0.0;
-  for (var i = 0; i < 8; i++) {
-    let a = f32(i) * 0.7853982 + 0.3;
-    let r = select(1.0, 2.0, (i & 1) == 1);
-    lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv + vec2f(cos(a), sin(a)) * texel * r, depth);
+  let dims = vec2f(textureDimensions(keyShadow));
+  let texel = 1.0 / dims;
+  // a fixed rotation per point, so the taps' pattern is a grain, not a print
+  let phase = hash13(floor(world * 23.0)) * 6.2831853;
+  let spread = 2.0 * tan(frame.keySize);
+  var radius = texel * 1.5;
+  if (spread > 0.0) {
+    // blocker search: the mean depth of what is between here and the light,
+    // over the widest penumbra this point could have
+    let search = max(spread * depth, texel.x * 2.0);
+    var blockers = 0.0;
+    var blockerDepth = 0.0;
+    for (var i = 0; i < 12; i++) {
+      let at = uv + vogel(i, 12, phase) * search;
+      let d = textureLoad(keyShadow, vec2i(clamp(at, vec2f(0.0), vec2f(1.0)) * (dims - 1.0)), 0);
+      if (d < depth) { blockers += 1.0; blockerDepth += d; }
+    }
+    if (blockers == 0.0) { return 1.0; }
+    let gap = depth - blockerDepth / blockers;
+    radius = max(vec2f(spread * gap), texel * 1.5);
   }
-  lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv, depth);
-  return lit / 9.0;
+  var lit = 0.0;
+  for (var i = 0; i < 24; i++) {
+    lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv + vogel(i, 24, phase) * radius, depth);
+  }
+  return lit / 24.0;
 }
 
+// the key's diffuse: a disc lights a little past its own horizon, so the
+// terminator softens with its size instead of cutting off at n·l = 0
 fn keyDiffuse(n: vec3f) -> f32 {
-  let ndl = max(dot(n, normalize(frame.keyDir)), 0.0);
+  let w = sin(frame.keySize);
+  let ndl = clamp((dot(n, normalize(frame.keyDir)) + w) / (1.0 + w), 0.0, 1.0);
   return ndl * frame.keyStrength * 3.0 / 3.14159265;
 }
 

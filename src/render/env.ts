@@ -40,7 +40,7 @@ export interface Environment {
 const FORMAT: GPUTextureFormat = 'rgba16float';
 
 const CUBE_BASIS = `
-struct Basis { forward: vec3f, _p0: f32, right: vec3f, _p1: f32, up: vec3f, _p2: f32, preset: f32, roughness: f32, sourceSize: f32, _p3: f32, sun: vec3f, _p4: f32 };
+struct Basis { forward: vec3f, _p0: f32, right: vec3f, _p1: f32, up: vec3f, _p2: f32, preset: f32, roughness: f32, sourceSize: f32, _p3: f32, sun: vec3f, sunSize: f32 };
 @group(0) @binding(0) var<uniform> basis: Basis;
 `;
 
@@ -143,8 +143,13 @@ fn daylight(d: vec3f) -> vec3f {
     col = mix(horizon * 0.85, (flat + bounce) * mix(1.0, 0.7, down), smoothstep(0.0, -0.12, h));
   }
   // the sun itself: small, and bright enough to read as a sun in a mirror
-  let disc = smoothstep(0.99955, 0.99985, dot(d, sunDir));
-  col += mix(vec3f(120.0, 112.0, 100.0), vec3f(110.0, 70.0, 35.0), warmth) * disc;
+  // Its size is the key's: a wider disc is dimmer per steradian so the same
+  // light lands, which is a mirror's difference between a sun and a softbox.
+  let radius = max(basis.sunSize, 0.017);
+  let cosR = cos(radius);
+  let disc = smoothstep(cosR - (1.0 - cosR) * 0.5, cosR + (1.0 - cosR) * 0.15, dot(d, sunDir));
+  let area = (1.0 - cosR) / (1.0 - cos(0.017));
+  col += mix(vec3f(120.0, 112.0, 100.0), vec3f(110.0, 70.0, 35.0), warmth) * disc / area;
   return col;
 }
 
@@ -330,7 +335,7 @@ function getPipelines(device: GPUDevice): Pipelines {
 export function bakeEnvironment(
   ctx: GpuContext,
   preset: EnvPreset,
-  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number] } = {},
+  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number]; sunSize?: number } = {},
 ): Environment {
   const { device } = ctx;
   const size = opts.size ?? 512;
@@ -360,7 +365,7 @@ export function bakeEnvironment(
   const setBasis = (slot: number, face: number, roughness: number) => {
     const [f, r, u] = FACES[face];
     basisData.set(
-      [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, PRESET_INDEX[preset], roughness, size, 0, sun[0], sun[1], sun[2], 0],
+      [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, PRESET_INDEX[preset], roughness, size, 0, sun[0], sun[1], sun[2], opts.sunSize ?? 0],
       (slot * BASIS_STRIDE) / 4,
     );
   };

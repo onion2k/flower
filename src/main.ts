@@ -58,6 +58,7 @@ const state = {
   keyAzimuth: -Math.PI / 4,
   keyStrength: 1,
   keyWarmth: 0.3,
+  keySize: 0.08,
   envStrength: 1,
   dof: 0,
   focus: 1,
@@ -375,7 +376,7 @@ lightSet.append(
 );
 const degrees = (v: number) => `${Math.round((v * 180) / Math.PI)}°`;
 const applyKey = () => viewer.setKeyLight({
-  elevation: state.keyElevation, azimuth: state.keyAzimuth, strength: state.keyStrength, warmth: state.keyWarmth,
+  elevation: state.keyElevation, azimuth: state.keyAzimuth, strength: state.keyStrength, warmth: state.keyWarmth, size: state.keySize,
 });
 const keySet = document.createElement('fieldset');
 keySet.innerHTML = '<legend>Key light</legend>';
@@ -384,6 +385,7 @@ keySet.append(
   slider('elevation', 0, 1.55, 0.02, state.keyElevation, degrees, (v) => { state.keyElevation = v; applyKey(); }),
   slider('azimuth', -3.142, 3.142, 0.02, state.keyAzimuth, degrees, (v) => { state.keyAzimuth = v; applyKey(); }),
   slider('warmth', -1, 1, 0.05, state.keyWarmth, (v) => v.toFixed(2), (v) => { state.keyWarmth = v; applyKey(); }),
+  slider('size', 0, 0.6, 0.01, state.keySize, (v) => (v < 0.005 ? 'point' : degrees(v * 2)), (v) => { state.keySize = v; applyKey(); }),
 );
 const hdrNote = document.createElement('div');
 hdrNote.className = 'note';

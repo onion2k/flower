@@ -131,6 +131,7 @@ export class Viewer {
   /** The key light: direction (world, toward the light), strength, linear colour. */
   private keyDir: Vec3 = [0.5, -0.6, 0.62];
   private keyStrength = 0;
+  private keySize = 0;
   private keyColour: Vec3 = [1, 1, 1];
   private envStrength = 1;
   /** Depth of field: strength (0 off) and focus as a multiple of the orbit distance, so the target is what's sharp. */
@@ -394,7 +395,7 @@ export class Viewer {
   setEnvironment(preset: EnvPreset) {
     this.preset = preset;
     const previous = this.environment;
-    const env = bakeEnvironment(this.ctx, preset, { sun: this.keyDir });
+    const env = bakeEnvironment(this.ctx, preset, { sun: this.keyDir, sunSize: this.keySize });
     this.environment = env;
     this.envSamples = null;
     this.rebuildFrameBind();
@@ -427,10 +428,11 @@ export class Viewer {
    * so the occlusion bake does not follow it: its shadowing is the ambient
    * occlusion's, soft, not a cast shadow.
    */
-  setKeyLight(opts: { elevation: number; azimuth: number; strength: number; warmth: number }) {
+  setKeyLight(opts: { elevation: number; azimuth: number; strength: number; warmth: number; size?: number }) {
     const ce = Math.cos(opts.elevation);
     this.keyDir = [Math.cos(opts.azimuth) * ce, Math.sin(opts.azimuth) * ce, Math.sin(opts.elevation)];
     this.keyStrength = opts.strength;
+    this.keySize = Math.max(0, opts.size ?? 0);
     const w = Math.max(-1, Math.min(1, opts.warmth));
     this.keyColour = w >= 0
       ? [1, 1 - 0.28 * w, 1 - 0.62 * w]
@@ -761,6 +763,7 @@ export class Viewer {
     frame[52] = texel * 2.5;
     frame[53] = 1.5 / 2048;
     frame[54] = this.keyStrength > 0 && this.groups.length ? 1 : 0;
+    frame[55] = this.keySize;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
