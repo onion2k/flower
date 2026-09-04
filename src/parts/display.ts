@@ -1,5 +1,8 @@
-import type { Vec2 } from '../geom/types';
+import type { Vec2, Vec3 } from '../geom/types';
+import * as profile from '../geom/profile';
 import { revolve } from '../mesh/revolve';
+import { sweep } from '../mesh/sweep';
+import { mergeMeshes } from '../mesh/types';
 import { meshBounds, type Anchor, type Part } from './types';
 
 const ease = (t: number) => t * t * (3 - 2 * t);
@@ -78,6 +81,68 @@ export function ringStand(spec: RingStandSpec): Part {
     { name: 'peg', position: [0, 0, top], axis: [0, 0, 1], tangent: [1, 0, 0] },
   ];
   return { name: spec.name ?? 'ringStand', mesh, bounds: meshBounds(mesh), anchors };
+}
+
+export interface EarringStandSpec {
+  name?: string;
+  /** Radius of the flat foot the stand rests on. */
+  baseRadius: number;
+  /** Height of the foot. */
+  baseHeight?: number;
+  /** Radius of the post carrying the bar. */
+  postRadius?: number;
+  /** Height from the foot to the underside of the bar. */
+  postHeight?: number;
+  /** Length of the bar earrings hang from, end to end. */
+  barLength?: number;
+  /** Thickness of the bar. */
+  barRadius?: number;
+  segments?: number;
+}
+
+/**
+ * An earring stand: a T-bar on a post, for a hook or a lever-back to hang
+ * from by its own loop the way it would from a lobe — unlike a ring's bore
+ * or a pendant's own weight, nothing here is a good fit for `fasten`'s
+ * anchor matching (an earring is a whole hand-placed unit, not a single
+ * `Part` with a compatible anchor of its own), so `left`/`right` are
+ * reference points for hand placement, the same as `ringStand`'s `peg`.
+ */
+export function earringStand(spec: EarringStandSpec): Part {
+  const baseHeight = spec.baseHeight ?? spec.baseRadius * 0.18;
+  const postRadius = spec.postRadius ?? spec.baseRadius * 0.22;
+  const postHeight = spec.postHeight ?? spec.baseRadius * 2.2;
+  const barLength = spec.barLength ?? spec.baseRadius * 2.6;
+  const barRadius = spec.barRadius ?? postRadius * 0.85;
+  const segments = spec.segments ?? 48;
+  const sides = Math.max(8, Math.round(segments / 3));
+
+  const waypoints: Vec2[] = [
+    [0, 0],
+    [spec.baseRadius, 0],
+    [spec.baseRadius, baseHeight],
+    [postRadius, baseHeight],
+    [postRadius, baseHeight + postHeight],
+    // closes the post's top with a flat cap; without it the tube's open end
+    // is bare, and merging in the bar (which shares no vertices with it)
+    // leaves a hole rather than sealing one
+    [0, baseHeight + postHeight],
+  ];
+  const { points, sharp } = profileRows(waypoints, 10);
+  const post = revolve({ points, sharp }, { segments });
+
+  const barZ = baseHeight + postHeight + barRadius;
+  const half = barLength / 2;
+  const barPath: Vec3[] = [[-half, 0, barZ], [half, 0, barZ]];
+  const bar = sweep(barPath, { profile: profile.circle(barRadius, sides), caps: true, up: [0, 0, 1] });
+
+  const mesh = mergeMeshes([post, bar]);
+  const anchors: Anchor[] = [
+    { name: 'base', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0] },
+    { name: 'left', position: [-half, 0, barZ], axis: [-1, 0, 0], tangent: [0, 1, 0] },
+    { name: 'right', position: [half, 0, barZ], axis: [1, 0, 0], tangent: [0, 1, 0] },
+  ];
+  return { name: spec.name ?? 'earringStand', mesh, bounds: meshBounds(mesh), anchors };
 }
 
 export interface BustSpec {

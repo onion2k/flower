@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { bust, ringStand } from '../display';
+import { bust, earringStand, ringStand } from '../display';
 import { findAnchor } from '../types';
 import { expectWatertight, expectWellFormed, boundsOf } from '../../mesh/__tests__/helpers';
 
@@ -45,6 +45,46 @@ describe('ringStand', () => {
     expect(base.position).toEqual([0, 0, 0]);
     expect(peg.position[2]).toBeGreaterThan(0);
     expect(peg.position[2]).toBeCloseTo(boundsOf(p.mesh).max[2], 1);
+  });
+});
+
+describe('earringStand', () => {
+  it('is a well-formed, watertight solid', () => {
+    const p = earringStand({ baseRadius: 9 });
+    expectWellFormed(p.mesh);
+    expectWatertight(p.mesh);
+  });
+
+  it('a longer barLength spreads the bar wider than the foot', () => {
+    const short = earringStand({ baseRadius: 9, barLength: 10 });
+    const long = earringStand({ baseRadius: 9, barLength: 30 });
+    const span = (p: typeof short) => boundsOf(p.mesh).max[0] - boundsOf(p.mesh).min[0];
+    expect(span(long)).toBeGreaterThan(span(short));
+    // wider than the foot specifically, once it's long enough to overhang it
+    expect(span(long)).toBeGreaterThan(9 * 2);
+  });
+
+  it('a taller postHeight lifts the bar higher', () => {
+    const short = earringStand({ baseRadius: 9, postHeight: 6 });
+    const tall = earringStand({ baseRadius: 9, postHeight: 30 });
+    expect(boundsOf(tall.mesh).max[2]).toBeGreaterThan(boundsOf(short.mesh).max[2]);
+  });
+
+  it('left and right anchors sit at the two ends of the bar, at its height', () => {
+    const p = earringStand({ baseRadius: 9, barLength: 20 });
+    const left = findAnchor(p, 'left');
+    const right = findAnchor(p, 'right');
+    expect(left.position[0]).toBeCloseTo(-10, 1);
+    expect(right.position[0]).toBeCloseTo(10, 1);
+    expect(left.position[2]).toBeCloseTo(right.position[2], 5);
+    // the bar's own radius stands proud of the anchor's centreline height
+    expect(boundsOf(p.mesh).max[2]).toBeGreaterThan(left.position[2]);
+    expect(boundsOf(p.mesh).max[2] - left.position[2]).toBeLessThan(9 * 0.5);
+  });
+
+  it('base anchor sits at the bottom centre', () => {
+    const p = earringStand({ baseRadius: 9 });
+    expect(findAnchor(p, 'base').position).toEqual([0, 0, 0]);
   });
 });
 
