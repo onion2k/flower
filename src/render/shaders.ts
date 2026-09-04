@@ -21,7 +21,8 @@ struct Frame {
   keyDir: vec3f,
   keyStrength: f32,
   keyColour: vec3f,
-  _keyPad: f32,
+  // how much of the baked environment reaches the piece: 1 as baked, 0 dark
+  envStrength: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
@@ -35,6 +36,12 @@ const COMMON = `
 fn spinZ(a: f32) -> mat3x3f {
   let c = cos(a); let s = sin(a);
   return mat3x3f(vec3f(c, -s, 0.0), vec3f(s, c, 0.0), vec3f(0.0, 0.0, 1.0));
+}
+
+// the baked environment, dimmed by the frame's own setting — every read of
+// it goes through here, so turning the sky down turns all of it down
+fn env(dir: vec3f, lod: f32) -> vec3f {
+  return textureSampleLevel(envSpecular, linearSampler, dir, lod).rgb * frame.envStrength;
 }
 
 // One directional light, GGX over the environment's own split-sum: the
@@ -55,12 +62,12 @@ fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
   let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
   let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
   let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-  return d * g * f / (4.0 * ndv) * frame.keyColour * frame.keyStrength;
+  return d * g * f / (4.0 * ndv) * frame.keyColour * frame.keyStrength * 3.0;
 }
 
 fn keyDiffuse(n: vec3f) -> f32 {
   let ndl = max(dot(n, normalize(frame.keyDir)), 0.0);
-  return ndl * frame.keyStrength / 3.14159265;
+  return ndl * frame.keyStrength * 3.0 / 3.14159265;
 }
 
 fn hash13(p0: vec3f) -> f32 {
@@ -350,7 +357,7 @@ fn gemInterior(v: vec3f, n: vec3f, axis: vec3f, lateral: vec3f, ior: f32, disper
     if (dot(ray, ray) < 1e-6) { ray = reflect(-v, n); }
     ray = reflect(ray, axis * slope + lateral * reach);
     ray = reflect(ray, axis * slope - lateral * reach);
-    let sample = textureSampleLevel(envSpecular, linearSampler, spin * ray, 0.0).rgb;
+    let sample = env(spin * ray, 0.0);
     out += sample * vec3f(f32(c == 0), f32(c == 1), f32(c == 2));
   }
   return out * CROWN_RETURN;
@@ -398,9 +405,9 @@ fn orientTint(ndv: f32, strength: f32) -> vec3f {
 
 fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   let spin = spinZ(frame.envSpin);
-  let irrN = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
-  let irrWrap = textureSampleLevel(envSpecular, linearSampler, spin * normalize(n + v), frame.maxLod).rgb;
-  let irrBack = textureSampleLevel(envSpecular, linearSampler, spin * (-n), frame.maxLod).rgb;
+  let irrN = env(spin * n, frame.maxLod);
+  let irrWrap = env(spin * normalize(n + v), frame.maxLod);
+  let irrBack = env(spin * (-n), frame.maxLod);
   let scattered = irrN * 0.7 + irrWrap * 0.3;
   let rim = pow(1.0 - ndv, 2.5) * 0.35;
   // multiple scattering loses some light on every pass through the plates:
@@ -511,7 +518,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   let footprint = max(length(dpdx(r)), length(dpdy(r)));
   let footLod = log2(max(footprint * envSize * 0.5, 1.0));
   let lod = max(roughness * frame.maxLod, footLod);
-  let prefiltered = textureSampleLevel(envSpecular, linearSampler, spin * r, lod).rgb;
+  let prefiltered = env(spin * r, lod);
   let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
 
   // Lagarde's specular occlusion: a mirror keeps more of its reflection than
@@ -586,14 +593,14 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
         * mix(vec3f(1.0), vec3f(0.92, 0.78, 0.66), late);
     }
     let specular = reflected * (f0 * ab.x + ab.y);
-    let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+    let irradiance = env(spin * n, frame.maxLod);
     let diffuse = irradiance * body * ao;
     colour = (specular + diffuse) * frame.exposure;
     keyBody = body * ao;
   } else {
     let specular = reflected * (f0 * ab.x + ab.y);
     // metal has no diffuse lobe, so this only shows where patina has taken hold
-    let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
+    let irradiance = env(spin * n, frame.maxLod);
     let diffuse = irradiance * material.patinaColour * (1.0 - metallic) * ao;
     colour = (specular + diffuse) * frame.exposure;
     keyBody = material.patinaColour * (1.0 - metallic) * ao;
@@ -606,7 +613,7 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     if (enamelled) {
       let eRough = ENAMEL_ROUGHNESS;
       let eLod = max(eRough * frame.maxLod, footLod);
-      let ePrefiltered = textureSampleLevel(envSpecular, linearSampler, spin * reflect(-v, n), eLod).rgb;
+      let ePrefiltered = env(spin * reflect(-v, n), eLod);
       let eOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * eRough - 1.0)) - 1.0 + ao, 0.0, 1.0);
       let eReflected = ePrefiltered * eOcclusion;
       let eAb = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, eRough), 0.0).rg;
@@ -686,8 +693,11 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f };
 @fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
   let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
   let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
-  let irradiance = textureSampleLevel(envSpecular, linearSampler, spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod).rgb;
-  let lit = (irradiance * ground.albedo * ao + ground.albedo * keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * ao) * frame.exposure;
+  // a shadow catcher: the table is the background's own colour, taking the
+  // piece's shadow and a little of the key, and fading into the page at its
+  // rim — so whatever the background is set to, the ground is that too
+  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * 0.35 * frame.exposure;
+  let lit = ground.background * (mix(0.35, 1.0, ao) + key);
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }

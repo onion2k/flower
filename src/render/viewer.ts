@@ -119,6 +119,7 @@ export class Viewer {
   private keyDir: Vec3 = [0.5, -0.6, 0.62];
   private keyStrength = 0;
   private keyColour: Vec3 = [1, 1, 1];
+  private envStrength = 1;
 
   private metal: Metal = metals.gold;
   private finish: Finish = finishes.polished;
@@ -375,6 +376,9 @@ export class Viewer {
       : [1 + 0.45 * w, 1 + 0.2 * w, 1];
     this.dirty = true;
   }
+
+  /** How much of the baked environment lights the piece: 1 as baked, 0 none — turn it down to let the key light carry the scene. */
+  setEnvStrength(v: number) { this.envStrength = v; this.dirty = true; }
 
   /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */
   setBackground(rgb: Vec3) {
@@ -657,6 +661,7 @@ export class Viewer {
     frame.set(this.keyDir, 28);
     frame[31] = this.keyStrength;
     frame.set(this.keyColour, 32);
+    frame[35] = this.envStrength;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });

@@ -55,8 +55,9 @@ const state = {
   background: '#0b0c0e',
   keyElevation: Math.PI / 4,
   keyAzimuth: -Math.PI / 4,
-  keyStrength: 0,
+  keyStrength: 1,
   keyWarmth: 0.3,
+  envStrength: 1,
   debug: 0,
   showAnchors: false,
   renderScale: 1,
@@ -355,6 +356,10 @@ lightSet.append(
   slider('rotate env', 0, 6.283, 0.02, state.envSpin, (v) => `${Math.round((v * 180) / Math.PI)}°`, (v) => {
     state.envSpin = v;
     viewer.setEnvSpin(v);
+  }),
+  slider('ambient', 0, 2, 0.02, state.envStrength, (v) => `${v.toFixed(2)}×`, (v) => {
+    state.envStrength = v;
+    viewer.setEnvStrength(v);
   }),
   colour('background', state.background, (hex) => {
     state.background = hex;
