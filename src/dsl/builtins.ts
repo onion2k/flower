@@ -11,6 +11,7 @@ import { setting, type SettingStyle } from '../parts/setting';
 import { shank } from '../parts/ring';
 import { clasp } from '../parts/clasp';
 import { jumpRing } from '../parts/jumpring';
+import { leverBack } from '../parts/leverback';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset } from '../parts/panel';
@@ -590,6 +591,17 @@ const PARTS = {
       radius: a.num('radius', 0),
       wireRadius: a.num('wireRadius', 1),
       gap: a.num('gap', -1, 0) || undefined,
+      sections: a.count('sections', -1, 64),
+      sides: a.count('sides', -1, 12),
+    })),
+
+  leverBack: define(['radius', 'wireRadius', 'gap', 'leverWidth', 'leverThickness', 'sections', 'sides'], (a) =>
+    leverBack({
+      radius: a.num('radius', 0),
+      wireRadius: a.num('wireRadius', -1, NaN) || undefined,
+      gap: a.num('gap', -1, 0.8),
+      leverWidth: a.num('leverWidth', -1, NaN) || undefined,
+      leverThickness: a.num('leverThickness', -1, NaN) || undefined,
       sections: a.count('sections', -1, 64),
       sides: a.count('sides', -1, 12),
     })),
