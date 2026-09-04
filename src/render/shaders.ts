@@ -695,11 +695,14 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
 @fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
   let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
   let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
-  // a shadow catcher: the table is the background's own colour, taking the
-  // piece's shadow and a little of the key, and fading into the page at its
-  // rim — so whatever the background is set to, the ground is that too
-  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * 0.35 * frame.exposure;
-  let lit = ground.background * (mix(0.35, 1.0, ao) + key);
+  // the table takes the background's colour, but never darker than a dark
+  // matte table, and is lit by the sky and the key like anything else —
+  // so on a black page there is still a pool of light with a shadow in
+  // it, and on a pale one the table is that colour with a shadow in it
+  let albedo = max(ground.background, ground.albedo);
+  let irradiance = env(spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod);
+  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour;
+  let lit = albedo * (irradiance + key) * ao * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
