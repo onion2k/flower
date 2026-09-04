@@ -480,8 +480,9 @@ const PARTS = {
 
   branch: define(
     ['path', 'radius', 'tip', 'limbs', 'limbLength', 'limbAngle', 'limbSag', 'limbTaper',
-     'from', 'to', 'sections', 'sides'],
+     'from', 'to', 'sections', 'sides', 'enamel'],
     (a) => branch({
+      enamel: enamelName(a),
       path: a.curve('path', 0),
       radius: a.num('radius', 1),
       tipScale: a.num('tip', -1, 0.35),

@@ -195,5 +195,7 @@ export function branch(spec: BranchSpec): Part {
   }
 
   const mesh = mergeMeshes(meshes);
-  return { name: spec.name ?? 'branch', mesh, bounds: meshBounds(mesh), anchors };
+  // trunk and limbs alike: a branch is dipped as one piece
+  if (spec.enamel) enamelWhole(mesh);
+  return { name: spec.name ?? 'branch', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }
