@@ -1,3 +1,4 @@
+import type { Vec3 } from '../geom/types';
 export interface Mesh {
   positions: Float32Array;
   normals: Float32Array;
@@ -119,6 +120,78 @@ export function recomputeNormals(mesh: Mesh) {
  */
 export function enamelWhole(mesh: Mesh): Mesh {
   mesh.enamel = new Float32Array(mesh.positions.length / 3).fill(1);
+  return mesh;
+}
+
+/**
+ * Glaze the inside of a hollow turned body: the vertices whose normals point
+ * in toward the axis. The rim annuli face along the axis and stay metal, which
+ * is the lip a fired enamel always shows.
+ */
+export function enamelInside(mesh: Mesh): Mesh {
+  const n = mesh.positions.length / 3;
+  const out = new Float32Array(n);
+  const p = mesh.positions, nm = mesh.normals;
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1];
+    const r = Math.hypot(x, y);
+    if (r < 1e-6) continue;
+    const radial = (nm[i * 3] * x + nm[i * 3 + 1] * y) / r;
+    if (radial < -0.5) out[i] = 1;
+  }
+  mesh.enamel = out;
+  return mesh;
+}
+
+/**
+ * Glaze the inside of a swept blade.
+ *
+ * A blade that curls out of its plane has a concave face: where the surface
+ * normal leans toward the centre the path bends round. Each section takes its
+ * own bend, and where the path runs straight it borrows the path's bend as a
+ * whole, so a slight curve still gets one whole face and not a patchwork. A
+ * blade bowed within its own plane has no concave face — the bend runs along
+ * its edge — so it takes enamel on its upper face, as a leaf does. The end
+ * caps look along the path and stay metal either way.
+ */
+export function enamelConcave(mesh: Mesh, path: Vec3[]): Mesh {
+  const n = mesh.positions.length / 3;
+  const out = new Float32Array(n);
+  const bendAt = (i: number): Vec3 | null => {
+    const a = path[Math.max(i - 1, 0)], b = path[i], c = path[Math.min(i + 1, path.length - 1)];
+    const k: Vec3 = [a[0] - 2 * b[0] + c[0], a[1] - 2 * b[1] + c[1], a[2] - 2 * b[2] + c[2]];
+    const l = Math.hypot(k[0], k[1], k[2]);
+    return l > 1e-9 ? [k[0] / l, k[1] / l, k[2] / l] : null;
+  };
+  const whole: Vec3 = [0, 0, 0];
+  for (let i = 1; i < path.length - 1; i++) {
+    const k = bendAt(i);
+    if (k) { whole[0] += k[0]; whole[1] += k[1]; whole[2] += k[2]; }
+  }
+  const wl = Math.hypot(whole[0], whole[1], whole[2]);
+  const fallback: Vec3 | null = wl > 1e-9 ? [whole[0] / wl, whole[1] / wl, whole[2] / wl] : null;
+  // each vertex takes the bend of the path point nearest it; the mesh's own
+  // ring layout is the sweep's business
+  const nm = mesh.normals, p = mesh.positions;
+  const bends = path.map((_, i) => bendAt(i) ?? fallback);
+  for (let i = 0; i < n; i++) {
+    const x = p[i * 3], y = p[i * 3 + 1], z = p[i * 3 + 2];
+    let best = 0, bestD = Infinity;
+    for (let j = 0; j < path.length; j++) {
+      const d = (path[j][0] - x) ** 2 + (path[j][1] - y) ** 2 + (path[j][2] - z) ** 2;
+      if (d < bestD) { bestD = d; best = j; }
+    }
+    const k = bends[best];
+    if (!k) continue;
+    const d = nm[i * 3] * k[0] + nm[i * 3 + 1] * k[1] + nm[i * 3 + 2] * k[2];
+    if (d > 0.35) out[i] = 1;
+  }
+  let marked = 0;
+  for (const v of out) marked += v;
+  if (marked < n * 0.1) {
+    for (let i = 0; i < n; i++) out[i] = nm[i * 3 + 2] > 0.35 ? 1 : 0;
+  }
+  mesh.enamel = out;
   return mesh;
 }
 

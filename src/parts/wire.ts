@@ -2,6 +2,7 @@ import { resample, type Curve } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { meshBounds, type Anchor, type Part } from './types';
+import { enamelConcave } from '../mesh/types';
 import { normalize, sub } from '../geom/vec';
 import type { Vec3 } from '../geom/types';
 
@@ -102,6 +103,8 @@ export interface BladeSpec {
   sections?: number;
   sides?: number;
   up?: Vec3;
+  /** Enamel on the concave face, the side the blade curls toward, by colour name. */
+  enamel?: string;
 }
 
 export function blade(spec: BladeSpec): Part {
@@ -118,10 +121,12 @@ export function blade(spec: BladeSpec): Part {
     up: spec.up,
   });
 
+  if (spec.enamel) enamelConcave(mesh, path);
   return {
     name: spec.name ?? 'blade',
     mesh,
     bounds: meshBounds(mesh),
+    enamel: spec.enamel,
     anchors: [
       {
         name: 'base',

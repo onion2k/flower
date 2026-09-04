@@ -354,8 +354,9 @@ const PARTS = {
       sides: a.num('sides', -1, 12),
     })),
 
-  blade: define(['path', 'width', 'thickness', 'twist', 'sections', 'sides'], (a) =>
+  blade: define(['path', 'width', 'thickness', 'twist', 'sections', 'sides', 'enamel'], (a) =>
     blade({
+      enamel: enamelName(a),
       path: a.curve('path', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 1),
@@ -418,8 +419,9 @@ const PARTS = {
       segments: a.num('segments', -1, 32),
     })),
 
-  bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'lobes', 'lobeDepth', 'rows', 'segments'], (a) =>
+  bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'lobes', 'lobeDepth', 'rows', 'segments', 'enamel'], (a) =>
     bell({
+      enamel: enamelName(a),
       length: a.num('length', 0),
       mouth: a.num('mouth', 1),
       throat: a.num('throat', 2),

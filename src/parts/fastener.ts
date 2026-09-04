@@ -1,5 +1,5 @@
 import { revolve, type Silhouette } from '../mesh/revolve';
-import { enamelWhole } from '../mesh/types';
+import { enamelInside, enamelWhole } from '../mesh/types';
 import { meshBounds, type Part } from './types';
 import type { Vec2 } from '../geom/types';
 
@@ -292,6 +292,8 @@ export interface BellSpec {
   lobeDepth?: number;
   rows?: number;
   segments?: number;
+  /** Enamel fired on the inside of the corolla, by colour name. The rim stays metal. */
+  enamel?: string;
 }
 
 /**
@@ -335,10 +337,12 @@ export function bell(spec: BellSpec): Part {
           1 + lobeDepth * Math.cos(lobes * a) * Math.pow(Math.max(z, 0) / spec.length, 2)
       : undefined,
   });
+  if (spec.enamel) enamelInside(mesh);
   return {
     name: spec.name ?? 'bell',
     mesh,
     bounds: meshBounds(mesh),
+    enamel: spec.enamel,
     anchors: [
       { name: 'throat', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.throat },
       { name: 'mouth', position: [0, 0, spec.length], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.mouth },

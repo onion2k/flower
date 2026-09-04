@@ -26,8 +26,10 @@ form rosette {
 `,
 
   cloisonne: `# An enamelled brooch: emerald leaves and ruby petals round a pearl
-# Enamel is an option on leaves and petals: it fills the top face inside the
-# bevel and leaves the rim as metal. Transparent colours — cobalt, peacock,
+# Enamel is an option on leaves and petals, where it fills the top face inside
+# the bevel and leaves the rim as metal; on beads and eggs, which are dipped
+# whole; on a bell, whose inside is glazed and whose rim stays metal; and on a
+# blade, which takes it on its concave face, or its upper face if it lies flat. Transparent colours — cobalt, peacock,
 # emerald, ruby, amber — glow with the metal beneath them; turquoise, moss,
 # coral, lilac, ivory, white and black are opaque. veinMetal sets wires of a
 # second metal along the veins, cloisonné fashion.
