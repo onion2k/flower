@@ -26,7 +26,7 @@ import { shield } from '../parts/shield';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset, plate } from '../parts/panel';
-import { ENGRAVING_PATTERNS, type Engraving, type Part } from '../parts/types';
+import { ENGRAVING_PATTERNS, type Engraving, type Inscription, type Part } from '../parts/types';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
   sphereShell, type Symmetry,
@@ -39,7 +39,7 @@ import { DslError, type Span } from './lexer';
  */
 export interface Outline { loop: Vec2[] }
 
-export type Value = number | string | Vec3 | Curve | Outline | Engraving | Part | Symmetry;
+export type Value = number | string | Vec3 | Curve | Outline | Engraving | Inscription | Part | Symmetry;
 
 export const isVec = (v: Value): v is Vec3 =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
@@ -55,6 +55,9 @@ export const isOutline = (v: Value): v is Outline =>
 
 export const isEngraving = (v: Value): v is Engraving =>
   typeof v === 'object' && v !== null && typeof (v as Engraving).pattern === 'string';
+
+export const isInscription = (v: Value): v is Inscription =>
+  typeof v === 'object' && v !== null && typeof (v as Inscription).script === 'string';
 
 export const isPart = (v: Value): v is Part =>
   typeof v === 'object' && v !== null && 'mesh' in (v as Part) && 'anchors' in (v as Part);
@@ -405,6 +408,30 @@ const engravingOf = (pattern: Engraving['pattern'], defaultAngle = 0) =>
 const ENGRAVINGS = Object.fromEntries(
   ENGRAVING_PATTERNS.map((name) => [name, engravingOf(name, name === 'crosshatch' ? Math.PI / 4 : 0)]),
 ) as Record<Engraving['pattern'], ReturnType<typeof define>>;
+
+const FONTS = ['serif', 'sans', 'mono'] as const;
+
+/**
+ * Lettering. `engraved text("1928", size: 4, depth: 0.08)` cuts the string
+ * into a part's surface; `runes("odin")` spells it in Elder Futhark from the
+ * Latin. Both centre on the face; `at` shifts the line from that middle, in
+ * the face's own millimetres.
+ */
+const inscriptionOf = (script: Inscription['script']) =>
+  define(['text', 'size', 'depth', 'angle', 'at', 'font'], (a): Inscription => {
+    const at = a.vec('at', -1, [NaN, NaN, NaN]);
+    return {
+      script,
+      text: a.word('text', 0, ''),
+      size: a.num('size', 1, 4),
+      depth: a.num('depth', 2, 0.08),
+      angle: a.num('angle', -1, 0),
+      font: oneOf(a, 'font', FONTS, 'serif'),
+      at: Number.isNaN(at[0]) ? undefined : [at[0], at[1]],
+    };
+  });
+
+const INSCRIPTIONS = { text: inscriptionOf('text'), runes: inscriptionOf('runes') };
 
 /** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
 const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
@@ -952,10 +979,10 @@ const SYMMETRIES = {
 };
 
 export const BUILTINS: Record<string, { known: string[]; fn: Builtin }> = {
-  ...CURVES, ...OUTLINES, ...ENGRAVINGS, ...PARTS, ...SYMMETRIES,
+  ...CURVES, ...OUTLINES, ...ENGRAVINGS, ...INSCRIPTIONS, ...PARTS, ...SYMMETRIES,
 };
 
-export const ENGRAVING_NAMES = Object.keys(ENGRAVINGS);
+export const ENGRAVING_NAMES = [...Object.keys(ENGRAVINGS), ...Object.keys(INSCRIPTIONS)];
 
 export const OUTLINE_NAMES = Object.keys(OUTLINES);
 export const CURVE_NAMES = Object.keys(CURVES);

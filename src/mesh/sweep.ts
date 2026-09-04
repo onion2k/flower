@@ -112,7 +112,9 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
         n[0], n[1], n[2],
         uCoord[s], vCoord[c],
       );
-      engrave.push(uCoord[s] * pathLength, (vCoord[c] - 0.5) * perimeter[s]);
+      // v runs the wrong way for a right-handed (along, across, out) frame, and
+      // lettering has to read the right way round from outside
+      engrave.push(uCoord[s] * pathLength, (0.5 - vCoord[c]) * perimeter[s]);
     }
   }
   // Wound (v then u) so the face normal comes out as cross(dv, du), which is the

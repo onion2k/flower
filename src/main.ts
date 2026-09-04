@@ -7,7 +7,7 @@ import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
 import { Assembly } from './assembly/assembly';
 import { identity } from './geom/transform';
-import type { Anchor, Engraving, Part, PlateRelief } from './parts/types';
+import type { Anchor, Engraving, Inscription, Part, PlateRelief } from './parts/types';
 import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
@@ -425,19 +425,19 @@ controlsEl.append(subjectSet, materialSet, lightSet, keySet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving };
+  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription };
   // Two parts made by the same call share a mesh, so the mesh alone is not
   // the group: what is drawn on the surface has to match as well.
   const byMesh = new Map<Mesh, Group[]>();
   const sameSurface = (g: Group, part: Part) =>
     g.metal === part.material?.metal && g.finish === part.material?.finish && g.enamel === part.enamel
-    && g.veinMetal === part.veinMetal && g.engraving === part.engraving;
+    && g.veinMetal === part.veinMetal && g.engraving === part.engraving && g.inscription === part.inscription;
   for (const p of assembly.placements) {
     let groups = byMesh.get(p.part.mesh);
     if (!groups) { groups = []; byMesh.set(p.part.mesh, groups); }
     let group = groups.find((g) => sameSurface(g, p.part));
     if (!group) {
-      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving };
+      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription };
       groups.push(group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -454,6 +454,7 @@ function groupByMesh(assembly: Assembly) {
     veinMetal: g.veinMetal,
     pavilionFacets: g.pavilionFacets,
     engraving: g.engraving,
+    inscription: g.inscription,
   }));
 }
 

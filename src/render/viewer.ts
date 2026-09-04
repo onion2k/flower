@@ -16,7 +16,8 @@ import type { Box3, Vec3 } from '../geom/types';
 import { invert, transformDirection, transformPoint } from '../geom/transform';
 import { computeWear } from '../mesh/wear';
 import { engraveCoords } from '../mesh/types';
-import { ENGRAVING_PATTERNS, type Engraving } from '../parts/types';
+import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
+import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey } from './glyphs';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
@@ -27,7 +28,7 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 208;
+const MATERIAL_SIZE = 240;
 const FRAME_SIZE = 224;
 
 export type Quality = 'draft' | 'final';
@@ -48,6 +49,8 @@ export interface InstanceGroup {
   pavilionFacets?: number;
   /** A pattern cut into the surface. */
   engraving?: Engraving;
+  /** Lettering cut into the surface. */
+  inscription?: Inscription;
 }
 
 interface GpuGroup {
@@ -78,6 +81,17 @@ function faceOf(mesh: PartMesh): Float32Array {
     out[i * 2 + 1] = mesh.cap?.[i] ?? 0;
   }
   return out;
+}
+
+/** The middle of a mesh's engraving coordinates: where lettering goes unless told otherwise. */
+function centreOf(mesh: PartMesh): [number, number] {
+  const c = engraveCoords(mesh);
+  let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+  for (let i = 0; i < c.length; i += 2) {
+    minX = Math.min(minX, c[i]); maxX = Math.max(maxX, c[i]);
+    minY = Math.min(minY, c[i + 1]); maxY = Math.max(maxY, c[i + 1]);
+  }
+  return [(minX + maxX) / 2, (minY + maxY) / 2];
 }
 
 /** Half the larger extent of a mesh's engraving coordinates, once per mesh: a radius for a ray pattern. */
@@ -167,6 +181,11 @@ export class Viewer {
   private groups: GpuGroup[] = [];
   private materialBuffer: GPUBuffer | null = null;
   private materialBind: GPUBindGroup | null = null;
+  /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
+  private atlas: GlyphAtlas | null = null;
+  private atlasTexture: GPUTexture | null = null;
+  private glyphBuffer: GPUBuffer | null = null;
+  private glyphRanges: Array<{ base: number; count: number }> = [];
 
   /** An occlusion bake asked for since the last frame; coalesced so a dragged slider bakes once a frame, not once an event. */
   private bakeQueued = false;
@@ -278,7 +297,12 @@ export class Viewer {
     });
     this.materialLayout = device.createBindGroupLayout({
       label: 'material',
-      entries: [{ binding: 0, visibility: both, buffer: { type: 'uniform', hasDynamicOffset: true } }],
+      entries: [
+        { binding: 0, visibility: both, buffer: { type: 'uniform', hasDynamicOffset: true } },
+        // lettering: every placed glyph in the scene, and the atlas they are read from
+        { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
+        { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+      ],
     });
     this.groundLayout = device.createBindGroupLayout({
       label: 'ground',
@@ -563,9 +587,14 @@ export class Viewer {
       label: 'materials', size: Math.max(1, this.groups.length) * MATERIAL_STRIDE,
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
+    this.layoutLettering();
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
-      entries: [{ binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } }],
+      entries: [
+        { binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } },
+        { binding: 1, resource: { buffer: this.glyphBuffer! } },
+        { binding: 2, resource: this.atlasTexture!.createView() },
+      ],
     });
 
     if (this.envSamples) this.bakeOcclusion();
@@ -920,7 +949,50 @@ export class Viewer {
     this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView) });
   }
 
-  /** Per-group material and occlusion slice, 176 bytes at a 256-byte stride. */
+  /**
+   * Lay every group's lettering out into one glyph buffer and make sure the
+   * atlas holds every glyph used. Each glyph is a cell's box in the surface's
+   * millimetres, before the inscription's turn, and the atlas rectangle it
+   * reads from.
+   */
+  private layoutLettering() {
+    const { device } = this.ctx;
+    if (!this.atlas) this.atlas = new GlyphAtlas(new CanvasRasteriser());
+    const atlas = this.atlas;
+    const records: number[] = [];
+    this.glyphRanges = this.groups.map((g) => {
+      const ins = g.source.inscription;
+      if (!ins || !ins.text) return { base: 0, count: 0 };
+      const keys: (GlyphKey | ' ')[] = ins.script === 'runes'
+        ? transliterate(ins.text).map((r) => (r === ' ' ? ' ' : { kind: 'rune' as const, rune: r }))
+        : [...ins.text].map((c) => (c === ' ' ? ' ' : { kind: 'char' as const, char: c, font: ins.font }));
+      const line = layoutGlyphs(atlas, keys);
+      const base = records.length / 8;
+      const em = ins.size;
+      // centre the line on the pen's start, and drop the baseline so caps sit on the centre line
+      const dx = -line.width * em / 2, dy = -0.35 * em;
+      for (const gl of line.glyphs) {
+        records.push(gl.x0 * em + dx, gl.y0 * em + dy, gl.x1 * em + dx, gl.y1 * em + dy);
+        records.push(gl.rect.u0, gl.rect.v0, gl.rect.u1, gl.rect.v1);
+      }
+      return { base, count: line.glyphs.length };
+    });
+    this.glyphBuffer?.destroy();
+    this.glyphBuffer = bufferFrom(device, records.length ? new Float32Array(records) : new Float32Array(8), GPUBufferUsage.STORAGE, 'glyphs');
+    if (!this.atlasTexture || atlas.dirty || this.atlasTexture.width !== atlas.width || this.atlasTexture.height !== atlas.height) {
+      if (!this.atlasTexture || this.atlasTexture.width !== atlas.width || this.atlasTexture.height !== atlas.height) {
+        this.atlasTexture?.destroy();
+        this.atlasTexture = device.createTexture({
+          label: 'glyph atlas', size: [atlas.width, atlas.height], format: 'r8unorm',
+          usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+        });
+      }
+      device.queue.writeTexture({ texture: this.atlasTexture }, atlas.pixels as Uint8Array<ArrayBuffer>, { bytesPerRow: atlas.width }, [atlas.width, atlas.height]);
+      atlas.dirty = false;
+    }
+  }
+
+  /** Per-group material and occlusion slice, 240 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
@@ -947,6 +1019,19 @@ export class Viewer {
       const patternIndex = eng ? ENGRAVING_PATTERNS.indexOf(eng.pattern) + 1 : 0;
       u32.set([patternIndex, g.source.mesh.cap ? 0 : 1, 0, 0], o + 44);
       f32.set(eng ? [eng.scale, eng.depth, eng.angle, extentOf(g.source.mesh)] : [1, 0, 0, 1], o + 48);
+      const ins = g.source.inscription;
+      const range = this.glyphRanges[k] ?? { base: 0, count: 0 };
+      u32.set([range.base, range.count, 0, 0], o + 52);
+      if (ins) {
+        const mid = centreOf(g.source.mesh);
+        const centre = ins.at ? [mid[0] + ins.at[0], mid[1] + ins.at[1]] : mid;
+        // the atlas saturates `spread` px either side of the edge; in mm that is spread * size / fontPx
+        f32[o + 54] = (CELL.spread * ins.size) / CELL.fontPx;
+        f32.set([ins.depth, ins.angle, centre[0], centre[1]], o + 56);
+      } else {
+        f32[o + 54] = 1;
+        f32.set([0, 0, 0, 0], o + 56);
+      }
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
   }

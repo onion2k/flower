@@ -214,8 +214,19 @@ struct Material {
   _pad3: u32,
   _pad4: u32,
   patternParams: vec4f, // pitch mm, depth mm, angle, the surface's half extent
+  // lettering: a run of placed glyphs in the glyph buffer, read from the atlas
+  glyphBase: u32,
+  glyphCount: u32,
+  letterSpread: f32,   // how far the atlas field reaches either side of an edge, in mm
+  _pad5: u32,
+  letter: vec4f,       // depth mm, angle, centre x, centre y
 };
 @group(1) @binding(0) var<uniform> material: Material;
+
+/** One placed glyph: its box in surface mm before the inscription's turn, and its atlas rectangle. */
+struct Glyph { box: vec4f, rect: vec4f };
+@group(1) @binding(1) var<storage, read> glyphs: array<Glyph>;
+@group(1) @binding(2) var atlas: texture_2d<f32>;
 
 struct VsIn {
   @location(0) position: vec3f,
@@ -448,6 +459,41 @@ fn patternField(xIn: f32, yIn: f32) -> f32 {
   }
 }
 
+/**
+ * Signed distance in mm from the nearest letter's edge, negative inside a
+ * letter, at a point in the inscription's own frame. Far from every glyph it
+ * is simply "far", which the cut treats as untouched metal.
+ */
+fn letterDistance(p: vec2f) -> f32 {
+  var best = 1e9;
+  let spread = material.letterSpread;
+  for (var i = 0u; i < material.glyphCount; i++) {
+    let g = glyphs[material.glyphBase + i];
+    if (p.x < g.box.x || p.x > g.box.z || p.y < g.box.y || p.y > g.box.w) { continue; }
+    let f = (p - g.box.xy) / (g.box.zw - g.box.xy);
+    // the atlas is drawn y-down
+    let uv = mix(g.rect.xy, g.rect.zw, vec2f(f.x, 1.0 - f.y));
+    let s = textureSampleLevel(atlas, linearSampler, uv, 0.0).r;
+    best = min(best, (0.5 - s) * 2.0 * spread);
+  }
+  return best;
+}
+
+/**
+ * The lettering's height at a point in surface mm: the letter's floor,
+ * the depth down, reached over a short bevel at the edge so the wall catches
+ * light rather than vanishing between two pixels.
+ */
+fn letterHeight(e: vec2f) -> f32 {
+  let a = material.letter.y;
+  let d = e - material.letter.zw;
+  let local = vec2f(cos(a) * d.x + sin(a) * d.y, -sin(a) * d.x + cos(a) * d.y);
+  let dist = letterDistance(local);
+  // a narrow wall: wide enough to catch light, never so wide the letter reads as embossed
+  let bevel = min(0.15, material.letterSpread * 0.3);
+  return -material.letter.x * (1.0 - smoothstep(-bevel, bevel, dist));
+}
+
 /** Engraved height: grooves cut in by the depth, or raised by a negative one. */
 fn engraveHeight(x: f32, y: f32, depth: f32) -> f32 { return -depth * patternField(x, y); }
 
@@ -591,8 +637,10 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   var tbn = tangentFrame(n, in.world, in.uv);
   // how much of the flat plate one pixel covers, for antialiasing anything drawn on it
   let plateFootprint = max(0.75 * length(vec2f(dpdx(in.plate.x), dpdy(in.plate.x))), 0.005);
-  // and of the engraving coordinates, taken here where every pixel takes them
+  // and of the engraving coordinates, taken here where every pixel takes them,
+  // with the directions those coordinates run in on the surface
   let engraveFootprint = max(0.75 * length(vec2f(dpdx(in.engrave.x), dpdy(in.engrave.x))), 0.005);
+  let engraveFrame = tangentFrame(n, in.world, in.engrave);
 
   // --- chased relief: bend the normal by the height field's gradient, per pixel ---
   // The relief was applied as a shear along the flat plate's normal; the cup and
@@ -623,18 +671,38 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
       let e = in.engrave;
       let fx = (engraveHeight(e.x + eps, e.y, depth) - engraveHeight(e.x - eps, e.y, depth)) / (2.0 * eps);
       let fy = (engraveHeight(e.x, e.y + eps, depth) - engraveHeight(e.x, e.y - eps, depth)) / (2.0 * eps);
-      let t = normalize(tbn[0] - n * dot(tbn[0], n));
-      let b = normalize(tbn[1] - n * dot(tbn[1], n));
-      // a plate's bottom cap sees the field mirrored; anywhere else the field is cut along the outward normal
-      let sign = select(1.0, in.cap, abs(in.cap) > 0.5) * select(1.0, -1.0, !frontFacing);
+      // the field is cut along the outward normal of whichever face this is,
+      // so the frame comes from the engraving coordinates themselves — a
+      // sweep's uv is left-handed, and this never has to know
+      let t = normalize(engraveFrame[0] - n * dot(engraveFrame[0], n));
+      let b = normalize(engraveFrame[1] - n * dot(engraveFrame[1], n));
+      let sign = select(1.0, -1.0, !frontFacing);
       n = normalize(n - sign * (fx * t + fy * b));
-      tbn = mat3x3f(normalize(t - n * dot(t, n)), normalize(b - n * dot(b, n)), n);
+      tbn = mat3x3f(normalize(tbn[0] - n * dot(tbn[0], n)), normalize(tbn[1] - n * dot(tbn[1], n)), n);
     }
+  }
+
+  // --- lettering: the same bend again, from the letters' distance field ---
+  var letterFloor = 0.0;
+  if (material.glyphCount > 0u && (material.patternFaces > 0u || abs(in.cap) > 0.5)) {
+    let eps = max(0.02, material.letterSpread * 0.08);
+    let e = in.engrave;
+    let h0 = letterHeight(e);
+    let fx = (letterHeight(e + vec2f(eps, 0.0)) - letterHeight(e - vec2f(eps, 0.0))) / (2.0 * eps);
+    let fy = (letterHeight(e + vec2f(0.0, eps)) - letterHeight(e - vec2f(0.0, eps))) / (2.0 * eps);
+    let t = normalize(engraveFrame[0] - n * dot(engraveFrame[0], n));
+    let b = normalize(engraveFrame[1] - n * dot(engraveFrame[1], n));
+    let sign = select(1.0, -1.0, !frontFacing);
+    n = normalize(n - sign * (fx * t + fy * b));
+    tbn = mat3x3f(normalize(tbn[0] - n * dot(tbn[0], n)), normalize(tbn[1] - n * dot(tbn[1], n)), n);
+    // how far into the cut this pixel is, 0..1: the floor of a cut is left matte by the graver
+    letterFloor = select(0.0, clamp(-h0 / material.letter.x, 0.0, 1.0), material.letter.x != 0.0);
   }
 
   var roughness = material.roughness;
   var f0 = material.f0;
   var metallic = 1.0;
+  if (letterFloor > 0.0) { roughness = mix(roughness, max(roughness, 0.42), letterFloor); }
   // nacre has a soft lustre whatever finish the sketch asked for, and no
   // planishing, patina or wear: those are things done to metal
   let nacre = material.model == 1u;
@@ -732,7 +800,8 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
 
   // Lagarde's specular occlusion: a mirror keeps more of its reflection than
   // its hemisphere visibility suggests
-  let ao = in.ao;
+  // the floor of a cut letter sits in its own shadow
+  let ao = in.ao * (1.0 - 0.45 * letterFloor);
   let specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
   var reflected = prefiltered * specOcclusion;
 

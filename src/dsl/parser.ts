@@ -244,8 +244,10 @@ export function parse(source: string): Program {
       expect('=', 'after a part name');
       const value = parseExpr();
       const material = at('in') ? (next(), parseMaterial()) : undefined;
-      const engraving = at('engraved') ? (next(), parseExpr()) : undefined;
-      return { kind: 'part', name, value, material, engraving, span: spanFrom(start) };
+      // a part may carry a pattern and an inscription, in either order
+      const engravings: Expr[] = [];
+      while (at('engraved')) { next(); engravings.push(parseExpr()); }
+      return { kind: 'part', name, value, material, engravings, span: spanFrom(start) };
     }
 
     if (at('unit') || at('form')) {

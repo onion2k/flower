@@ -45,6 +45,27 @@ export interface Part {
   pavilionFacets?: number;
   /** A pattern cut into the surface, drawn per pixel by the shader. */
   engraving?: Engraving;
+  /** Lettering cut into the surface, drawn per pixel by the shader. */
+  inscription?: Inscription;
+}
+
+/**
+ * Lettering: a string of glyphs — characters in a font, or Elder Futhark
+ * spelled from Latin — laid along a baseline in the surface's millimetre
+ * coordinates and cut in by `depth`.
+ */
+export interface Inscription {
+  script: 'text' | 'runes';
+  text: string;
+  font: 'serif' | 'sans' | 'mono';
+  /** Em height in millimetres. */
+  size: number;
+  /** Cut depth in millimetres; negative raises the letters. */
+  depth: number;
+  /** Rotation in the surface, radians. */
+  angle: number;
+  /** Where the line's centre sits, as an offset in surface millimetres from the middle of the face. */
+  at?: [number, number];
 }
 
 export const ENGRAVING_PATTERNS = [

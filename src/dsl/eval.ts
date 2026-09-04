@@ -6,7 +6,7 @@ import { finishes, metals } from '../render/materials';
 import type { Part } from '../parts/types';
 import type { Action, Expr, Placement, Program } from './ast';
 import { parse } from './parser';
-import { Args, BUILTINS, ENGRAVING_NAMES, isEngraving, isOutline, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
+import { Args, BUILTINS, ENGRAVING_NAMES, isEngraving, isInscription, isOutline, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
 import { DslError, type Span } from './lexer';
 /**
  * Part geometry survives across compiles. The editor recompiles on every
@@ -499,15 +499,16 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         }
         value.name = statement.name;
         applyMaterial(value, statement.material, statement.span);
-        if (statement.engraving) {
-          const engraving = evalExpr(statement.engraving);
-          if (!isEngraving(engraving)) {
+        for (const expr of statement.engravings) {
+          const engraving = evalExpr(expr);
+          if (isEngraving(engraving)) value.engraving = engraving;
+          else if (isInscription(engraving)) value.inscription = engraving;
+          else {
             throw new DslError(
-              `"engraved" needs a pattern — try ${ENGRAVING_NAMES.join(', ')}`,
-              statement.engraving.span,
+              `"engraved" needs a pattern or lettering — try ${ENGRAVING_NAMES.join(', ')}`,
+              expr.span,
             );
           }
-          value.engraving = engraving;
         }
         scope.set(statement.name, value);
         partSpans.set(value, statement.span);
@@ -558,6 +559,7 @@ function describeValue(value: Value): string {
   if (isSymmetry(value)) return 'it is a symmetry';
   if (isOutline(value)) return 'it is an outline';
   if (isEngraving(value)) return 'it is an engraving';
+  if (isInscription(value)) return 'it is lettering';
   return 'it is a path';
 }
 

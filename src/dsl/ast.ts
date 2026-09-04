@@ -50,7 +50,7 @@ export type Stmt =
   | { kind: 'use'; names: string[]; span: Span }
   | { kind: 'material'; words: string[]; span: Span }
   | { kind: 'let'; name: string; value: Expr; span: Span }
-  | { kind: 'part'; name: string; value: Expr; material?: string[]; engraving?: Expr; span: Span }
+  | { kind: 'part'; name: string; value: Expr; material?: string[]; engravings: Expr[]; span: Span }
   | { kind: 'unit'; name: string; actions: Action[]; span: Span }
   | { kind: 'form'; name: string; actions: Action[]; span: Span };
 

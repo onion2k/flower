@@ -514,6 +514,27 @@ form sampler {
 }
 `,
 
+  inscribed: `# Lettering. engraved text("...") cuts a line of type into a part's face,
+# and runes("...") spells it in Elder Futhark from the Latin. size is the em
+# height in mm; at: (x, y) shifts the line from the middle of the face, in the
+# face's own millimetres. A part can carry a pattern under its lettering.
+material gold satin
+
+part card   = plate(card(width: 30, height: 20, corner: 2), thickness: 1.4) engraved guilloche(scale: 0.7, depth: 0.03) engraved text("1928", size: 8, depth: 0.12)
+part signet = disc(radius: 9, thickness: 2) in silver polished engraved runes("odin", size: 4.5, depth: 0.15)
+part tag    = plate(lozenge(length: 26, width: 14), thickness: 1.2) in platinum polished engraved text("永遠", size: 6, depth: 0.1)
+# a band's coordinates run along the ring and round its section; 2.8 across
+# is the middle of its outer face, and the line sits halfway round the ring
+part band   = band(radius: 12, width: 4.5, thickness: 1) in rose gold polished engraved text("AMOR VINCIT OMNIA", size: 2.6, depth: 0.08, font: sans, at: (0, 2.8, 0))
+
+form sampler {
+  place card at (-22, 4, 0)
+  place signet at (12, 14, 0)
+  place tag at (18, -2, 0)
+  place band at (-4, -14, 0) turn 90deg
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 

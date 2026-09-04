@@ -439,7 +439,7 @@ describe('engraving', () => {
 
   it('rejects something that is not a pattern, naming the patterns', () => {
     const e = buildErr('part p = disc(radius: 10, thickness: 1) engraved circle(radius: 3)\nform f { place p }');
-    expect(e.message).toMatch(/"engraved" needs a pattern — try hatch, crosshatch/);
+    expect(e.message).toMatch(/"engraved" needs a pattern or lettering — try hatch, crosshatch/);
   });
 
   it('an engraving is not a part', () => {
@@ -453,5 +453,36 @@ describe('engraving', () => {
     expect(a.mesh).toBe(b.mesh);
     expect(a.engraving).toBeUndefined();
     expect(b.engraving?.pattern).toBe('stipple');
+  });
+});
+
+describe('lettering', () => {
+  it('text() after a part attaches an inscription, centred unless placed', () => {
+    const sketch = build('part p = disc(radius: 10, thickness: 1) engraved text("1928", size: 4, depth: 0.1, angle: 0.2, font: sans)\nform f { place p }');
+    const part = sketch.assembly.placements[0].part;
+    expect(part.inscription).toEqual({ script: 'text', text: '1928', size: 4, depth: 0.1, angle: 0.2, font: 'sans', at: undefined });
+  });
+
+  it('at: places the line in surface millimetres', () => {
+    const sketch = build('part p = disc(radius: 10, thickness: 1) engraved runes("odin", at: (2, -3, 0))\nform f { place p }');
+    const ins = sketch.assembly.placements[0].part.inscription!;
+    expect(ins.script).toBe('runes');
+    expect(ins.at).toEqual([2, -3]);
+    expect(ins.font).toBe('serif');
+  });
+
+  it('a part may carry a pattern and lettering together, in either order', () => {
+    const a = build('part p = disc(radius: 10, thickness: 1) engraved guilloche(0.7) engraved text("A")\nform f { place p }');
+    const b = build('part p = disc(radius: 10, thickness: 1) engraved text("A") engraved guilloche(0.7)\nform f { place p }');
+    for (const s of [a, b]) {
+      const part = s.assembly.placements[0].part;
+      expect(part.engraving?.pattern).toBe('guilloche');
+      expect(part.inscription?.text).toBe('A');
+    }
+  });
+
+  it('refuses a font it does not have', () => {
+    const e = buildErr('part p = disc(radius: 10, thickness: 1) engraved text("A", font: gothic)\nform f { place p }');
+    expect(e.message).toMatch(/no font called "gothic" — try serif, sans, mono/);
   });
 });

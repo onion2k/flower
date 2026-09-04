@@ -146,6 +146,17 @@ Two routes, in order:
 The DSL surface is `engrave text: "..." font: ... size: ...` on a part, plus
 `glyph: rune-name` for the procedural set.
 
+**Status, September 2026:** done, with one mechanism for both routes. A
+signed-distance atlas (`render/glyphs.ts`) is rasterised on a canvas — real
+fonts through fillText, so kanji work through the system's fallback fonts,
+and Elder Futhark from a stroke table so runes never depend on a font — and
+read in the shader through the engraving coordinates and the same normal
+bend as the patterns. `engraved text("1928", size, depth, angle, at, font)`
+and `engraved runes("odin", ...)`; a part may carry a pattern and lettering
+together. `at` is an offset from the middle of the face. The cut's floor is
+darkened and roughened so letters read as cut rather than outlined. Lines
+do not wrap round a closed sweep's seam. See the `inscribed` example.
+
 ### 6. Light tape, neon, and diodes
 
 **Cost: low for the glow, high for cast light and shadow.**
@@ -194,7 +205,7 @@ The light array is a new uniform buffer; the frame struct grows.
 3. **Generalised engraving field** in the shader, keyed by an enum, with a
    flat surface coordinate on every part type. Unblocks 3 and 5. Done.
 4. **Texture binding in the material bind group** plus an SDF atlas builder.
-   Unblocks font glyphs in 5.
+   Unblocks font glyphs in 5. Done.
 5. **Emissive model**, then a local light array. Unblocks 6.
 6. **Cloth table types**, then a displacement heightfield baked from the
    piece. Unblocks 7.
@@ -203,17 +214,17 @@ The light array is a new uniform buffer; the frame struct grows.
 
 Items 3, 5, 6, and 7 all add uniforms to `Material` or `Frame`. WGSL struct
 layout and the matching TypeScript packing are hand-maintained, and every
-addition has cost a relayout. Item 3 used 32 of the 80 spare bytes at
-the end of the record (`pattern`, `patternFaces`, two pads, `patternParams`);
-48 remain before the 256-byte stride is full, enough for emission and a glyph
-selector. Fill them as items land rather than relaying out each time.
+addition has cost a relayout. Items 3 and 5 used 64 of the 80 spare
+bytes at the end of the record (pattern selector and params, glyph range,
+letter params); 16 remain before the 256-byte stride is full, exactly one
+`vec4f` for emission. After that the stride has to grow.
 
 ### DSL grammar changes
 
 Collected here because they are easy to forget:
 
 - Nested list or matrix literal (bezier control nets, item 2).
-- String literal (engraved text, item 5). The lexer has none today.
+- String literal (engraved text, item 5). The lexer had one already.
 - Recursive symmetry builtin returning a matrix list (branching, item 4).
 
 ## Suggested first three
