@@ -1,6 +1,6 @@
 import type { ConnectivityRequest, ConnectivityResponse } from './assembly/connectivity.worker';
-import { catalogue, catalogueNames } from './spike/catalogue';
-import { examples, exampleNames } from './dsl/examples';
+import { catalogue, catalogueGroups, catalogueNames } from './spike/catalogue';
+import { examples, exampleGroups, exampleNames } from './dsl/examples';
 import { compile } from './dsl/index';
 import { metalNames, finishNames } from './render/materials';
 import type { EnvPreset } from './render/env';
@@ -125,18 +125,25 @@ const subjectSet = document.createElement('fieldset');
 subjectSet.innerHTML = '<legend>Subject</legend>';
 const select = document.createElement('select');
 
-/** The dropdown: the writer's own sketches first, then what ships with the page. */
+/**
+ * The dropdown: the writer's own sketches first, then what ships with the
+ * page, grouped by what it is. An option's value stays `kind:name` whatever
+ * group it sits under — the group is for the eye, the kind is what
+ * `sourceFor` and the store go by.
+ */
 function fillSubjects(keep?: string) {
   select.replaceChildren();
-  for (const [label, names] of [
-    ['Mine', store.mineNames()], ['Sketches', exampleNames], ['Forms', formNames], ['Parts', catalogueNames],
-  ] as const) {
+  const sections: Array<[string, string, string[]]> = [['Mine', 'Mine', store.mineNames()]];
+  for (const [label, names] of exampleGroups) sections.push(['Sketches', `Sketches · ${label}`, names]);
+  sections.push(['Forms', 'Forms', formNames]);
+  for (const [label, names] of catalogueGroups) sections.push(['Parts', `Parts · ${label}`, names]);
+  for (const [kind, label, names] of sections) {
     if (!names.length) continue;
     const group = document.createElement('optgroup');
     group.label = label;
     for (const n of names) {
       const opt = document.createElement('option');
-      opt.value = `${label}:${n}`;
+      opt.value = `${kind}:${n}`;
       opt.textContent = n;
       group.append(opt);
     }

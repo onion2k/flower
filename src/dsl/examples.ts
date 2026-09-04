@@ -1037,3 +1037,21 @@ form battleaxe {
 };
 
 export const exampleNames = Object.keys(examples);
+
+/**
+ * The sketches by what they are, for the subject picker. Order within a
+ * group is the order they're worth meeting in; anything left out of every
+ * group is still shown, under "Other", rather than lost.
+ */
+export const exampleGroups: Array<[string, string[]]> = [
+  ['Jewellery', ['ring', 'tension', 'cluster', 'necklace', 'earrings', 'studs', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
+  ['Flowers', ['rose', 'tulip', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'allium', 'narcissus', 'digitalis', 'bouquet']],
+  ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
+  ['Weapons', ['dagger', 'battleaxe']],
+  ['Structures', ['frame', 'tower', 'armillary']],
+];
+{
+  const placed = new Set(exampleGroups.flatMap(([, names]) => names));
+  const other = exampleNames.filter((n) => !placed.has(n));
+  if (other.length) exampleGroups.push(['Other', other]);
+}

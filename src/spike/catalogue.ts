@@ -214,3 +214,22 @@ function stone(cut: GemCut, species: string): () => Part {
 }
 
 export const catalogueNames = Object.keys(catalogue);
+
+/** The parts by kind, for the subject picker; anything ungrouped shows under "Other". */
+export const catalogueGroups: Array<[string, string[]]> = [
+  ['Leaves & petals', catalogueNames.filter((n) => /^(leaf|petal)\b/.test(n))],
+  ['Stems & wires', ['tendril', 'whiplash', 'stem + spiral', 'stem', 'branch']],
+  ['Buds, pods & bells', catalogueNames.filter((n) => /^(bud|pod|bell|egg)\b/.test(n))],
+  ['Stones & settings', catalogueNames.filter((n) => /^(gem|setting)\b/.test(n))],
+  ['Jewellery findings', ['shank', 'clasp', 'jumpRing', 'leverBack', 'bead', 'bead · drilled', 'collar', 'rivet', 'ring']],
+  ['Structural', ['strut · square', 'bar', 'disc · bolted', 'polygon · hex', 'gusset', 'band']],
+  ['Weapons', ['sword', 'axe', 'shield']],
+  ['Display', ['ringStand', 'earringStand', 'easel', 'bust']],
+];
+{
+  const placed = new Set(catalogueGroups.flatMap(([, names]) => names));
+  const other = catalogueNames.filter((n) => !placed.has(n));
+  if (other.length) catalogueGroups.push(['Other', other]);
+  // only what actually exists, in case a name above drifts from the catalogue
+  for (const g of catalogueGroups) g[1] = g[1].filter((n) => n in catalogue);
+}
