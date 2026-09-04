@@ -337,7 +337,8 @@ export function palmateVeins(
   const { reach = 0.62, width = 0.16 } = opts;
   const holes: Vec2[][] = [];
   for (let i = 0; i < lobes; i++) {
-    const theta = (i / (lobes - 1) - 0.5) * spread;
+    // a single lobe has no spread to distribute across — its one vein runs straight out
+    const theta = lobes > 1 ? (i / (lobes - 1) - 0.5) * spread : 0;
     const inner = length * 0.24;
     const outer = length * reach;
     const slot = outer - inner;

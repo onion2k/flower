@@ -50,20 +50,23 @@ describe('outline edge cases: degenerate counts', () => {
   });
 });
 
-describe('outline edge cases: palmateVeins divides by zero at a single lobe', () => {
+describe('outline edge cases: palmateVeins at a single lobe', () => {
   it('palmateOutline(1, ...) itself stays finite — the silhouette has no lobes-1 division', () => {
     const loop = palmateOutline(1, 30, 2.5);
     for (const [x, y] of loop) { expect(Number.isFinite(x)).toBe(true); expect(Number.isFinite(y)).toBe(true); }
   });
 
-  it('palmateVeins(1, ...) produces NaN holes — a genuine bug, not intended behaviour', () => {
-    // theta = (i / (lobes - 1) - 0.5) * spread; at lobes=1, i=0, that is 0/0.
-    // leaf({ lobes: 1, veins: 1 }) or piercings: 1 would reach this in the DSL.
-    // Documented here rather than silently "passing" so a fix removes this
-    // test's reason to exist instead of a regression discovering it blind.
+  it('palmateVeins(1, ...) places its one vein straight out along the midline (theta = 0)', () => {
+    // a single lobe has no spread to distribute a vein's angle across, so
+    // theta is 0 rather than the lobes>1 formula's 0/0
     const holes = palmateVeins(1, 30, 2.5);
     expect(holes).toHaveLength(1);
-    expect(holes[0].some(([x]) => Number.isNaN(x))).toBe(true);
+    for (const [x, y] of holes[0]) {
+      expect(Number.isFinite(x)).toBe(true);
+      expect(Number.isFinite(y)).toBe(true);
+    }
+    const centreY = holes[0].reduce((s, [, y]) => s + y, 0) / holes[0].length;
+    expect(centreY).toBeCloseTo(0, 1);
   });
 
   it('palmateVeins(2, ...) — two lobes — does not divide by zero and stays finite', () => {
