@@ -175,16 +175,21 @@ function wearOf(mesh: PartMesh) {
   return w;
 }
 
-export type TableName = 'matte' | 'oak' | 'walnut' | 'slate' | 'linen';
-export const tableNames: TableName[] = ['matte', 'oak', 'walnut', 'slate', 'linen'];
+export type TableName = 'matte' | 'oak' | 'walnut' | 'slate' | 'linen' | 'velvet' | 'silk';
+export const tableNames: TableName[] = ['matte', 'oak', 'walnut', 'slate', 'linen', 'velvet', 'silk'];
 
-/** The ground shader's surfaces: which one, how glossy, and the size of its pattern in mm. */
-const TABLES: Record<TableName, { kind: number; roughness: number; scale: number }> = {
+/**
+ * The ground shader's surfaces: which one, how glossy, the size of its
+ * pattern in mm, and for a cloth how far it sags under the piece, in mm.
+ */
+const TABLES: Record<TableName, { kind: number; roughness: number; scale: number; sag?: number }> = {
   matte: { kind: 0, roughness: 0.9, scale: 1 },
   oak: { kind: 1, roughness: 0.35, scale: 60 },
   walnut: { kind: 2, roughness: 0.35, scale: 75 },
   slate: { kind: 3, roughness: 0.55, scale: 90 },
   linen: { kind: 4, roughness: 0.95, scale: 1.8 },
+  velvet: { kind: 5, roughness: 0.8, scale: 1.2, sag: 1.4 },
+  silk: { kind: 6, roughness: 0.3, scale: 0.4, sag: 0.7 },
 };
 
 export class Viewer {
@@ -573,7 +578,7 @@ export class Viewer {
 
   private writeTable() {
     const t = TABLES[this.table];
-    this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([t.kind, t.roughness, t.scale, 0]));
+    this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([t.kind, t.roughness, t.scale, t.sag ?? 0]));
   }
 
   /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */

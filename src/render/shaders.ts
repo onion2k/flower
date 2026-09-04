@@ -1034,14 +1034,23 @@ struct Ground {
   _pad: f32,
   albedo: vec3f,
   _pad2: f32,
-  table: f32,          // which surface: 0 matte, 1 oak, 2 walnut, 3 slate, 4 linen
+  table: f32,          // which surface: 0 matte, 1 oak, 2 walnut, 3 slate, 4 linen, 5 velvet, 6 silk
   roughness: f32,
   scale: f32,          // pattern size, mm per feature
-  _pad3: f32,
+  sag: f32,            // how far a cloth sinks under the piece, mm; 0 for anything hard
 };
 @group(1) @binding(0) var<uniform> ground: Ground;
 
-struct Surface { albedo: vec3f, roughness: f32, normal: vec3f };
+/**
+ * What the table is at a point. sheen is a cloth's fuzz colour: velvet
+ * throws light back at grazing angles in it, and 0 for anything that is not
+ * a cloth. aniso stretches the highlight along X, the way a satin weave
+ * does along its floats.
+ */
+struct Surface { albedo: vec3f, roughness: f32, normal: vec3f, sheen: vec3f, aniso: f32 };
+fn hard(albedo: vec3f, roughness: f32, normal: vec3f) -> Surface {
+  return Surface(albedo, roughness, normal, vec3f(0.0), 0.0);
+}
 
 // Boards laid along X, each a little different in tone and in where its
 // rings fall, with a dark seam between them. Rings as in the parts' own wood:
@@ -1075,7 +1084,7 @@ fn plankSurface(p: vec2f, base: vec3f, seamWidth: f32, contrast: f32) -> Surface
   // the seam is a shallow groove; latewood stands very slightly proud
   let dz = seam * 0.6 + late * 0.05;
   let n = normalize(vec3f(0.0, -dz * 4.0 * select(1.0, -1.0, inBoard > 0.5), 1.0));
-  return Surface(albedo, ground.roughness + late * 0.08, n);
+  return hard(albedo, ground.roughness + late * 0.08, n);
 }
 
 fn slateSurface(p: vec2f) -> Surface {
@@ -1087,7 +1096,7 @@ fn slateSurface(p: vec2f) -> Surface {
   let base = mix(vec3f(0.03, 0.034, 0.042), vec3f(0.085, 0.09, 0.1), mottle);
   let albedo = base * (0.94 + 0.12 * bed) * (0.9 + 0.2 * flake);
   let n = normalize(vec3f(0.0, (bed - 0.5) * 0.08, 1.0));
-  return Surface(albedo, ground.roughness + (0.5 - flake) * 0.2, n);
+  return hard(albedo, ground.roughness + (0.5 - flake) * 0.2, n);
 }
 
 fn linenSurface(p: vec2f) -> Surface {
@@ -1103,22 +1112,78 @@ fn linenSurface(p: vec2f) -> Surface {
   let slub = noise3(vec3f(p.x * 0.15, p.y * 0.15, 9.0));
   let base = vec3f(0.62, 0.56, 0.46) * mix(0.9, 1.1, slub);
   let albedo = base * mix(0.82, 1.0, thread);
-  return Surface(albedo, ground.roughness, vec3f(0.0, 0.0, 1.0));
+  return hard(albedo, ground.roughness, vec3f(0.0, 0.0, 1.0));
+}
+
+// Velvet: a dense pile, so the colour is deep and the light comes back off
+// the fibre tips at grazing angles — the sheen — where a crushed patch of
+// pile leaning the other way shows as a slow blotch of lighter and darker.
+fn velvetSurface(p: vec2f) -> Surface {
+  let s = ground.scale;
+  let crush = noise3(vec3f(p.x * 0.06, p.y * 0.06, 3.0)) * 0.7 + noise3(vec3f(p.x * 0.2, p.y * 0.2, 7.0)) * 0.3;
+  let fuzz = noise3(vec3f(p.x / s, p.y / s, 11.0));
+  // a pile swallows nearly everything that goes straight in
+  let base = vec3f(0.006, 0.008, 0.03) * mix(0.5, 1.5, crush) * mix(0.9, 1.1, fuzz);
+  // the pile leans a little where it is crushed, tilting the normal with it
+  let eps = 2.0;
+  let cx = noise3(vec3f((p.x + eps) * 0.06, p.y * 0.06, 3.0)) - noise3(vec3f((p.x - eps) * 0.06, p.y * 0.06, 3.0));
+  let cy = noise3(vec3f(p.x * 0.06, (p.y + eps) * 0.06, 3.0)) - noise3(vec3f(p.x * 0.06, (p.y - eps) * 0.06, 3.0));
+  let n = normalize(vec3f(-cx * 0.35, -cy * 0.35, 1.0));
+  let sheen = vec3f(0.08, 0.10, 0.24) * mix(0.5, 1.5, crush);
+  return Surface(base, ground.roughness, n, sheen, 0.0);
+}
+
+// Silk: a satin weave, the floats running along X so the highlight streaks
+// that way, on an ivory ground with the faint ribbing of the threads.
+fn silkSurface(p: vec2f) -> Surface {
+  let s = ground.scale;
+  let thread = 0.5 + 0.5 * cos(p.y / s * 6.2831853);
+  let foot = clamp(fwidth(p.y / s) * 2.0, 0.0, 1.0);
+  let rib = mix(thread, 0.5, foot);
+  let slub = noise3(vec3f(p.x * 0.05, p.y * 0.3, 5.0));
+  let albedo = vec3f(0.58, 0.52, 0.40) * mix(0.94, 1.02, rib) * mix(0.96, 1.04, slub);
+  let n = normalize(vec3f(0.0, (rib - 0.5) * 0.1 * (1.0 - foot), 1.0));
+  return Surface(albedo, ground.roughness, n, vec3f(0.5, 0.48, 0.42), 0.75);
 }
 
 fn tableSurface(p: vec2f) -> Surface {
   let t = ground.table;
   if (t < 0.5) {
     // a matte table in the page's colour, never darker than a dark cloth
-    return Surface(max(ground.background, ground.albedo), ground.roughness, vec3f(0.0, 0.0, 1.0));
+    return hard(max(ground.background, ground.albedo), ground.roughness, vec3f(0.0, 0.0, 1.0));
   } else if (t < 1.5) {
     return plankSurface(p, vec3f(0.42, 0.28, 0.15), 0.7, 0.4);
   } else if (t < 2.5) {
     return plankSurface(p, vec3f(0.16, 0.09, 0.055), 0.9, 0.5);
   } else if (t < 3.5) {
     return slateSurface(p);
+  } else if (t < 4.5) {
+    return linenSurface(p);
+  } else if (t < 5.5) {
+    return velvetSurface(p);
   }
-  return linenSurface(p);
+  return silkSurface(p);
+}
+
+/**
+ * Where a cloth sinks under the piece. The occlusion bake already knows how
+ * much of the sky each point of the table can see; where the piece sits on
+ * or near the cloth that is little, and the cloth gives there. The slope of
+ * that dip is what shows — the table is one flat disc, so the dip is a tilt
+ * of the normal rather than a real displacement.
+ */
+fn clothSag(uv: vec2f, sag: f32) -> vec3f {
+  let step = 1.6 / (2.0 * ground.radius);     // 1.6 mm, in the texture's own units
+  let px = pressAt(uv + vec2f(step, 0.0)) - pressAt(uv - vec2f(step, 0.0));
+  let py = pressAt(uv + vec2f(0.0, step)) - pressAt(uv - vec2f(0.0, step));
+  // the pressure rises toward the piece; the cloth's surface falls toward it
+  let slope = sag / 1.4;
+  return normalize(vec3f(-px * slope, -py * slope, 1.0));
+}
+fn pressAt(uv: vec2f) -> f32 {
+  let acc = textureSampleLevel(shadow, linearSampler, uv, 0.0).rg;
+  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
+  return smoothstep(0.35, 0.95, 1.0 - ao);
 }
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 
@@ -1141,7 +1206,16 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // so on a black page there is still a pool of light with a shadow in
   // it, and on a pale one the table is that colour with a shadow in it
   let surface = tableSurface(in.world.xy);
-  let n = surface.normal;
+  var n = surface.normal;
+  var dipShade = 1.0;
+  if (ground.sag > 0.0) {
+    // a cloth gives under the piece: its normal tilts into the dip, and the
+    // floor of the dip is a fold that shades itself
+    let uv = in.local * 0.5 + 0.5;
+    let dip = clothSag(uv, ground.sag);
+    n = normalize(vec3f(n.xy + dip.xy, n.z * dip.z));
+    dipShade = 1.0 - 0.4 * pressAt(uv);
+  }
   let v = normalize(frame.cameraPos - in.world);
   let ndv = max(dot(n, v), 1e-3);
   let spin = spinZ(frame.envSpin);
@@ -1150,15 +1224,36 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // key's its shadow map — the key doesn't darken where the sky can't reach
   let keyLit = keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
   let key = keyDiffuse(n) * frame.keyColour * keyLit;
-  let diffuse = surface.albedo * (irradiance * ao + key);
+  let diffuse = surface.albedo * (irradiance * ao + key) * dipShade;
   // the table's own sheen: a dielectric's low highlight, dulled by roughness
   // and by the piece standing over it, so a waxed board holds a soft
   // reflection of the sky and the key while a cloth holds none
   let rough = clamp(surface.roughness, 0.05, 1.0);
   let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, rough), 0.0).rg;
   let fresnel = vec3f(0.04) * ab.x + ab.y;
-  let reflected = env(spin * reflect(-v, n), rough * frame.maxLod) * mix(ao, 1.0, 0.3);
-  let specular = reflected * fresnel + keySpecular(n, v, vec3f(0.04), rough) * keyLit;
+  // a satin's highlight streaks along its floats: bend the reflection toward
+  // the weave the way a brushed metal's is bent toward the brush
+  var reflectN = n;
+  if (surface.aniso > 0.0) {
+    let weave = vec3f(1.0, 0.0, 0.0);
+    let anisoT = cross(weave, v);
+    reflectN = normalize(mix(n, cross(anisoT, weave), surface.aniso * (1.0 - rough * 0.4)));
+  }
+  let reflected = env(spin * reflect(-v, reflectN), rough * frame.maxLod) * mix(ao, 1.0, 0.3);
+  var specular = reflected * fresnel + keySpecular(reflectN, v, vec3f(0.04), rough) * keyLit;
+  // a cloth's sheen: light coming back off the fibre tips, most at grazing
+  // angles, in the fuzz's own colour — the velvet glow at the edge of a fold
+  if (any(surface.sheen > vec3f(0.0))) {
+    let rim = pow(1.0 - ndv, 4.0);
+    let ldir = normalize(frame.keyDir);
+    let h = normalize(ldir + v);
+    let sinH = sqrt(max(1.0 - dot(n, h) * dot(n, h), 0.0));
+    // Charlie's distribution: a broad lobe that peaks toward grazing
+    let charlie = (2.0 + 1.0 / 0.6) * pow(sinH, 1.0 / 0.6) / 6.2831853;
+    // and, like the sky's, it is a grazing effect: seen square-on the pile swallows it
+    let keySheen = charlie * max(dot(n, ldir), 0.0) * frame.keyColour * frame.keyStrength * 0.6 * keyLit * (0.12 + 0.88 * rim);
+    specular += surface.sheen * (irradiance * ao * (0.006 + 0.6 * rim * rim) + keySheen);
+  }
   // the piece's own lights pool on the table under it
   let local = localLights(n, v, in.world, vec3f(0.04), rough, surface.albedo);
   let lit = (diffuse * (1.0 - fresnel) + specular + local) * frame.exposure;

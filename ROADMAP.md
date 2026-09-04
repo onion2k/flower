@@ -210,6 +210,17 @@ now full (256 bytes).
   soft crease round a ring without a cloth solver. A real solver is not worth
   it for a still image.
 
+**Status, September 2026:** done, by a cheaper route than the one above.
+`velvet` and `silk` join the table picker. Velvet is a near-black navy pile
+with a Charlie sheen lobe for the key and a grazing-only sky sheen — the
+sky's irradiance is about six times unity in these scenes, so any constant
+sheen term lights the whole cloth. Silk is an ivory satin with the highlight
+bent along its floats and a faint thread ribbing. The deformation needed no
+new bake: the ground already carries the occlusion texture of the piece
+over it, and the cloth's normal is tilted by the gradient of that footprint
+with the floor of the dip self-shaded. It is a tilt, not a displacement, so
+the cloth never rises up the side of a part.
+
 ## Infrastructure the list implies, in order
 
 1. **Generic outline and `plate` builtin** in the DSL. Unblocks 1, and makes
@@ -222,7 +233,7 @@ now full (256 bytes).
    Unblocks font glyphs in 5. Done.
 5. **Emissive model**, then a local light array. Unblocks 6. Done.
 6. **Cloth table types**, then a displacement heightfield baked from the
-   piece. Unblocks 7.
+   piece. Unblocks 7. Done, with the existing occlusion bake as the field.
 
 ### The shared bottleneck
 

@@ -21,3 +21,10 @@ describe('light materials', () => {
     expect(sketch.assembly.placements[0].part.material).toEqual({ metal: 'pink neon', finish: undefined });
   });
 });
+
+describe('tables', () => {
+  it('offers velvet and silk beside the hard surfaces', async () => {
+    const { tableNames } = await import('../viewer');
+    expect(tableNames).toEqual(['matte', 'oak', 'walnut', 'slate', 'linen', 'velvet', 'silk']);
+  });
+});
