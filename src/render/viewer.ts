@@ -17,7 +17,7 @@ import { invert, transformDirection, transformPoint } from '../geom/transform';
 import { computeWear } from '../mesh/wear';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
-import { bakeOcclusion, type Occlusion } from './occlusion';
+import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap } from './post';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
 
@@ -26,7 +26,7 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 176;
-const FRAME_SIZE = 144;
+const FRAME_SIZE = 224;
 
 export type Quality = 'draft' | 'final';
 
@@ -180,6 +180,20 @@ export class Viewer {
   private discIndex: GPUBuffer;
   private discCount: number;
 
+  /** The key light's shadow map: its own depth-only view of the scene, redrawn whenever the scene or the key moves. */
+  private shadowMap: GPUTexture;
+  private shadowView: GPUTextureView;
+  /** Stands in for the shadow map in the shadow pass's own bind group: a pass may not read the texture it is drawing. */
+  private dummyShadowView: GPUTextureView;
+  private shadowSampler: GPUSampler;
+  private shadowPipeline: GPURenderPipeline;
+  /** The frame uniform as the key sees it: only viewProj differs. */
+  private shadowFrameBuffer: GPUBuffer;
+  private shadowFrameBind: GPUBindGroup | null = null;
+  private lightViewProj = new Float32Array(16);
+  private sceneCentre: Vec3 = [0, 0, 0];
+  private sceneRadius = 1;
+  private shadowDirty = true;
   private anchorPosition: GPUBuffer | null = null;
   private anchorColour: GPUBuffer | null = null;
   private anchorCount = 0;
@@ -221,6 +235,8 @@ export class Viewer {
         { binding: 2, visibility: both, texture: {} },
         { binding: 3, visibility: both, sampler: {} },
         { binding: 4, visibility: both, buffer: { type: 'read-only-storage' } },
+        { binding: 5, visibility: both, texture: { sampleType: 'depth' } },
+        { binding: 6, visibility: both, sampler: { type: 'comparison' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -259,6 +275,30 @@ export class Viewer {
       depthStencil: depth(true),
       multisample,
     });
+
+    // the key's shadow: the prepass vertex shader with the key's own
+    // viewProj, into a depth-only target; there is no fragment stage at all
+    const SHADOW_SIZE = 2048;
+    this.shadowMap = device.createTexture({
+      size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'key shadow',
+    });
+    this.shadowView = this.shadowMap.createView();
+    this.dummyShadowView = device.createTexture({
+      size: [1, 1], format: 'depth24plus', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT, label: 'no shadow',
+    }).createView();
+    this.shadowSampler = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
+    this.shadowPipeline = device.createRenderPipeline({
+      label: 'key shadow',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
+      vertex: {
+        module: prepass, entryPoint: 'vsMain',
+        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }, instanceLayout],
+      },
+      primitive: { topology: 'triangle-list', cullMode: 'none' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+    });
+    this.shadowFrameBuffer = device.createBuffer({ label: 'shadow frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     const pbr = shader(device, PBR_WGSL, 'pbr');
     this.pbrPipeline = device.createRenderPipeline({
@@ -377,6 +417,7 @@ export class Viewer {
     this.keyColour = w >= 0
       ? [1, 1 - 0.28 * w, 1 - 0.62 * w]
       : [1 + 0.45 * w, 1 + 0.2 * w, 1];
+    this.shadowDirty = true;
     this.dirty = true;
   }
 
@@ -427,6 +468,13 @@ export class Viewer {
   /** One draw per distinct part mesh, however many times it is placed. */
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
+    if (groups.length) {
+      const b = worldBounds(groups.map((g) => ({ mesh: g.mesh, matrices: g.matrices })));
+      this.sceneCentre = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      // the table under the piece is in the shadow's view too, so it reaches out to the occlusion bake's ground radius
+      this.sceneRadius = Math.max(1e-3, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2) * 1.9;
+    }
+    this.shadowDirty = true;
     for (const g of this.groups) {
       for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.instance, g.selected, g.index]) b.destroy();
     }
@@ -668,9 +716,39 @@ export class Viewer {
     frame[31] = this.keyStrength;
     frame.set(this.keyColour, 32);
     frame[35] = this.envStrength;
+    // the key's view: pulled back 2r along its own direction, 4r deep
+    const dir: [number, number, number] = [this.keyDir[0], this.keyDir[1], this.keyDir[2]];
+    orthoFromDirection(this.lightViewProj, dir, this.sceneCentre, this.sceneRadius);
+    frame.set(this.lightViewProj, 36);
+    const texel = (2 * this.sceneRadius) / 2048;
+    frame[52] = texel * 2.5;
+    frame[53] = 1.5 / 2048;
+    frame[54] = this.keyStrength > 0 && this.groups.length ? 1 : 0;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
+
+    if (this.shadowDirty && this.groups.length && this.shadowFrameBind) {
+      this.shadowDirty = false;
+      // the same frame, seen from the key: only the camera differs
+      const lf = new Float32Array(frame);
+      lf.set(this.lightViewProj, 0);
+      device.queue.writeBuffer(this.shadowFrameBuffer, 0, lf);
+      const shadowPass = encoder.beginRenderPass({
+        label: 'key shadow',
+        colorAttachments: [],
+        depthStencilAttachment: { view: this.shadowView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      });
+      shadowPass.setPipeline(this.shadowPipeline);
+      shadowPass.setBindGroup(0, this.shadowFrameBind);
+      for (const g of this.groups) {
+        shadowPass.setVertexBuffer(0, g.position);
+        shadowPass.setVertexBuffer(1, g.instance);
+        shadowPass.setIndexBuffer(g.index, 'uint32');
+        shadowPass.drawIndexed(g.indexCount, g.instanceCount);
+      }
+      shadowPass.end();
+    }
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
     pass.setBindGroup(0, this.frameBind);
 
@@ -763,17 +841,17 @@ export class Viewer {
   private rebuildFrameBind() {
     const env = this.environment;
     if (!env) return;
-    this.frameBind = this.ctx.device.createBindGroup({
-      label: 'frame',
-      layout: this.frameLayout,
-      entries: [
-        { binding: 0, resource: { buffer: this.frameBuffer } },
-        { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
-        { binding: 2, resource: env.brdf.createView() },
-        { binding: 3, resource: this.sampler },
-        { binding: 4, resource: { buffer: this.occlusion?.lookup ?? this.dummyLookup } },
-      ],
-    });
+    const entries = (buffer: GPUBuffer, shadow: GPUTextureView): GPUBindGroupEntry[] => [
+      { binding: 0, resource: { buffer } },
+      { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
+      { binding: 2, resource: env.brdf.createView() },
+      { binding: 3, resource: this.sampler },
+      { binding: 4, resource: { buffer: this.occlusion?.lookup ?? this.dummyLookup } },
+      { binding: 5, resource: shadow },
+      { binding: 6, resource: this.shadowSampler },
+    ];
+    this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
+    this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView) });
   }
 
   /** Per-group material and occlusion slice, 176 bytes at a 256-byte stride. */

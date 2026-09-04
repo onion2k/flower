@@ -23,12 +23,21 @@ struct Frame {
   keyColour: vec3f,
   // how much of the baked environment reaches the piece: 1 as baked, 0 dark
   envStrength: f32,
+  // the key's own view of the scene, for its shadow; and the offset a
+  // sample steps along the normal before the lookup, in world units
+  lightViewProj: mat4x4f,
+  shadowOffset: f32,
+  shadowBias: f32,
+  shadowOn: f32,
+  _shadowPad: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
 @group(0) @binding(2) var envBrdf: texture_2d<f32>;
 @group(0) @binding(3) var linearSampler: sampler;
 @group(0) @binding(4) var<storage, read> occlusion: array<u32>;
+@group(0) @binding(5) var keyShadow: texture_depth_2d;
+@group(0) @binding(6) var shadowSampler: sampler_comparison;
 `;
 
 const COMMON = `
@@ -63,6 +72,28 @@ fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
   let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
   let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
   return d * g * f / (4.0 * ndv) * frame.keyColour * frame.keyStrength * 3.0;
+}
+
+// how much of the key reaches a point: its shadow map, tapped in a small
+// disc so the edge is a penumbra rather than a staircase. The lookup steps
+// off the surface along the normal first, which is what keeps a lit face
+// from shadowing itself where the map's texels are coarser than the mesh.
+fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
+  if (frame.shadowOn < 0.5 || frame.keyStrength <= 0.0) { return 1.0; }
+  let p = world + n * frame.shadowOffset;
+  let clip = frame.lightViewProj * vec4f(p, 1.0);
+  let uv = vec2f(clip.x, -clip.y) * 0.5 + 0.5;
+  if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || clip.z > 1.0) { return 1.0; }
+  let depth = clip.z - frame.shadowBias;
+  let texel = 1.0 / vec2f(textureDimensions(keyShadow));
+  var lit = 0.0;
+  for (var i = 0; i < 8; i++) {
+    let a = f32(i) * 0.7853982 + 0.3;
+    let r = select(1.0, 2.0, (i & 1) == 1);
+    lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv + vec2f(cos(a), sin(a)) * texel * r, depth);
+  }
+  lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv, depth);
+  return lit / 9.0;
 }
 
 fn keyDiffuse(n: vec3f) -> f32 {
@@ -641,8 +672,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     }
   }
 
-  // the key light, over whatever the environment gave
-  colour += (keySpecular(n, v, keyF0, keyRough) + keyBody * keyDiffuse(n) * frame.keyColour) * frame.exposure;
+  // the key light, over whatever the environment gave, where its shadow lets it
+  let keyLit = keyShadowAt(in.world, n);
+  colour += (keySpecular(n, v, keyF0, keyRough) + keyBody * keyDiffuse(n) * frame.keyColour) * keyLit * frame.exposure;
 
   // Selection: what the cursor is on keeps its light and takes a warm cast;
   // everything else drops back so the chosen instances read at a glance.
@@ -701,7 +733,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // it, and on a pale one the table is that colour with a shadow in it
   let albedo = max(ground.background, ground.albedo);
   let irradiance = env(spinZ(frame.envSpin) * vec3f(0.0, 0.0, 1.0), frame.maxLod);
-  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour;
+  let key = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
   let lit = albedo * (irradiance + key) * ao * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);

@@ -456,7 +456,7 @@ function discMesh(centre: [number, number, number], radius: number, segments: nu
   return { positions, indices };
 }
 
-function worldBounds(groups: OcclusionGroup[]) {
+export function worldBounds(groups: Array<Pick<OcclusionGroup, 'mesh' | 'matrices'>>) {
   const min = [Infinity, Infinity, Infinity];
   const max = [-Infinity, -Infinity, -Infinity];
   for (const g of groups) {
@@ -580,7 +580,7 @@ function fibonacciDirection(i: number, n: number): [number, number, number] {
  * Orthographic view looking along -d at `centre`, camera pulled back 2r, with
  * depth mapped to [0, 1] over a range of 4r, as WebGPU clips it.
  */
-function orthoFromDirection(out: Float32Array, d: [number, number, number], centre: number[], radius: number) {
+export function orthoFromDirection(out: Float32Array, d: [number, number, number], centre: number[], radius: number) {
   const up = Math.abs(d[2]) < 0.9 ? [0, 0, 1] : [1, 0, 0];
   const rx = up[1] * d[2] - up[2] * d[1];
   const ry = up[2] * d[0] - up[0] * d[2];
