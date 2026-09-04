@@ -28,8 +28,10 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 240;
+const MATERIAL_SIZE = 256;
 const FRAME_SIZE = 224;
+const MAX_LIGHTS = 48;
+const LIGHTS_SIZE = 16 + MAX_LIGHTS * 32;
 
 export type Quality = 'draft' | 'final';
 
@@ -80,6 +82,55 @@ function faceOf(mesh: PartMesh): Float32Array {
     out[i * 2] = mesh.enamel?.[i] ?? 0;
     out[i * 2 + 1] = mesh.cap?.[i] ?? 0;
   }
+  return out;
+}
+
+/**
+ * Where to put a glowing part's lights: a few points down its longest axis,
+ * each the centre of the vertices in its slice, with that slice's share of
+ * the surface and a radius that fits the part's cross-section.
+ */
+interface EmitterSample { centre: [number, number, number]; radius: number; area: number }
+const emitterCache = new WeakMap<PartMesh, EmitterSample[]>();
+export function emitterSamples(mesh: PartMesh): EmitterSample[] {
+  let out = emitterCache.get(mesh);
+  if (out) return out;
+  const p = mesh.positions;
+  const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
+  for (let i = 0; i < p.length; i += 3) {
+    for (let k = 0; k < 3; k++) { min[k] = Math.min(min[k], p[i + k]); max[k] = Math.max(max[k], p[i + k]); }
+  }
+  const extent = [max[0] - min[0], max[1] - min[1], max[2] - min[2]];
+  const axis = extent.indexOf(Math.max(...extent));
+  const across = Math.max(...extent.filter((_, k) => k !== axis));
+  // a sample every 8 mm or so, up to six; a diode is one
+  const slices = Math.max(1, Math.min(6, Math.round(extent[axis] / 8)));
+  let area = 0;
+  const idx = mesh.indices;
+  for (let i = 0; i < idx.length; i += 3) {
+    const a = idx[i] * 3, b = idx[i + 1] * 3, c = idx[i + 2] * 3;
+    const e1 = [p[b] - p[a], p[b + 1] - p[a + 1], p[b + 2] - p[a + 2]];
+    const e2 = [p[c] - p[a], p[c + 1] - p[a + 1], p[c + 2] - p[a + 2]];
+    area += 0.5 * Math.hypot(e1[1] * e2[2] - e1[2] * e2[1], e1[2] * e2[0] - e1[0] * e2[2], e1[0] * e2[1] - e1[1] * e2[0]);
+  }
+  out = [];
+  for (let sIdx = 0; sIdx < slices; sIdx++) {
+    const lo = min[axis] + (extent[axis] * sIdx) / slices;
+    const hi = min[axis] + (extent[axis] * (sIdx + 1)) / slices;
+    const sum = [0, 0, 0]; let n = 0;
+    for (let i = 0; i < p.length; i += 3) {
+      const t = p[i + axis];
+      if (t < lo || (t > hi && sIdx < slices - 1)) continue;
+      sum[0] += p[i]; sum[1] += p[i + 1]; sum[2] += p[i + 2]; n++;
+    }
+    if (n === 0) continue;
+    out.push({
+      centre: [sum[0] / n, sum[1] / n, sum[2] / n],
+      radius: Math.max(across / 2, 0.2),
+      area: area / slices,
+    });
+  }
+  emitterCache.set(mesh, out);
   return out;
 }
 
@@ -181,6 +232,8 @@ export class Viewer {
   private groups: GpuGroup[] = [];
   private materialBuffer: GPUBuffer | null = null;
   private materialBind: GPUBindGroup | null = null;
+  /** The piece's own lights: the glowing parts, sampled as spheres. */
+  private lightsBuffer: GPUBuffer;
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
   private atlas: GlyphAtlas | null = null;
   private atlasTexture: GPUTexture | null = null;
@@ -293,6 +346,7 @@ export class Viewer {
         { binding: 4, visibility: both, buffer: { type: 'read-only-storage' } },
         { binding: 5, visibility: both, texture: { sampleType: 'depth' } },
         { binding: 6, visibility: both, sampler: { type: 'comparison' } },
+        { binding: 7, visibility: both, buffer: { type: 'uniform' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -418,6 +472,8 @@ export class Viewer {
     });
 
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.lightsBuffer = device.createBuffer({ label: 'lights', size: LIGHTS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(this.lightsBuffer, 0, new Uint32Array([0, 0, 0, 0]));
     this.dummyLookup = emptyBuffer(device, 8, GPUBufferUsage.STORAGE, 'no occlusion');
     this.groundBuffer = device.createBuffer({ label: 'ground', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
@@ -944,6 +1000,7 @@ export class Viewer {
       { binding: 4, resource: { buffer: this.occlusion?.lookup ?? this.dummyLookup } },
       { binding: 5, resource: shadow },
       { binding: 6, resource: this.shadowSampler },
+      { binding: 7, resource: { buffer: this.lightsBuffer } },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
     this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView) });
@@ -1004,7 +1061,7 @@ export class Viewer {
       const f = finishes[g.source.finish ?? ''] ?? this.finish;
       const o = (k * MATERIAL_STRIDE) / 4;
       f32.set([...m.f0, f.roughness, f.anisotropy, f.hammer, f.patina, 1, ...patinaColour(m.name), 0], o);
-      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : m.model === 'gem' ? 2 : m.model === 'plastic' ? 3 : m.model === 'wood' ? 4 : 0, 0], o + 12);
+      u32.set([bases[k], g.vertexCount, m.model === 'nacre' ? 1 : m.model === 'gem' ? 2 : m.model === 'plastic' ? 3 : m.model === 'wood' ? 4 : m.model === 'light' ? 5 : 0, 0], o + 12);
       f32.set([...(m.colour ?? [0, 0, 0]), m.orient ?? 0], o + 16);
       const e = enamels[g.source.enamel ?? ''];
       f32.set(e ? [...e.colour, e.opacity] : [0, 0, 0, 0], o + 20);
@@ -1032,8 +1089,48 @@ export class Viewer {
         f32[o + 54] = 1;
         f32.set([0, 0, 0, 0], o + 56);
       }
+      const glow = m.model === 'light' ? m.glow ?? 1 : 0;
+      const c = m.colour ?? [1, 1, 1];
+      f32.set(glow > 0 ? [c[0] * glow, c[1] * glow, c[2] * glow, 1] : [0, 0, 0, 0], o + 60);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
+    this.writeLights();
+  }
+
+  /**
+   * The piece's own lights. Every placement of a glowing part becomes a few
+   * spheres of light along its length, each carrying its share of the part's
+   * surface: a Lambertian emitter of radiance L and area A throws L·A/π
+   * toward whatever faces it.
+   */
+  private writeLights() {
+    const out = new Float32Array(LIGHTS_SIZE / 4);
+    const u32 = new Uint32Array(out.buffer);
+    let count = 0;
+    for (const g of this.groups) {
+      const m = metals[g.source.metal ?? ''] ?? this.metal;
+      if (m.model !== 'light' || count >= MAX_LIGHTS) continue;
+      const samples = emitterSamples(g.source.mesh);
+      const glow = m.glow ?? 1;
+      const c = m.colour ?? [1, 1, 1];
+      const matrices = g.source.matrices;
+      for (let k = 0; k < matrices.length / 16 && count < MAX_LIGHTS; k++) {
+        const mat = matrices.subarray(k * 16, k * 16 + 16);
+        const scale = Math.hypot(mat[0], mat[1], mat[2]);
+        for (const sm of samples) {
+          if (count >= MAX_LIGHTS) break;
+          const p = transformPoint(mat, sm.centre);
+          const o = 4 + count * 8;
+          out.set([p[0], p[1], p[2], sm.radius * scale], o);
+          const area = sm.area * scale * scale;
+          const intensity = (glow * area) / Math.PI;
+          out.set([c[0] * intensity, c[1] * intensity, c[2] * intensity, 0], o + 4);
+          count++;
+        }
+      }
+    }
+    u32[0] = count;
+    this.ctx.device.queue.writeBuffer(this.lightsBuffer, 0, out);
   }
 
   /**

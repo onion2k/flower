@@ -33,6 +33,19 @@ struct Frame {
   keySize: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
+
+// Local lights: the glowing parts of the piece, each sampled as a few small
+// spheres of light. They cast no shadow — that is a project of its own — but
+// they fall off with distance and light the table, which is most of what a
+// neon on a bench does.
+struct Light {
+  position: vec3f,
+  radius: f32,     // of the sphere the light is taken to be, world units
+  intensity: vec3f, // radiant intensity: irradiance at unit distance, facing it
+  _pad: f32,
+};
+struct Lights { count: u32, _p0: u32, _p1: u32, _p2: u32, items: array<Light, 48> };
+@group(0) @binding(7) var<uniform> lights: Lights;
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
 @group(0) @binding(2) var envBrdf: texture_2d<f32>;
 @group(0) @binding(3) var linearSampler: sampler;
@@ -155,6 +168,56 @@ fn keyDiffuse(n: vec3f) -> f32 {
   return ndl * frame.keyStrength * 3.0 / 3.14159265;
 }
 
+/**
+ * What the local lights add at a point: a diffuse body lit by each, and a
+ * highlight from each as a small sphere of light (the key's own
+ * representative-point construction, at the sphere's apparent size).
+ * Returns radiance before exposure.
+ */
+fn localLights(n: vec3f, v: vec3f, p: vec3f, f0: vec3f, roughness: f32, body: vec3f) -> vec3f {
+  var sum = vec3f(0.0);
+  let count = min(lights.count, 48u);
+  for (var i = 0u; i < count; i++) {
+    let light = lights.items[i];
+    let toLight = light.position - p;
+    let dist2 = dot(toLight, toLight);
+    let dist = sqrt(dist2);
+    let l0 = toLight / max(dist, 1e-4);
+    let ndl0 = dot(n, l0);
+    // the sphere's apparent radius, and a horizon widened by it
+    let size = atan(light.radius / max(dist, light.radius * 1.01));
+    if (ndl0 <= -sin(size)) { continue; }
+    // inverse square, softened inside the sphere so nothing blows up on contact
+    let falloff = 1.0 / max(dist2, light.radius * light.radius);
+    let irradiance = light.intensity * falloff;
+    // diffuse: the sphere seen over the horizon lights a little past grazing
+    let w = sin(size);
+    let ndl = clamp((ndl0 + w) / (1.0 + w), 0.0, 1.0);
+    sum += body * irradiance * ndl / 3.14159265;
+    // specular, toward the point of the sphere nearest the reflection ray
+    let r = reflect(-v, n);
+    let centre = toLight - r * dot(toLight, r);
+    let closest = toLight - centre * clamp(light.radius / max(length(centre), 1e-4), 0.0, 1.0);
+    let l = normalize(closest);
+    let sndl = max(dot(n, l), 0.0);
+    let h = normalize(l + v);
+    let ndh = max(dot(n, h), 0.0);
+    let ndv = max(dot(n, v), 1e-3);
+    let vdh = max(dot(v, h), 0.0);
+    let a = max(roughness * roughness, 0.002);
+    let aw = clamp(a + 0.5 * tan(size), a, 1.0);
+    let norm = (a / aw) * (a / aw);
+    let a2 = aw * aw;
+    let dd = ndh * ndh * (a2 - 1.0) + 1.0;
+    let d = a2 / (3.14159265 * dd * dd);
+    let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
+    let g = (sndl / (sndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
+    let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
+    sum += d * g * f * norm / (4.0 * ndv) * irradiance * sndl;
+  }
+  return sum;
+}
+
 fn hash13(p0: vec3f) -> f32 {
   var p = fract(p0 * 0.1031);
   p += dot(p, p.zyx + 31.32);
@@ -188,7 +251,7 @@ struct Material {
   _pad: f32,
   occlusionBase: u32,
   vertexCount: u32,
-  model: u32,          // 0 metal, 1 nacre, 2 gem, 3 plastic, 4 wood
+  model: u32,          // 0 metal, 1 nacre, 2 gem, 3 plastic, 4 wood, 5 light
   _pad2: u32,
   baseColour: vec3f,
   orient: f32,
@@ -220,6 +283,7 @@ struct Material {
   letterSpread: f32,   // how far the atlas field reaches either side of an edge, in mm
   _pad5: u32,
   letter: vec4f,       // depth mm, angle, centre x, centre y
+  emission: vec4f,     // radiance of a light, rgb; w is 1 for a light
 };
 @group(1) @binding(0) var<uniform> material: Material;
 
@@ -715,7 +779,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   let plastic = material.model == 3u;
   // wood is grain drawn through a dielectric; nothing about it is worked metal
   let wood = material.model == 4u;
-  let worked = !nacre && !gemstone && !plastic && !wood;
+  // a light is a glass skin over its own glow; nothing about it is metal
+  let light = material.model == 5u;
+  let worked = !nacre && !gemstone && !plastic && !wood && !light;
 
   // --- planishing: perturb the normal by the gradient of a height field ---
   if (material.hammer > 0.0 && worked) {
@@ -843,6 +909,16 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     let flash = gemSparkle(n, r, lit, material.gemSparkle);
     colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
     keyF0 = vec3f(g0);
+  } else if (light) {
+    // the source itself: its radiance straight out through a glass skin that
+    // still reflects the room, brightest where the tube is seen edge-on —
+    // the gas glows through more of itself there, and a diode's dome the same
+    let fresnel = f0 * ab.x + ab.y;
+    let limb = mix(1.0, 1.3, pow(1.0 - ndv, 2.0));
+    colour = (material.emission.rgb * limb * (1.0 - fresnel) + reflected * fresnel) * frame.exposure;
+    keyBody = vec3f(0.0);
+    keyF0 = vec3f(0.04);
+    keyRough = max(roughness, 0.08);
   } else if (plastic || wood) {
     // an ordinary dielectric: a low, fixed highlight over a diffuse body in
     // the finish's own colour — no patina, hammer or enamel, only ever metal
@@ -922,6 +998,8 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
   // the key light, over whatever the environment gave, where its shadow lets it
   let keyLit = keyShadowAt(in.world, n);
   colour += (keySpecular(n, v, keyF0, keyRough) + keyBody * keyDiffuse(n) * frame.keyColour) * keyLit * frame.exposure;
+  // and the piece's own lights, on everything but the lights themselves
+  if (!light) { colour += localLights(n, v, in.world, keyF0, keyRough, keyBody) * frame.exposure; }
 
   // Selection: what the cursor is on keeps its light and takes a warm cast;
   // everything else drops back so the chosen instances read at a glance.
@@ -1081,7 +1159,9 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   let fresnel = vec3f(0.04) * ab.x + ab.y;
   let reflected = env(spin * reflect(-v, n), rough * frame.maxLod) * mix(ao, 1.0, 0.3);
   let specular = reflected * fresnel + keySpecular(n, v, vec3f(0.04), rough) * keyLit;
-  let lit = (diffuse * (1.0 - fresnel) + specular) * frame.exposure;
+  // the piece's own lights pool on the table under it
+  let local = localLights(n, v, in.world, vec3f(0.04), rough, surface.albedo);
+  let lit = (diffuse * (1.0 - fresnel) + specular + local) * frame.exposure;
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }

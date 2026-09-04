@@ -178,6 +178,17 @@ a diode. The work is in lighting.
 
 The light array is a new uniform buffer; the frame struct grows.
 
+**Status, September 2026:** the first two steps are done. Thirteen light
+materials — eight neons and five diodes, e.g. `in pink neon`, `in amber
+diode` — shade as a glass skin over their own radiance (`model: 'light'`,
+`glow` in sky units), bloom, and become unshadowed sphere lights: every
+placement of a glowing part is sampled as up to six spheres down its longest
+axis, each carrying its share of the surface area as radiant intensity, into
+a 48-light uniform buffer at frame binding 7. Both the piece and the table
+take diffuse and a representative-point GGX highlight from them. The
+shadowed local light remains its own project. See the `neon` example. The
+material record is now full (256 bytes).
+
 ### 7. Silk and velvet, with deformation
 
 **Cost: moderate for the shading, high for the deformation. Leave last.**
@@ -206,7 +217,7 @@ The light array is a new uniform buffer; the frame struct grows.
    flat surface coordinate on every part type. Unblocks 3 and 5. Done.
 4. **Texture binding in the material bind group** plus an SDF atlas builder.
    Unblocks font glyphs in 5. Done.
-5. **Emissive model**, then a local light array. Unblocks 6.
+5. **Emissive model**, then a local light array. Unblocks 6. Done.
 6. **Cloth table types**, then a displacement heightfield baked from the
    piece. Unblocks 7.
 
@@ -216,8 +227,8 @@ Items 3, 5, 6, and 7 all add uniforms to `Material` or `Frame`. WGSL struct
 layout and the matching TypeScript packing are hand-maintained, and every
 addition has cost a relayout. Items 3 and 5 used 64 of the 80 spare
 bytes at the end of the record (pattern selector and params, glyph range,
-letter params); 16 remain before the 256-byte stride is full, exactly one
-`vec4f` for emission. After that the stride has to grow.
+letter params); item 6 took the last 16 for emission. The record is full:
+the next field means growing `MATERIAL_STRIDE` past 256.
 
 ### DSL grammar changes
 

@@ -13,8 +13,8 @@ export interface Metal {
   f0: [number, number, number];
   /** True where the value comes from measured data rather than judgement. */
   measured: boolean;
-  /** Shading model: metal by default; nacre for pearls, gem for cut stones, plastic for display props. */
-  model?: 'nacre' | 'gem' | 'plastic' | 'wood';
+  /** Shading model: metal by default; nacre for pearls, gem for cut stones, plastic for display props, light for things that glow. */
+  model?: 'nacre' | 'gem' | 'plastic' | 'wood' | 'light';
   /** Body colour, for materials that have one. Linear RGB. */
   colour?: [number, number, number];
   /** Strength of the iridescent sheen, for nacre. */
@@ -25,6 +25,12 @@ export interface Metal {
   dispersion?: number;
   /** How readily it throws a flash as it turns. */
   sparkle?: number;
+  /**
+   * Radiance of a light, in the units the baked sky is measured in: 1 is as
+   * bright as a clear sky, a neon tube several times that, a diode far more
+   * over far less surface. Sets both how hard it blooms and how much it lights.
+   */
+  glow?: number;
 }
 
 export const metals: Record<string, Metal> = {
@@ -82,6 +88,30 @@ export const metals: Record<string, Metal> = {
   ash: { name: 'ash', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.58, 0.45, 0.27], orient: 0.32 },
 };
 
+// Lights. A glass tube full of excited gas, or a diode under its dome: a
+// dielectric skin over a body that is itself the light source. `colour` is
+// the light's own colour; `glow` how bright it is. Neon in the trade sense —
+// any coloured gas tube — and the colours are the tube colours one can buy.
+const neon = (name: string, colour: [number, number, number]): Metal =>
+  ({ name, f0: [0.04, 0.04, 0.04], measured: false, model: 'light', colour, glow: 2.6 });
+const diode = (name: string, colour: [number, number, number]): Metal =>
+  ({ name, f0: [0.04, 0.04, 0.04], measured: false, model: 'light', colour, glow: 14 });
+Object.assign(metals, {
+  'red neon': neon('red neon', [1.0, 0.10, 0.04]),
+  'pink neon': neon('pink neon', [1.0, 0.25, 0.55]),
+  'amber neon': neon('amber neon', [1.0, 0.55, 0.10]),
+  'green neon': neon('green neon', [0.15, 1.0, 0.30]),
+  'cyan neon': neon('cyan neon', [0.10, 0.85, 1.0]),
+  'blue neon': neon('blue neon', [0.15, 0.30, 1.0]),
+  'violet neon': neon('violet neon', [0.55, 0.20, 1.0]),
+  'white neon': neon('white neon', [0.95, 0.95, 1.0]),
+  'red diode': diode('red diode', [1.0, 0.08, 0.03]),
+  'amber diode': diode('amber diode', [1.0, 0.5, 0.08]),
+  'green diode': diode('green diode', [0.1, 1.0, 0.25]),
+  'blue diode': diode('blue diode', [0.12, 0.3, 1.0]),
+  'white diode': diode('white diode', [0.95, 0.96, 1.0]),
+});
+
 export interface Finish {
   name: string;
   roughness: number;
@@ -118,6 +148,7 @@ export const finishes: Record<string, Finish> = {
 export const metalNames = Object.keys(metals).filter((n) => !metals[n].model);
 export const pearlNames = Object.keys(metals).filter((n) => metals[n].model === 'nacre');
 export const gemNames = Object.keys(metals).filter((n) => metals[n].model === 'gem');
+export const lightNames = Object.keys(metals).filter((n) => metals[n].model === 'light');
 export const plasticNames = Object.keys(metals).filter((n) => metals[n].model === 'plastic');
 export const woodNames = Object.keys(metals).filter((n) => metals[n].model === 'wood');
 export const finishNames = Object.keys(finishes);
