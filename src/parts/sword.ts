@@ -1,10 +1,10 @@
-import type { Vec2 } from '../geom/types';
+import type { Vec2, Vec3 } from '../geom/types';
 import { line } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { blade as bladePart } from './wire';
 import { revolve } from '../mesh/revolve';
 import { sweep } from '../mesh/sweep';
-import { mergeMeshes } from '../mesh/types';
+import { enamelWhole, mergeMeshes, type Mesh } from '../mesh/types';
 import { meshBounds, type Anchor, type Part } from './types';
 
 export interface SwordSpec {
@@ -16,37 +16,61 @@ export interface SwordSpec {
   bladeThickness?: number;
   /** How much of the blade's length stays near full width before it tapers to the point, 0 to 1. */
   bladeTaper?: number;
+  /** Raised marks down the blade's centre, near the guard — a fantasy piece's own sigils. 0 for none. */
+  runeCount?: number;
+  /** Length of each mark along the blade. */
+  runeSize?: number;
   /** Grip length, pommel to guard. */
   gripLength?: number;
   gripRadius?: number;
+  /**
+   * Turns of a leather binding wound round the grip, 0 for a bare grip.
+   * Width and texture are the cord's own gauge and pitch — `wrapRadius` for
+   * how thick the leather reads, `wrapTurns` for how tightly it winds; there
+   * are no images anywhere in this renderer, so "texture" is geometry.
+   */
+  wrapTurns?: number;
+  wrapRadius?: number;
   /** Crossguard length, tip to tip. */
   guardWidth?: number;
   guardThickness?: number;
   pommelRadius?: number;
+  /**
+   * The leather binding's colour, by the same enamel names every other
+   * coloured part uses. Only the binding takes it — the rest of the sword
+   * is whatever metal the sketch or the part itself is placed `in`.
+   */
+  enamel?: string;
   segments?: number;
 }
 
 /**
- * A straight sword: pommel, grip, crossguard and blade, stacked bottom to
- * top along Z the way every other standing part in this catalogue is —
- * unlike `easel`, nothing here is built from a flat `extrude()` outline, so
- * it needs no `roll`/`pitch` at `place` to stand up correctly.
+ * A straight sword: pommel, grip (with an optional leather binding),
+ * crossguard and blade, stacked bottom to top along Z the way every other
+ * standing part in this catalogue is — unlike `easel`, nothing here is
+ * built from a flat `extrude()` outline, so it needs no `roll`/`pitch` at
+ * `place` to stand up correctly.
  *
  * The blade itself is `wire`'s own `blade()` — a lens section swept along a
  * straight run — rather than a shape reinvented here, with a `swell` tuned
  * to hold its width most of the way rather than curving down from the base
- * the way a leaf does. Dagger proportions are this with a short `bladeLength`
- * and `gripLength`; nothing else about the part is sword-specific.
+ * the way a leaf does. The same function draws the crossguard's finials and
+ * the blade's own rune marks: everything on this part that isn't a plain
+ * revolved knob is a swept lens, just at a different scale. Dagger
+ * proportions are this with a short `bladeLength` and `gripLength`; nothing
+ * else about the part is sword-specific.
  */
 export function sword(spec: SwordSpec): Part {
   const bladeWidth = spec.bladeWidth ?? spec.bladeLength * 0.09;
-  const bladeThickness = spec.bladeThickness ?? bladeWidth * 0.22;
+  const bladeThickness = spec.bladeThickness ?? bladeWidth * 0.13;
   const bladeTaper = Math.min(Math.max(spec.bladeTaper ?? 0.7, 0.05), 0.95);
   const gripLength = spec.gripLength ?? spec.bladeLength * 0.16;
   const gripRadius = spec.gripRadius ?? bladeWidth * 0.42;
   const guardWidth = spec.guardWidth ?? bladeWidth * 3.2;
   const guardThickness = spec.guardThickness ?? gripRadius * 0.9;
-  const pommelRadius = spec.pommelRadius ?? gripRadius * 1.5;
+  // a fist-sized knob reads as ornament; a sword's own pommel is barely
+  // wider than the grip it caps, just enough to stop a hand sliding off
+  const pommelRadius = spec.pommelRadius ?? gripRadius * 1.1;
   const segments = spec.segments ?? 24;
   const sides = Math.max(8, Math.round(segments / 2));
 
@@ -70,14 +94,63 @@ export function sword(spec: SwordSpec): Part {
     caps: true,
   });
 
-  // guard: a straight bar crossing the grip, its own length along X — the
-  // same axis the blade's own width runs along, so it reads as one flat
-  // plane through blade and guard together, the way a real crossguard sits
-  const guard = sweep([[-guardWidth / 2, 0, guardZ], [guardWidth / 2, 0, guardZ]], {
+  const pieces: Mesh[] = [pommel, grip];
+
+  // the leather: a helix round the grip's own surface, standing a little
+  // proud of it — a cord, not a decal, since nothing here is painted on
+  const wrapTurns = spec.wrapTurns ?? 7;
+  if (wrapTurns > 0) {
+    const wrapRadius = spec.wrapRadius ?? gripRadius * 0.24;
+    const wrapReach = gripRadius + wrapRadius * 0.55;
+    const wrapRows = Math.max(24, Math.round(wrapTurns * 14));
+    const wrapPath: Vec3[] = [];
+    for (let i = 0; i <= wrapRows; i++) {
+      const t = i / wrapRows;
+      const a = t * wrapTurns * Math.PI * 2;
+      wrapPath.push([Math.cos(a) * wrapReach, Math.sin(a) * wrapReach, gripBase + t * gripLength]);
+    }
+    const wrap = sweep(wrapPath, { profile: profile.circle(wrapRadius, 8), caps: true });
+    if (spec.enamel) enamelWhole(wrap);
+    pieces.push(wrap);
+  }
+
+  // guard: curves toward the blade at both ends and tapers thinner there,
+  // with a small finial at each tip — a plain straight bar reads as a
+  // placeholder, not as forged steel
+  const guardSpan = guardWidth / 2;
+  const guardRise = guardThickness * 2.2;
+  const guardRows = 16;
+  const guardPath: Vec3[] = [];
+  for (let i = 0; i <= guardRows; i++) {
+    const s = (i / guardRows) * 2 - 1;
+    guardPath.push([s * guardSpan, 0, guardZ + guardRise * s * s]);
+  }
+  const guard = sweep(guardPath, {
     profile: profile.ribbon(guardThickness, gripRadius * 1.3, 4),
+    taper: (t) => 1 - 0.35 * Math.pow(Math.abs(t * 2 - 1), 1.4),
     caps: true,
     up: [0, 0, 1],
   });
+  pieces.push(guard);
+
+  const finialRadius = guardThickness * 0.95;
+  const finialPts: Vec2[] = [];
+  const finialRows = 10;
+  for (let i = 0; i <= finialRows; i++) {
+    const a = (i / finialRows) * Math.PI;
+    finialPts.push([finialRadius * Math.sin(a), -finialRadius * Math.cos(a)]);
+  }
+  for (const side of [-1, 1]) {
+    const finial = revolve({ points: finialPts }, { segments: 16 });
+    // revolve always centres on the local origin; a plain sphere has no
+    // pole direction to get wrong, so a position-only offset is safe here
+    // in a way it would not be for a shape a rotation could still be needed
+    for (let i = 0; i < finial.positions.length; i += 3) {
+      finial.positions[i] += side * guardSpan;
+      finial.positions[i + 2] += guardZ + guardRise;
+    }
+    pieces.push(finial);
+  }
 
   // blade: held near full width for `bladeTaper` of its own length, then
   // eased down to a point — a straight taper reads as ground steel, the
@@ -102,11 +175,40 @@ export function sword(spec: SwordSpec): Part {
     // frame undefined rather than merely unrotated
     up: [1, 0, 0],
   }).mesh;
+  pieces.push(bladeMesh);
 
-  const mesh = mergeMeshes([pommel, grip, guard, bladeMesh]);
+  // runes: short raised dashes down the blade's own centreline, standing
+  // proud of the front face — plain metal, not enamelled, so they read as
+  // struck or engraved rather than painted
+  const runeCount = spec.runeCount ?? 0;
+  if (runeCount > 0) {
+    const runeSize = spec.runeSize ?? bladeWidth * 0.4;
+    const runeWidth = runeSize * 0.32;
+    const runeThickness = runeSize * 0.22;
+    const runeSwell = (t: number) => 0.06 + 0.94 * Math.pow(Math.sin(Math.PI * t), 0.8);
+    const runeY = bladeThickness * 0.3;
+    const spacing = runeSize * 1.7;
+    const clearOf = guardZ + spec.bladeLength * bladeTaper;
+    for (let i = 0; i < runeCount; i++) {
+      const z = guardZ + spacing * (i + 1);
+      if (z + runeSize > clearOf) break;
+      const rune = bladePart({
+        path: line([0, runeY, z], [0, runeY, z + runeSize]),
+        width: runeWidth,
+        thickness: runeThickness,
+        swell: runeSwell,
+        sections: 8,
+        sides: 8,
+        up: [1, 0, 0],
+      }).mesh;
+      pieces.push(rune);
+    }
+  }
+
+  const mesh = mergeMeshes(pieces);
   const anchors: Anchor[] = [
     { name: 'base', position: [0, 0, 0], axis: [0, 0, -1], tangent: [1, 0, 0] },
     { name: 'tip', position: [0, 0, guardZ + spec.bladeLength], axis: [0, 0, 1], tangent: [1, 0, 0] },
   ];
-  return { name: spec.name ?? 'sword', mesh, bounds: meshBounds(mesh), anchors };
+  return { name: spec.name ?? 'sword', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }

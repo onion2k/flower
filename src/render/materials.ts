@@ -160,6 +160,9 @@ export const enamels: Record<string, Enamel> = {
   ivory: { name: 'ivory', colour: [0.84, 0.76, 0.58], opacity: 0.98 },
   white: { name: 'white', colour: [0.88, 0.88, 0.86], opacity: 0.98 },
   black: { name: 'black', colour: [0.012, 0.012, 0.014], opacity: 1 },
+  // leather, chiefly — dark and mid brown, opaque like the other skins above
+  umber: { name: 'umber', colour: [0.22, 0.12, 0.07], opacity: 0.97 },
+  tan: { name: 'tan', colour: [0.52, 0.34, 0.19], opacity: 0.96 },
 };
 
 export const enamelNames = Object.keys(enamels);

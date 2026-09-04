@@ -660,8 +660,9 @@ const PARTS = {
 
   sword: define(
     [
-      'bladeLength', 'bladeWidth', 'bladeThickness', 'bladeTaper', 'gripLength', 'gripRadius',
-      'guardWidth', 'guardThickness', 'pommelRadius', 'segments',
+      'bladeLength', 'bladeWidth', 'bladeThickness', 'bladeTaper', 'runeCount', 'runeSize',
+      'gripLength', 'gripRadius', 'wrapTurns', 'wrapRadius', 'guardWidth', 'guardThickness',
+      'pommelRadius', 'enamel', 'segments',
     ],
     (a) =>
       sword({
@@ -669,11 +670,18 @@ const PARTS = {
         bladeWidth: a.num('bladeWidth', -1, NaN) || undefined,
         bladeThickness: a.num('bladeThickness', -1, NaN) || undefined,
         bladeTaper: a.num('bladeTaper', -1, NaN) || undefined,
+        // fixed defaults, not derived from another field, so 0 (rune-free,
+        // wrap-free) reads straight through instead of being coalesced away
+        runeCount: a.num('runeCount', -1, 0),
+        runeSize: a.num('runeSize', -1, NaN) || undefined,
         gripLength: a.num('gripLength', -1, NaN) || undefined,
         gripRadius: a.num('gripRadius', -1, NaN) || undefined,
+        wrapTurns: a.num('wrapTurns', -1, 7),
+        wrapRadius: a.num('wrapRadius', -1, NaN) || undefined,
         guardWidth: a.num('guardWidth', -1, NaN) || undefined,
         guardThickness: a.num('guardThickness', -1, NaN) || undefined,
         pommelRadius: a.num('pommelRadius', -1, NaN) || undefined,
+        enamel: enamelName(a),
         segments: a.count('segments', -1, 24),
       }),
   ),

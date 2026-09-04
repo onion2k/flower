@@ -957,9 +957,13 @@ form teasel {
 # rather than into the table: fasten's default alignment carries a
 # cabochon's table the same way its own crown already points, so the flip
 # that turns the whole dagger over turns the jewel over with it, for free.
+# The grip's own leather is enamel on a helix wound round it, not a second
+# metal — only the wrap carries the colour, so the rest stays whatever the
+# sword itself is placed in. runeCount adds a fantasy piece's own sigils,
+# struck rather than painted, so they read as metal even under enamel.
 material gold polished
 
-part blade = sword(bladeLength: 22, gripLength: 9, guardWidth: 9, bladeTaper: 0.5) in silver polished
+part blade = sword(bladeLength: 22, gripLength: 9, guardWidth: 9, bladeTaper: 0.5, enamel: umber, runeCount: 2) in silver polished
 part stone = gem(cut: cabochon, width: 5) in ruby
 
 form dagger {
