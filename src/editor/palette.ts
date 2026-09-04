@@ -23,9 +23,9 @@ interface PartEntry {
 export const PARTS: PartEntry[] = [
   { name: 'leaf', call: 'leaf(length: 30, width: 14, thickness: 1, piercings: 2, boss: 2)' },
   { name: 'petal', call: 'petal(length: 20, width: 12, thickness: 0.8, cup: 40deg, curl: 25deg)' },
-  { name: 'wire', call: 'wire(path: spiral(start: 1.2, turns: 1.4, growth: 3), radius: 1.2, tip: 0.15)' },
+  { name: 'wire', call: 'wire(path: spiral(start: 1.2, turns: 1.4, growth: 3), radius: 1.2, tip: 0.15, enamel: cobalt)', enamel: 'cobalt' },
   { name: 'blade', call: 'blade(path: through((0, -10, 0), (2, -2, 1), (0, 6, 4), (-2, 12, 9)), width: 5, thickness: 0.8, enamel: emerald)', enamel: 'emerald' },
-  { name: 'stem', call: 'stem(path: through((0, -18, 0), (2, -6, 0), (-2, 6, 0), (3, 16, 0)), radius: 1.5, nodes: 3)' },
+  { name: 'stem', call: 'stem(path: through((0, -18, 0), (2, -6, 0), (-2, 6, 0), (3, 16, 0)), radius: 1.5, nodes: 3, enamel: ruby)', enamel: 'ruby' },
   { name: 'branch', call: 'branch(path: through((0, -18, 0), (1, 0, 0), (0, 18, 0)), radius: 1.4, limbs: 3)' },
   { name: 'gem', call: 'gem(cut: brilliant, width: 8)', material: 'diamond' },
   { name: 'setting', call: 'setting(width: 8, style: claw, claws: 6)' },
