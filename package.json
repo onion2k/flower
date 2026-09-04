@@ -25,6 +25,7 @@
   },
   "devDependencies": {
     "@webgpu/types": "^0.1.72",
+    "jsdom": "^27.0.1",
     "tsx": "^4.23.13",
     "typescript": "^5.7.2",
     "vite": "^6.0.7",
