@@ -14,6 +14,7 @@ import type { Mesh } from './mesh/types';
 import { Viewer, type Quality } from './render/viewer';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
+import { sketchNames } from './editor/help';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
@@ -253,16 +254,39 @@ let partSpans = new Map<Part, Span>();
  * repeat, the repeat lights everything it copied, a part declaration lights
  * every placement of that part. With the cursor elsewhere nothing is dimmed.
  */
-function selectFromSource(pos: number) {
-  if (!shown.length) return;
+/**
+ * Which placements the statement at `pos` had a hand in.
+ *
+ * The innermost statement wins: a unit's span encloses the lines inside it,
+ * so matching any enclosing origin would light the whole unit from a cursor
+ * on one line of it. Only the smallest span round the cursor counts, and a
+ * placement matches when that span is one of its origins or its part's.
+ */
+function matcherAt(pos: number): (p: Placement) => boolean {
   const within = (s: { start: number; end: number }) => pos >= s.start && pos <= s.end;
+  let best: { start: number; end: number } | null = null;
+  const consider = (s: { start: number; end: number }) => {
+    if (within(s) && (!best || s.end - s.start < best.end - best.start)) best = s;
+  };
+  for (const g of shown) for (const p of g.placements) p.origins.forEach(consider);
+  for (const s of partSpans.values()) consider(s);
+  if (!best) return () => false;
+  const b: { start: number; end: number } = best;
+  const same = (s: { start: number; end: number }) => s.start === b.start && s.end === b.end;
+  return (p) => {
+    const span = partSpans.get(p.part);
+    return (span !== undefined && same(span)) || p.origins.some(same);
+  };
+}
+
+function selectFromSource(pos: number) {
+  if (labelled.length) layoutLabels();
+  if (!shown.length) return;
+  const matches = matcherAt(pos);
   let any = false;
   const flags = shown.map((g) => {
     const f = new Float32Array(g.placements.length) as Float32Array<ArrayBuffer>;
-    g.placements.forEach((p, i) => {
-      const span = partSpans.get(p.part);
-      if ((span && within(span)) || p.origins.some(within)) { f[i] = 1; any = true; }
-    });
+    g.placements.forEach((p, i) => { if (matches(p)) { f[i] = 1; any = true; } });
     return f;
   });
   viewer.setSelection(any ? flags : null);
@@ -288,6 +312,64 @@ function selectFromSource(pos: number) {
   });
 }
 
+/**
+ * Anchor names, laid over the canvas as text. Fastening is written by anchor
+ * name, and the lines the viewer draws say where an anchor is but not what
+ * it is called. With a selection only its anchors are named; without one
+ * every anchor is, or when there are too many to read, one placement's per part.
+ */
+interface Labelled { placement: Placement; anchor: Anchor }
+let labelled: Labelled[] = [];
+const labelLayer = document.createElement('div');
+labelLayer.id = 'labels';
+stage.append(labelLayer);
+const labelPool: HTMLElement[] = [];
+const LABEL_LIMIT = 48;
+
+function layoutLabels() {
+  const matches = matcherAt(editor.view.state.selection.main.head);
+  const chosen = labelled.filter(({ placement }) => matches(placement));
+  let show = chosen.length ? chosen : labelled;
+  if (show.length > LABEL_LIMIT) {
+    // too many to read: name each anchor once, on the first placement of its part
+    const seen = new Set<Part>();
+    show = show.filter(({ placement: p }) => {
+      if (seen.has(p.part)) return false;
+      seen.add(p.part);
+      return true;
+    });
+    // the filter kept one placement per part; now let its anchors through
+    const firsts = new Set(show.map((l) => l.placement));
+    show = (chosen.length ? chosen : labelled).filter((l) => firsts.has(l.placement));
+  }
+  while (labelPool.length < show.length) {
+    const el = document.createElement('div');
+    el.className = 'label';
+    el.addEventListener('mousedown', (e) => {
+      e.preventDefault();
+      const text = el.dataset.ref!;
+      const v = editor.view;
+      const at = v.state.selection.main.head;
+      v.dispatch({ changes: { from: at, insert: text }, selection: { anchor: at + text.length } });
+      v.focus();
+    });
+    labelLayer.append(el);
+    labelPool.push(el);
+  }
+  labelPool.forEach((el, i) => {
+    const item = show[i];
+    if (!item) { el.hidden = true; return; }
+    const { placement, anchor } = item;
+    const p = viewer.project(anchor.position);
+    if (!p) { el.hidden = true; return; }
+    el.hidden = false;
+    const ref = `${placement.part.name}.${anchor.name}`;
+    if (el.dataset.ref !== ref) { el.textContent = ref; el.dataset.ref = ref; }
+    el.style.transform = `translate(${p[0].toFixed(0)}px, ${p[1].toFixed(0)}px)`;
+  });
+}
+viewer.onFrame = () => { if (labelled.length) layoutLabels(); };
+
 function build() {
   const [kind] = select.value.split(':');
   editorPane.classList.toggle('open', kind === 'Sketches');
@@ -309,6 +391,8 @@ function build() {
     diagnosticEl.classList.remove('bad');
     assembly = result.sketch!.assembly;
     partSpans = result.sketch!.partSpans;
+    sketchNames.parts = new Map([...partSpans.keys()].map((p) => [p.name, p.anchors.map((a) => a.name)]));
+    sketchNames.units = [...editor.get().matchAll(/^\s*unit\s+([a-zA-Z_]\w*)/gm)].map((m) => m[1]);
     // a sketch declares its own material, so follow it in the panel too
     if (result.sketch!.metal) state.metal = result.sketch!.metal;
     if (result.sketch!.finish) state.finish = result.sketch!.finish;
@@ -339,6 +423,10 @@ function build() {
     ? assembly.placements.flatMap((p) => p.anchors)
     : [];
   viewer.setAnchors(anchors, span * 0.02);
+  labelled = state.showAnchors && kind === 'Sketches'
+    ? assembly.placements.flatMap((p) => p.anchors.map((a) => ({ placement: p, anchor: a })))
+    : [];
+  layoutLabels();
 
   if (framed !== select.value) {
     viewer.frameBounds(bounds);

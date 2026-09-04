@@ -151,6 +151,18 @@ export class Viewer {
   private frameData = new Float32Array(FRAME_SIZE / 4);
   /** Ask for a frame on the next tick. */
   requestRender() { this.dirty = true; }
+  /** Called after every drawn frame, with the camera settled: for overlays laid over the canvas. */
+  onFrame: (() => void) | null = null;
+
+  /** A world point in CSS pixels over the canvas, or null when it is behind the camera. */
+  project(p: Vec3): [number, number] | null {
+    const m = this.camera.viewProjection;
+    const w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+    if (w <= 0) return null;
+    const x = (m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12]) / w;
+    const y = (m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13]) / w;
+    return [((x + 1) / 2) * this.host.clientWidth, ((1 - y) / 2) * this.host.clientHeight];
+  }
   private renderScale = 1;
 
   private occlusion: Occlusion | null = null;
@@ -662,6 +674,7 @@ export class Viewer {
       bloom: this.bloom, raw: this.debugMode > 0,
     });
     device.queue.submit([encoder.finish()]);
+    this.onFrame?.();
   };
 
   /**

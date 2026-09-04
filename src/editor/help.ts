@@ -216,9 +216,62 @@ const panel = showPanel.of((view) => {
   };
 });
 
+/**
+ * What the current sketch declares, kept up to date by the page after each
+ * successful compile, so a fasten line can offer the anchors a part really has.
+ */
+export const sketchNames = {
+  /** part name to the names of its anchors */
+  parts: new Map<string, string[]>(),
+  units: [] as string[],
+};
+
+/** `place x as y` and `fasten x ... as y` give a placement a second name. */
+function aliasOf(state: EditorState, alias: string): string | undefined {
+  const m = state.doc.toString().match(new RegExp(`\\b(?:place|fasten)\\s+([a-zA-Z_]\\w*)[^\\n]*\\bas\\s+${alias}\\b`));
+  return m?.[1];
+}
+
+/** Completions for the words of a place, fasten or repeat line. */
+function completeStatement(context: CompletionContext, word: { from: number; to: number }) {
+  const line = context.state.doc.lineAt(word.from);
+  const before = context.state.sliceDoc(line.from, word.from);
+  const parts = [...sketchNames.parts.keys()];
+  const anchorTarget = before.match(/\bto\s+([a-zA-Z_]\w*)\.$/);
+  if (anchorTarget) {
+    const name = anchorTarget[1];
+    const anchors = sketchNames.parts.get(name) ?? sketchNames.parts.get(aliasOf(context.state, name) ?? '');
+    if (!anchors?.length) return null;
+    return { from: word.from, options: anchors.map((a) => ({ label: a, type: 'property' })) };
+  }
+  // these spots take exactly one kind of word, so the list opens on the space before it
+  let options: Completion[] | null = null;
+  if (/\bfasten\s+$/.test(before)) {
+    options = parts.map((p) => ({ label: p, type: 'variable', detail: 'part' }));
+  } else if (/\bfasten\s+\S+\s+to\s+$/.test(before)) {
+    // what has been placed so far in this block is what can be fastened to
+    const placed = new Set<string>();
+    for (let i = line.number - 1; i >= 1; i--) {
+      const t = context.state.doc.line(i).text;
+      if (/^\s*(unit|form)\b/.test(t)) break;
+      const m = t.match(/^\s*(?:place|fasten)\s+([a-zA-Z_]\w*)(?:[^\n]*\bas\s+([a-zA-Z_]\w*))?/);
+      if (m) placed.add(m[2] ?? m[1]);
+    }
+    options = [...placed].map((p) => ({ label: p, type: 'variable', apply: `${p}.` }));
+  } else if (/\b(place|repeat)\s+$/.test(before)) {
+    options = [
+      ...parts.map((p) => ({ label: p, type: 'variable', detail: 'part' })),
+      ...sketchNames.units.map((u) => ({ label: u, type: 'class', detail: 'unit' })),
+    ];
+  }
+  return options?.length ? { from: word.from, options, validFor: /^[a-zA-Z_]\w*$/ } : null;
+}
+
 function complete(context: CompletionContext) {
   const word = context.matchBefore(/[a-zA-Z_][a-zA-Z0-9_]*|/);
   if (!word) return null;
+  const statement = completeStatement(context, word);
+  if (statement) return statement;
   if (word.from === word.to && !context.explicit) return null;
   const call = callAt(context.state, word.from);
   let options: Completion[];

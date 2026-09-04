@@ -45,6 +45,11 @@
       #diagnostic.bad { color: #e07a5f; }
       /* absolute so the canvas cannot push the grid cell it is measured against */
       #stage canvas { display: block; position: absolute; top: 0; left: 0; }
+      #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
+      #labels .label { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
+        font-size: 10px; line-height: 1; padding: 2px 4px; margin: -18px 0 0 6px; border-radius: 2px;
+        color: #f2d27a; background: rgba(11, 12, 14, 0.72); white-space: nowrap; }
+      #labels .label:hover { color: var(--bg); background: var(--accent); }
       #panel { grid-column: 2; grid-row: 1 / span 2; border-left: 1px solid var(--line);
         background: var(--panel); padding: 16px; overflow-y: auto; }
       h1 { font-size: 12px; letter-spacing: .12em; text-transform: uppercase;
