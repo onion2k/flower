@@ -461,6 +461,32 @@ form brooch {
 }
 `,
 
+  trefoil: `# A pendant drawn by mathematics. The paths here are exact figures —
+# knot(p, q) winds round a torus, lissajous(a, b) is what a harmonograph
+# draws, superellipse(n) is the deco frame shape — and a wire follows any of
+# them; closed: yes joins the ends. rhodonea (the rose curve) and sine are
+# paths too. along() spaces parts down a path by arc length.
+material gold polished
+
+part frame = wire(path: superellipse(rx: 26, ry: 20, n: 2.5), radius: 1.3, closed: yes, sections: 200)
+part knot  = wire(path: knot(radius: 11, tube: 4.5, p: 2, q: 3), radius: 1.4, closed: yes, sections: 320)
+part trace = wire(path: lissajous(width: 21, height: 15, a: 3, b: 2), radius: 0.45, closed: yes, sections: 400) in platinum polished
+part seed  = pearl(radius: 1) in white pearl
+part bail  = jumpRing(radius: 2.4, wireRadius: 0.7)
+
+unit dot {
+  place seed at (0, 0, -3.5)
+}
+
+form pendant {
+  place frame
+  place trace at (0, 0, -3.5)
+  repeat dot around along(lissajous(width: 21, height: 15, a: 3, b: 2), 36, from: 0, to: 0.972)
+  place knot
+  place bail at (0, 22.2, 0) pitch 90deg
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 

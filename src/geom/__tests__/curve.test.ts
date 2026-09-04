@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   arc, bezier3, bow, catmullRom, curveLength, ellipse, helix, line, logSpiral,
-  pathTangent, resample, samplePath,
+  lissajous, pathTangent, resample, rose, samplePath, sine, superellipse, torusKnot,
 } from '../curve';
 import { len } from '../vec';
 import { expectVec } from './helpers';
@@ -223,5 +223,115 @@ describe('curveLength', () => {
     const c = helix(5, 0, 0.25);
     const direct = Math.hypot(c.at(1)[0] - c.at(0)[0], c.at(1)[1] - c.at(0)[1]);
     expect(curveLength(c)).toBeGreaterThan(direct);
+  });
+});
+
+describe('lissajous', () => {
+  it('closes on itself for whole-number frequencies', () => {
+    const c = lissajous(10, 6, 3, 2);
+    expect(c.at(0)[0]).toBeCloseTo(c.at(1)[0]);
+    expect(c.at(0)[1]).toBeCloseTo(c.at(1)[1]);
+  });
+
+  it('is a circle when the frequencies match and the phase is a quarter turn', () => {
+    const c = lissajous(5, 5, 1, 1);
+    for (let t = 0; t <= 1; t += 0.1) {
+      const p = c.at(t);
+      expect(Math.hypot(p[0], p[1])).toBeCloseTo(5);
+    }
+  });
+
+  it('spans its width and height', () => {
+    const c = lissajous(10, 6, 1, 2);
+    const pts = samplePath(c, 400);
+    expect(Math.max(...pts.map((p) => p[0]))).toBeCloseTo(10, 2);
+    expect(Math.min(...pts.map((p) => p[1]))).toBeCloseTo(-6, 2);
+  });
+
+  it('rises through its height when asked', () => {
+    const c = lissajous(10, 6, 1, 2, Math.PI / 2, 8);
+    expect(c.at(1)[2] - c.at(0)[2]).toBeCloseTo(8);
+  });
+});
+
+describe('rose', () => {
+  it('reaches the radius at the tip of every petal and the origin between them', () => {
+    const c = rose(10, 5);
+    const radii = samplePath(c, 1000).map((p) => Math.hypot(p[0], p[1]));
+    expect(Math.max(...radii)).toBeCloseTo(10, 2);
+    expect(Math.min(...radii)).toBeCloseTo(0, 2);
+  });
+
+  it('an odd rose closes after a half turn, an even one after a full turn', () => {
+    for (const k of [3, 4]) {
+      const c = rose(10, k);
+      expect(c.at(0)[0]).toBeCloseTo(c.at(1)[0]);
+      expect(c.at(0)[1]).toBeCloseTo(c.at(1)[1]);
+    }
+  });
+
+  it('an even rose has twice as many petals as its k', () => {
+    // count how often the radius rises through half the full radius
+    const radii = samplePath(rose(10, 4), 4000).map((p) => Math.hypot(p[0], p[1]));
+    let crossings = 0;
+    for (let i = 1; i < radii.length; i++) if (radii[i - 1] < 5 && radii[i] >= 5) crossings++;
+    expect(crossings).toBe(8);
+  });
+});
+
+describe('sine', () => {
+  it('runs along +X, centred, and waves across Y', () => {
+    const c = sine(40, 3, 2);
+    expect(c.at(0)).toEqual([-20, expect.closeTo(0, 9), expect.closeTo(0, 9)]);
+    expect(c.at(1)[0]).toBeCloseTo(20);
+    expect(c.at(0.125)[1]).toBeCloseTo(3);
+    expect(c.at(0.375)[1]).toBeCloseTo(-3);
+  });
+});
+
+describe('torusKnot', () => {
+  it('stays on the torus and closes', () => {
+    const c = torusKnot(10, 3, 2, 3);
+    for (let t = 0; t <= 1; t += 0.05) {
+      const p = c.at(t);
+      const ring = Math.hypot(p[0], p[1]) - 10;
+      expect(Math.hypot(ring, p[2])).toBeCloseTo(3);
+    }
+    expectVec(c.at(1), c.at(0));
+  });
+
+  it('passes through the hole q times', () => {
+    const zs = samplePath(torusKnot(10, 3, 2, 3), 2000).map((p) => p[2]);
+    let crossings = 0;
+    // downward crossings, since the curve starts exactly on the plane
+    for (let i = 1; i < zs.length; i++) if (zs[i - 1] > 0 && zs[i] <= 0) crossings++;
+    expect(crossings).toBe(3);
+  });
+});
+
+describe('superellipse', () => {
+  it('is an ellipse at n = 2', () => {
+    const c = superellipse(10, 6, 2);
+    for (let t = 0; t <= 1; t += 0.05) {
+      const p = c.at(t);
+      expect((p[0] / 10) ** 2 + (p[1] / 6) ** 2).toBeCloseTo(1);
+    }
+  });
+
+  it('satisfies its own equation at any exponent and fills more of its box as n rises', () => {
+    const area = (n: number) => {
+      const pts = samplePath(superellipse(10, 6, n), 720);
+      let a = 0;
+      for (let i = 0; i < pts.length - 1; i++) a += pts[i][0] * pts[i + 1][1] - pts[i + 1][0] * pts[i][1];
+      return Math.abs(a / 2);
+    };
+    const c = superellipse(10, 6, 4);
+    for (let t = 0; t <= 1; t += 0.05) {
+      const p = c.at(t);
+      expect(Math.abs(p[0] / 10) ** 4 + Math.abs(p[1] / 6) ** 4).toBeCloseTo(1);
+    }
+    expect(area(2.5)).toBeGreaterThan(area(2));
+    expect(area(6)).toBeGreaterThan(area(2.5));
+    expect(area(6)).toBeLessThan(240);
   });
 });

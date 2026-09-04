@@ -70,6 +70,11 @@ for now.
   and lists of numbers but no nested list or matrix literal. That grammar
   addition is the one real cost here.
 
+**Status, September 2026:** the curves are in — `lissajous`, `rhodonea` (the
+rose curve; `rose` is a gem cut and so a bare word), `sine`, `knot` (torus
+knot) and `superellipse` — see the `trefoil` example. The parametric surface
+generator and the control-net literal are not done.
+
 ### 3. Engraved patterns
 
 **Cost: moderate, all in the shader. The template exists.**
@@ -173,7 +178,7 @@ The light array is a new uniform buffer; the frame struct grows.
 1. **Generic outline and `plate` builtin** in the DSL. Unblocks 1, and makes
    every later geometric part data instead of code. Done.
 2. **Parametric surface generator** beside extrude, sweep, and revolve.
-   Unblocks 2, helps 4.
+   Unblocks 2, helps 4. Curves done; surfaces not.
 3. **Generalised engraving field** in the shader, keyed by an enum, with a
    flat surface coordinate on every part type. Unblocks 3 and 5.
 4. **Texture binding in the material bind group** plus an SDF atlas builder.

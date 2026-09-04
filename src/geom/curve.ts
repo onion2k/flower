@@ -167,3 +167,84 @@ export function curveLength(curve: Curve, samples = 512): number {
   }
   return total;
 }
+
+/*
+ * Mathematical curves.
+ *
+ * These are the figures a plotter or a harmonograph draws: closed, exact, and
+ * unlike anything grown. Each is a Curve like the rest, so a wire follows it,
+ * a blade twists along it, and `along` scatters parts down it. All lie in the
+ * XY plane unless given a height, which lifts them into a third harmonic.
+ */
+
+/**
+ * Lissajous figure: x and y oscillate at frequencies `a` and `b`, offset by
+ * `phase`. Whole-number frequencies close the figure; a phase of a quarter
+ * turn with a = b is a circle, and with a = 1, b = 2 a figure of eight.
+ */
+export const lissajous = (
+  width: number, height: number, a: number, b: number, phase = Math.PI / 2, rise = 0,
+): Curve => ({
+  at: (t) => {
+    const s = t * Math.PI * 2;
+    return [Math.sin(a * s + phase) * width, Math.sin(b * s) * height, (t - 0.5) * rise];
+  },
+});
+
+/**
+ * Rose curve, r = cos(k theta). With `petals` odd the figure has that many
+ * petals over a half turn; even, twice as many over a full turn. Sampled
+ * over a full turn either way, so an odd rose traces itself twice — which
+ * `resample` handles, since it spaces by arc length.
+ */
+export const rose = (radius: number, petals: number, rise = 0): Curve => {
+  const k = petals;
+  // an odd rose closes at pi, an even one at 2pi; a fractional one is left
+  // to run a full turn and stay open
+  const closesAt = Number.isInteger(k) ? (k % 2 === 1 ? Math.PI : Math.PI * 2) : Math.PI * 2;
+  return {
+    at: (t) => {
+      const a = t * closesAt;
+      const r = Math.cos(k * a) * radius;
+      return [Math.cos(a) * r, Math.sin(a) * r, (t - 0.5) * rise];
+    },
+  };
+};
+
+/** A sine wave along +X: `length` long, `waves` cycles of `amplitude`, rising `rise`. */
+export const sine = (length: number, amplitude: number, waves: number, rise = 0): Curve => ({
+  at: (t) => [
+    (t - 0.5) * length,
+    Math.sin(t * waves * Math.PI * 2) * amplitude,
+    (t - 0.5) * rise,
+  ],
+});
+
+/**
+ * Torus knot (p, q): winds `p` times round the torus's axis while passing
+ * `q` times through its hole. (2, 3) is the trefoil. `radius` is the torus's
+ * major radius and `tube` how far the curve strays from that ring.
+ */
+export const torusKnot = (radius: number, tube: number, p: number, q: number): Curve => ({
+  at: (t) => {
+    const a = t * Math.PI * 2;
+    const r = radius + tube * Math.cos(q * a);
+    return [Math.cos(p * a) * r, Math.sin(p * a) * r, tube * Math.sin(q * a)];
+  },
+});
+
+/**
+ * Superellipse, |x/rx|^n + |y/ry|^n = 1. n = 2 is an ellipse; higher rounds a
+ * rectangle's corners ever more tightly, and Piet Hein's 2.5 is the shape a
+ * deco frame is cut to. Below 2 it pinches toward a star.
+ */
+export const superellipse = (rx: number, ry: number, n = 2.5, z = 0): Curve => {
+  const e = 2 / n;
+  const sgnPow = (v: number) => Math.sign(v) * Math.pow(Math.abs(v), e);
+  return {
+    at: (t) => {
+      const a = t * Math.PI * 2;
+      return [sgnPow(Math.cos(a)) * rx, sgnPow(Math.sin(a)) * ry, z];
+    },
+  };
+};

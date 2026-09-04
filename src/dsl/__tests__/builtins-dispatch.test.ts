@@ -6,7 +6,7 @@ import { transformDirection, transformPoint } from '../../geom/transform';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray, sphereShell,
 } from '../../pattern/symmetry';
-import { arc, ellipse, logSpiral } from '../../geom/curve';
+import { arc, ellipse, lissajous, logSpiral, rose, sine, superellipse, torusKnot } from '../../geom/curve';
 import { expectVec } from '../../geom/__tests__/helpers';
 
 /**
@@ -386,5 +386,33 @@ describe('outline builtins and plate', () => {
   it('an outline is not a part', () => {
     const e = buildErr('part p = fan(radius: 10)\nform f { place p }');
     expect(e.message).toMatch(/is not a part — it is an outline/);
+  });
+});
+
+describe('mathematical curve builtins', () => {
+  it('lissajous maps width/height/a/b positionally and phase/rise by name', () => {
+    const want = lissajous(10, 6, 3, 2, 0.4, 5);
+    const got = wireEndpoints('lissajous(10, 6, 3, 2, phase: 0.4, rise: 5)');
+    expectVec(got.base, want.at(0));
+    expectVec(got.tip, want.at(1));
+  });
+
+  it('rhodonea is the rose curve, and "rose" stays a gem cut', () => {
+    const want = rose(12, 3, 4);
+    const got = wireEndpoints('rhodonea(12, 3, rise: 4)');
+    expectVec(got.base, want.at(0));
+    expectVec(got.tip, want.at(1));
+    expect(() => build('part s = gem(cut: rose, width: 5) in diamond\nform f { place s }')).not.toThrow();
+  });
+
+  it('sine, knot and superellipse reach their geometry functions', () => {
+    expectVec(wireEndpoints('sine(40, 3, 2, rise: 6)').tip, sine(40, 3, 2, 6).at(1));
+    expectVec(wireEndpoints('knot(10, 3, 2, 3)').base, torusKnot(10, 3, 2, 3).at(0));
+    expectVec(wireEndpoints('superellipse(10, 6, 4, z: 2)').base, superellipse(10, 6, 4, 2).at(0));
+  });
+
+  it('a knot closes into a loop when the wire is told so', () => {
+    const sketch = build('part k = wire(path: knot(10, 3), radius: 1, closed: yes)\nform f { place k }');
+    expect(sketch.assembly.placements[0].part.mesh.indices.length).toBeGreaterThan(0);
   });
 });

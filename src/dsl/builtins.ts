@@ -1,4 +1,7 @@
-import { arc, bezier3, bow, catmullRom, ellipse, helix, logSpiral, type Curve } from '../geom/curve';
+import {
+  arc, bezier3, bow, catmullRom, ellipse, helix, lissajous, logSpiral, rose, sine, superellipse,
+  torusKnot, type Curve,
+} from '../geom/curve';
 import type { Vec2, Vec3 } from '../geom/types';
 import { leaf } from '../parts/leaf';
 import { enamels, enamelNames, metalNames } from '../render/materials';
@@ -195,7 +198,7 @@ export class Args {
     if (!arg) throw new DslError(`${this.callee} needs a path`, this.span);
     if (!isCurve(arg.value)) {
       throw new DslError(
-        `"${name}" must be a path — try spiral, arc, circle, ellipse, helix, bezier, through or bow`,
+        `"${name}" must be a path — try spiral, arc, circle, ellipse, helix, bezier, through, bow, lissajous, rhodonea, sine, knot or superellipse`,
         arg.span,
       );
     }
@@ -287,6 +290,25 @@ const CURVES = {
 
   bow: define(['a', 'b', 'sag'], (a) =>
     bow(a.vec('a', 0), a.vec('b', 1), a.num('sag', 2))),
+
+  lissajous: define(['width', 'height', 'a', 'b', 'phase', 'rise'], (a) =>
+    lissajous(
+      a.num('width', 0), a.num('height', 1), a.num('a', 2, 1), a.num('b', 3, 2),
+      a.num('phase', -1, Math.PI / 2), a.num('rise', -1, 0),
+    )),
+
+  // not "rose": that is a gem cut, and a bare word in a sketch
+  rhodonea: define(['radius', 'petals', 'rise'], (a) =>
+    rose(a.num('radius', 0), a.num('petals', 1, 5), a.num('rise', -1, 0))),
+
+  sine: define(['length', 'amplitude', 'waves', 'rise'], (a) =>
+    sine(a.num('length', 0), a.num('amplitude', 1), a.num('waves', 2, 3), a.num('rise', -1, 0))),
+
+  knot: define(['radius', 'tube', 'p', 'q'], (a) =>
+    torusKnot(a.num('radius', 0), a.num('tube', 1), a.num('p', 2, 2), a.num('q', 3, 3))),
+
+  superellipse: define(['rx', 'ry', 'n', 'z'], (a) =>
+    superellipse(a.num('rx', 0), a.num('ry', 1), a.num('n', 2, 2.5), a.num('z', -1, 0))),
 
   through: define(['points'], (a) => {
     const points = a.rest();
