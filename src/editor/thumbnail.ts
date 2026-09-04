@@ -8,7 +8,9 @@ import type { Mesh } from '../mesh/types';
  * of twenty parts must not cost twenty occlusion bakes, and a thumbnail has to
  * be legible at fifty pixels, where a faithful metal render is just a smear.
  */
-export function thumbnail(mesh: Mesh, size: number, tint: [number, number, number]): HTMLCanvasElement {
+export function thumbnail(
+  mesh: Mesh, size: number, tint: [number, number, number], enamel?: [number, number, number],
+): HTMLCanvasElement {
   const dpr = Math.min(window.devicePixelRatio || 1, 2);
   const canvas = document.createElement('canvas');
   canvas.width = canvas.height = Math.round(size * dpr);
@@ -65,7 +67,10 @@ export function thumbnail(mesh: Mesh, size: number, tint: [number, number, numbe
     if (nn[0] * f[0] + nn[1] * f[1] + nn[2] * f[2] > 0) nn = [-nn[0], -nn[1], -nn[2]];
     const lambert = Math.max(0, nn[0] * light[0] + nn[1] * light[1] + nn[2] * light[2]);
     const shade = 0.28 + 0.72 * lambert;
-    ctx.fillStyle = `rgb(${tint[0] * shade | 0},${tint[1] * shade | 0},${tint[2] * shade | 0})`;
+    // a triangle is glazed when its vertices are: the mask is per vertex
+    const glazed = enamel && mesh.enamel && mesh.enamel[a] + mesh.enamel[b] + mesh.enamel[c] >= 2;
+    const base = glazed ? enamel : tint;
+    ctx.fillStyle = `rgb(${base[0] * shade | 0},${base[1] * shade | 0},${base[2] * shade | 0})`;
     ctx.beginPath();
     ctx.moveTo(px(a), py(a));
     ctx.lineTo(px(b), py(b));

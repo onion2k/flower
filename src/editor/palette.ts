@@ -1,6 +1,7 @@
 import { EditorSelection } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
 import { compile } from '../dsl/index';
+import { enamels } from '../render/materials';
 import { thumbnail } from './thumbnail';
 
 /**
@@ -15,13 +16,15 @@ interface PartEntry {
   name: string;
   call: string;
   material?: string;
+  /** Named again here so the thumbnail can colour the glazed face. */
+  enamel?: string;
 }
 
 export const PARTS: PartEntry[] = [
   { name: 'leaf', call: 'leaf(length: 30, width: 14, thickness: 1, piercings: 2, boss: 2)' },
   { name: 'petal', call: 'petal(length: 20, width: 12, thickness: 0.8, cup: 40deg, curl: 25deg)' },
   { name: 'wire', call: 'wire(path: spiral(start: 1.2, turns: 1.4, growth: 3), radius: 1.2, tip: 0.15)' },
-  { name: 'blade', call: 'blade(path: bow(a: (-14, 0, 0), b: (14, 0, 0), sag: 6), width: 4, thickness: 0.8)' },
+  { name: 'blade', call: 'blade(path: through((0, -10, 0), (2, -2, 1), (0, 6, 4), (-2, 12, 9)), width: 5, thickness: 0.8, enamel: emerald)', enamel: 'emerald' },
   { name: 'stem', call: 'stem(path: through((0, -18, 0), (2, -6, 0), (-2, 6, 0), (3, 16, 0)), radius: 1.5, nodes: 3)' },
   { name: 'branch', call: 'branch(path: through((0, -18, 0), (1, 0, 0), (0, 18, 0)), radius: 1.4, limbs: 3)' },
   { name: 'gem', call: 'gem(cut: brilliant, width: 8)', material: 'diamond' },
@@ -31,7 +34,7 @@ export const PARTS: PartEntry[] = [
   { name: 'egg', call: 'egg(radius: 10, height: 14, taper: 0.34)' },
   { name: 'pod', call: 'pod(length: 16, width: 8, whorls: 5, ribs: 8)' },
   { name: 'bud', call: 'bud(length: 14, width: 8, lobes: 5)' },
-  { name: 'bell', call: 'bell(length: 12, mouth: 16, throat: 6)' },
+  { name: 'bell', call: 'bell(length: 12, mouth: 16, throat: 6, lobes: 5, enamel: cobalt)', enamel: 'cobalt' },
   { name: 'rivet', call: 'rivet(head: 3.5, height: 1.2, shank: 2, grip: 1)' },
   { name: 'collar', call: 'collar(inner: 3, wall: 1, length: 3)' },
   { name: 'band', call: 'band(radius: 20, width: 3, thickness: 0.9)' },
@@ -159,7 +162,12 @@ export function buildPalette(host: HTMLElement, view: EditorView) {
       const result = compile(`part x = ${entry.call}${entry.material ? ` in ${entry.material}` : ''}\nform f { place x }`);
       const placement = result.sketch?.assembly.placements[0];
       if (!placement) { pic.textContent = '?'; return; }
-      pic.append(thumbnail(placement.part.mesh, 48, TINTS[entry.material ?? ''] ?? [201, 162, 39]));
+      const glaze = entry.enamel ? enamels[entry.enamel] : undefined;
+      // enamel colours are linear; a rough gamma lift keeps them from reading black at thumbnail size
+      const glazeRgb = glaze
+        ? glaze.colour.map((c) => Math.round(Math.pow(Math.min(c * 1.6 + 0.08, 1), 1 / 2.2) * 255)) as [number, number, number]
+        : undefined;
+      pic.append(thumbnail(placement.part.mesh, 48, TINTS[entry.material ?? ''] ?? [201, 162, 39], glazeRgb));
     });
   }
   const rule = document.createElement('div');
