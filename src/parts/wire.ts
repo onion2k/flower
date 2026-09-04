@@ -2,7 +2,7 @@ import { resample, type Curve } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { meshBounds, type Anchor, type Part } from './types';
-import { enamelConcave } from '../mesh/types';
+import { enamelConcave, enamelWhole } from '../mesh/types';
 import { normalize, sub } from '../geom/vec';
 import type { Vec3 } from '../geom/types';
 
@@ -25,6 +25,11 @@ export interface WireSpec {
   sides?: number;
   closed?: boolean;
   up?: Vec3;
+  /**
+   * Enamel by colour name. A round wire is dipped whole; a flat or lens
+   * section has faces, and takes it on the concave one as a blade does.
+   */
+  enamel?: string;
 }
 
 /**
@@ -74,7 +79,13 @@ export function wire(spec: WireSpec): Part {
     });
   }
 
-  return { name: spec.name ?? 'wire', mesh, bounds: meshBounds(mesh), anchors };
+  if (spec.enamel) {
+    const faced = section === 'flat' || section === 'lens' || spec.flatten;
+    if (faced) enamelConcave(mesh, path);
+    else enamelWhole(mesh);
+  }
+
+  return { name: spec.name ?? 'wire', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }
 
 function sectionProfile(section: Section, radius: number, sides: number) {

@@ -341,8 +341,9 @@ const PARTS = {
       segments: a.num('segments', -1, 32),
     })),
 
-  wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides'], (a) =>
+  wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides', 'enamel'], (a) =>
     wire({
+      enamel: enamelName(a),
       path: a.curve('path', 0),
       radius: a.num('radius', 1),
       section: oneOf(a, 'section', SECTIONS, 'round') as Section,
@@ -463,8 +464,9 @@ const PARTS = {
       veinMetal: veinMetalName(a),
     })),
 
-  stem: define(['path', 'radius', 'tip', 'nodes', 'swell', 'from', 'to', 'sections', 'sides'], (a) =>
+  stem: define(['path', 'radius', 'tip', 'nodes', 'swell', 'from', 'to', 'sections', 'sides', 'enamel'], (a) =>
     stem({
+      enamel: enamelName(a),
       path: a.curve('path', 0),
       radius: a.num('radius', 1),
       tipScale: a.num('tip', -1, 0.35),

@@ -186,9 +186,12 @@ export function enamelConcave(mesh: Mesh, path: Vec3[]): Mesh {
     const d = nm[i * 3] * k[0] + nm[i * 3 + 1] * k[1] + nm[i * 3 + 2] * k[2];
     if (d > 0.35) out[i] = 1;
   }
+  // A broad face is half the section; anything less that faced the bend was
+  // an edge — a flat ribbon coiled in its own plane presents its inner edge to
+  // the centre — and enamel on an edge is not what anyone meant.
   let marked = 0;
   for (const v of out) marked += v;
-  if (marked < n * 0.1) {
+  if (marked < n * 0.4) {
     for (let i = 0; i < n; i++) out[i] = nm[i * 3 + 2] > 0.35 ? 1 : 0;
   }
   mesh.enamel = out;

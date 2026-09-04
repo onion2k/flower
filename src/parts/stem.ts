@@ -1,7 +1,7 @@
 import { catmullRom, pathTangent, resample, type Curve } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
-import { mergeMeshes } from '../mesh/types';
+import { enamelWhole, mergeMeshes } from '../mesh/types';
 import { cross, normalize, sub, dot } from '../geom/vec';
 import { meshBounds, type Anchor, type Part } from './types';
 import type { Vec3 } from '../geom/types';
@@ -27,6 +27,8 @@ export interface StemSpec {
   sections?: number;
   sides?: number;
   up?: Vec3;
+  /** Enamel by colour name: a stem is round, so it is dipped whole. */
+  enamel?: string;
 }
 
 const GOLDEN = Math.PI * (3 - Math.sqrt(5));
@@ -100,7 +102,8 @@ export function stem(spec: StemSpec): Part {
     });
   }
 
-  return { name: spec.name ?? 'stem', mesh, bounds: meshBounds(mesh), anchors };
+  if (spec.enamel) enamelWhole(mesh);
+  return { name: spec.name ?? 'stem', mesh, bounds: meshBounds(mesh), anchors, enamel: spec.enamel };
 }
 
 /** A direction perpendicular to the stem, turned `angle` about it from the up reference. */
