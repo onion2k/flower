@@ -13,6 +13,7 @@ import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
 import { Viewer, type Quality } from './render/viewer';
 import { createEditor } from './editor/index';
+import { buildPalette } from './editor/palette';
 
 const stage = document.getElementById('stage')!;
 const controlsEl = document.getElementById('controls')!;
@@ -149,6 +150,7 @@ const editor = createEditor(document.getElementById('source')!, examples[example
   clearTimeout(recompile);
   recompile = window.setTimeout(build, 120);
 }, (pos) => selectFromSource(pos));
+buildPalette(document.getElementById('palette')!, editor.view);
 subjectSet.append(select);
 
 let metalSelect: HTMLSelectElement;
