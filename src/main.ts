@@ -340,7 +340,7 @@ materialSet.append(
 const lightSet = document.createElement('fieldset');
 lightSet.innerHTML = '<legend>Light</legend>';
 lightSet.append(
-  picker('environment', ['studio', 'dusk', 'gallery'], state.environment, (v) => {
+  picker('environment', ['studio', 'daylight', 'dusk', 'gallery'], state.environment, (v) => {
     state.environment = v as EnvPreset;
     const env = viewer.setEnvironment(state.environment);
     hdrNote.textContent = env.highDynamicRange

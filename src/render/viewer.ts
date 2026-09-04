@@ -374,9 +374,14 @@ export class Viewer {
     this.loop();
   }
 
+  /** The current preset, so a moving sun knows whether it has a sky to move. */
+  private preset: EnvPreset = 'studio';
+  private sunRebake = 0;
+
   setEnvironment(preset: EnvPreset) {
+    this.preset = preset;
     const previous = this.environment;
-    const env = bakeEnvironment(this.ctx, preset);
+    const env = bakeEnvironment(this.ctx, preset, { sun: this.keyDir });
     this.environment = env;
     this.envSamples = null;
     this.rebuildFrameBind();
@@ -419,6 +424,13 @@ export class Viewer {
       : [1 + 0.45 * w, 1 + 0.2 * w, 1];
     this.shadowDirty = true;
     this.dirty = true;
+    // in daylight the key *is* the sun: the sky is re-baked round it once
+    // the slider has settled, so its aureole, its disc in a polished face
+    // and the shadow all agree on where it is
+    if (this.preset === 'daylight') {
+      clearTimeout(this.sunRebake);
+      this.sunRebake = window.setTimeout(() => this.setEnvironment('daylight'), 180);
+    }
   }
 
   /** Depth of field: 0 off, 1 a lens wide open; focus as a multiple of the distance to the orbit target, 1 being the target itself. */

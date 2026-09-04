@@ -15,7 +15,7 @@
 
 import { FULLSCREEN_VERT, halfToFloat, readbackLayer, shader, type GpuContext } from '../gpu/context';
 
-export type EnvPreset = 'studio' | 'dusk' | 'gallery';
+export type EnvPreset = 'studio' | 'dusk' | 'gallery' | 'daylight';
 
 export interface EnvSamples {
   /** Radiance per face, RGBA floats, row 0 first, in GL face order. */
@@ -40,7 +40,7 @@ export interface Environment {
 const FORMAT: GPUTextureFormat = 'rgba16float';
 
 const CUBE_BASIS = `
-struct Basis { forward: vec3f, _p0: f32, right: vec3f, _p1: f32, up: vec3f, _p2: f32, preset: f32, roughness: f32, sourceSize: f32, _p3: f32 };
+struct Basis { forward: vec3f, _p0: f32, right: vec3f, _p1: f32, up: vec3f, _p2: f32, preset: f32, roughness: f32, sourceSize: f32, _p3: f32, sun: vec3f, _p4: f32 };
 @group(0) @binding(0) var<uniform> basis: Basis;
 `;
 
@@ -115,13 +115,47 @@ fn gallery(d: vec3f) -> vec3f {
   return col;
 }
 
+// Open air, late morning: a clear sky, blue at the zenith and paling to a
+// warm haze at the horizon, a sun where the key light is — so what a
+// polished face reflects is the same sun that casts the shadow — and a
+// neutral ground lit by all of it, warmer on the sun's side where it
+// bounces. The sky's brightness near the sun and the haze's warmth both
+// follow the sun's own height, the way they do through a day.
+fn daylight(d: vec3f) -> vec3f {
+  let sunDir = normalize(basis.sun);
+  let h = d.z;
+  let sunHeight = clamp(sunDir.z, 0.05, 1.0);
+  // a low sun reddens the whole sky; a high one leaves it blue
+  let warmth = 1.0 - smoothstep(0.1, 0.6, sunHeight);
+  let zenith = mix(vec3f(0.28, 0.46, 0.85), vec3f(0.40, 0.42, 0.62), warmth * 0.6);
+  let horizon = mix(vec3f(0.78, 0.80, 0.82), vec3f(0.95, 0.72, 0.50), warmth);
+  var col = mix(horizon, zenith, pow(clamp(h, 0.0, 1.0), 0.55));
+  // aureole: the sky brightens toward the sun, most of all at the horizon
+  let toSun = max(dot(d, sunDir), 0.0);
+  col += mix(vec3f(1.4, 1.1, 0.8), vec3f(1.6, 0.9, 0.5), warmth) * pow(toSun, 6.0) * 0.55;
+  col += vec3f(0.9, 0.85, 0.75) * pow(toSun, 30.0) * 0.6;
+  if (h < 0.0) {
+    // ground: neutral, a touch warmer toward the sun where light bounces,
+    // darkening straight down where the sky's own light is furthest away
+    let flat = vec3f(0.30, 0.28, 0.25);
+    let bounce = vec3f(0.08, 0.06, 0.04) * max(dot(normalize(vec3f(d.xy, 0.0)), normalize(vec3f(sunDir.xy, 0.0))), 0.0);
+    let down = smoothstep(0.0, -1.0, h);
+    col = mix(horizon * 0.85, (flat + bounce) * mix(1.0, 0.7, down), smoothstep(0.0, -0.12, h));
+  }
+  // the sun itself: small, and bright enough to read as a sun in a mirror
+  let disc = smoothstep(0.99955, 0.99985, dot(d, sunDir));
+  col += mix(vec3f(120.0, 112.0, 100.0), vec3f(110.0, 70.0, 35.0), warmth) * disc;
+  return col;
+}
+
 @fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
   let p = uv * 2.0 - 1.0;
   let d = normalize(basis.forward + basis.right * p.x + basis.up * p.y);
   var col: vec3f;
   if (basis.preset < 0.5) { col = studio(d); }
   else if (basis.preset < 1.5) { col = dusk(d); }
-  else { col = gallery(d); }
+  else if (basis.preset < 2.5) { col = gallery(d); }
+  else { col = daylight(d); }
   return vec4f(col, 1.0);
 }`;
 
@@ -241,7 +275,7 @@ const FACES: Array<[number[], number[], number[]]> = [
   [[0, 0, -1], [-1, 0, 0], [0, -1, 0]],
 ];
 
-const PRESET_INDEX: Record<EnvPreset, number> = { studio: 0, dusk: 1, gallery: 2 };
+const PRESET_INDEX: Record<EnvPreset, number> = { studio: 0, dusk: 1, gallery: 2, daylight: 3 };
 const BASIS_STRIDE = 256;
 
 interface Pipelines {
@@ -296,7 +330,7 @@ function getPipelines(device: GPUDevice): Pipelines {
 export function bakeEnvironment(
   ctx: GpuContext,
   preset: EnvPreset,
-  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number } = {},
+  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number] } = {},
 ): Environment {
   const { device } = ctx;
   const size = opts.size ?? 512;
@@ -321,10 +355,12 @@ export function bakeEnvironment(
   const slots = 6 + 6 * mips;
   const basisBuffer = device.createBuffer({ size: slots * BASIS_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   const basisData = new Float32Array((slots * BASIS_STRIDE) / 4);
+  // where the sun is, for the presets that have one; toward the light
+  const sun = opts.sun ?? [0.5, -0.6, 0.62];
   const setBasis = (slot: number, face: number, roughness: number) => {
     const [f, r, u] = FACES[face];
     basisData.set(
-      [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, PRESET_INDEX[preset], roughness, size, 0],
+      [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, PRESET_INDEX[preset], roughness, size, 0, sun[0], sun[1], sun[2], 0],
       (slot * BASIS_STRIDE) / 4,
     );
   };
