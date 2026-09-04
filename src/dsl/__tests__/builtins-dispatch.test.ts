@@ -300,3 +300,19 @@ describe('part builtins: identical calls share geometry, calls with a path do no
     expect(pa.part.mesh).not.toBe(pb.part.mesh);
   });
 });
+
+describe('part builtins: a tessellation count of 0 or less is a compile error, not a corrupted mesh', () => {
+  it('rejects segments: 0 on a revolved part with a clear message', () => {
+    const err = buildErr('part p = bead(radius: 4, segments: 0)\nform f { place p }');
+    expect(err.message).toMatch(/"segments" must be at least 1 in bead/);
+  });
+
+  it('rejects a negative segments the same way', () => {
+    const err = buildErr('part p = egg(radius: 10, segments: -3)\nform f { place p }');
+    expect(err.message).toMatch(/"segments" must be at least 1 in egg/);
+  });
+
+  it('still accepts segments: 1, the boundary case', () => {
+    expect(() => build('part p = pearl(radius: 4, segments: 1)\nform f { place p }')).not.toThrow();
+  });
+});

@@ -34,6 +34,9 @@ export interface RevolveOptions {
 
 export function revolve(sil: Silhouette, opts: RevolveOptions = {}): Mesh {
   const segments = opts.segments ?? 32;
+  // every row angle divides by segments; anything under 1 is 0/0 or an empty
+  // loop rather than a shape, so fail here instead of downstream as NaN
+  if (segments < 1) throw new Error(`revolve needs at least 1 segment, got ${segments}`);
   const arc = opts.arc ?? Math.PI * 2;
   const rows = segments + 1;
   const closedRing = Math.abs(arc - Math.PI * 2) < 1e-9;

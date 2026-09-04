@@ -10,27 +10,20 @@ describe('revolve edge cases: segments count', () => {
     expect(finite(mesh)).toBe(true);
   });
 
-  it('segments=0 produces NaN positions rather than throwing or clamping — a real, DSL-reachable bug', () => {
-    // `a = (i / segments) * arc` divides by the segment count with no floor,
-    // so segments=0 gives i/0 = NaN for every row. This is not a contrived
-    // internal-only input: every DSL builtin that revolves a silhouette
-    // (bead, egg, pearl, bell, rivet, collar, pod, bud, setting, leaf,
-    // petal...) reads `segments` straight from `a.num('segments', -1, N)`
-    // with no lower bound, so a sketch that writes e.g. `bead(radius: 4,
-    // segments: 0)` reaches this and gets a silently corrupted part instead
-    // of a clear error. Documented here rather than asserted as correct.
-    const mesh = revolve({ points: [[5, 0], [5, 10]] }, { segments: 0 });
-    expect(mesh.positions.length).toBeGreaterThan(0);
-    expect([...mesh.positions].some((v) => Number.isNaN(v))).toBe(true);
+  it('segments=0 throws rather than producing NaN positions', () => {
+    // `a = (i / segments) * arc` would divide by the segment count with no
+    // floor, so segments=0 used to give i/0 = NaN for every row — reachable
+    // from a real sketch, since every DSL builtin that revolves a
+    // silhouette (bead, egg, pearl, bell, rivet, collar, pod, bud, setting,
+    // gem's cabochon) reads `segments` via Args.count(), which now rejects
+    // anything under 1 before it ever reaches revolve(). revolve() itself
+    // carries the same guard, for any caller that builds a Silhouette by
+    // hand rather than going through the DSL.
+    expect(() => revolve({ points: [[5, 0], [5, 10]] }, { segments: 0 })).toThrow(/at least 1 segment/);
   });
 
-  it('a negative segments count produces an empty mesh rather than NaN or a throw', () => {
-    // rows = segments + 1 goes negative too, so the row loop (i < rows)
-    // never runs at all — an empty mesh, a milder failure than segments=0's
-    // single NaN row, but still silent rather than a clear error
-    const mesh = revolve({ points: [[5, 0], [5, 10]] }, { segments: -4 });
-    expect(mesh.positions).toHaveLength(0);
-    expect(mesh.indices).toHaveLength(0);
+  it('a negative segments count throws the same way', () => {
+    expect(() => revolve({ points: [[5, 0], [5, 10]] }, { segments: -4 })).toThrow(/at least 1 segment/);
   });
 });
 

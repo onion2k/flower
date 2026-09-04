@@ -115,6 +115,14 @@ export class Args {
     return arg.value;
   }
 
+  /** Like num(), but for a tessellation count that a generator divides by — segments, sides and the like are never 0 or negative. */
+  count(name: string, positional: number, fallback: number): number {
+    const n = this.num(name, positional, fallback);
+    if (this.recorder) return n;
+    if (n < 1) throw new DslError(`"${name}" must be at least 1 in ${this.callee}`, this.span);
+    return n;
+  }
+
   flag(name: string, positional: number, fallback: boolean): boolean {
     if (this.recorder) {
       this.record({ name, kind: 'flag', required: false, fallback });
@@ -327,7 +335,7 @@ const PARTS = {
       depth: a.num('depth', -1, 0) || undefined,
       facets: a.num('facets', -1, 0) || undefined,
       table: a.num('table', -1, 0) || undefined,
-      segments: a.num('segments', -1, 40),
+      segments: a.count('segments', -1, 40),
     })),
 
   setting: define(['width', 'style', 'claws', 'height', 'wall', 'grip', 'segments'], (a) =>
@@ -338,7 +346,7 @@ const PARTS = {
       height: a.num('height', -1, 0) || undefined,
       wall: a.num('wall', -1, 0) || undefined,
       grip: a.num('grip', -1, 0) || undefined,
-      segments: a.num('segments', -1, 32),
+      segments: a.count('segments', -1, 32),
     })),
 
   wire: define(['path', 'radius', 'section', 'tip', 'twist', 'flatten', 'closed', 'sections', 'sides', 'enamel'], (a) =>
@@ -373,7 +381,7 @@ const PARTS = {
       shankDiameter: a.num('shank', 2),
       grip: a.num('grip', 3),
       tailSpread: a.num('tail', -1, NaN) || undefined,
-      segments: a.num('segments', -1, 24),
+      segments: a.count('segments', -1, 24),
     })),
 
   bead: define(['radius', 'point', 'bore', 'enamel', 'segments'], (a) =>
@@ -382,7 +390,7 @@ const PARTS = {
       point: a.num('point', 1, NaN) || undefined,
       bore: a.num('bore', -1, 0) || undefined,
       enamel: enamelName(a),
-      segments: a.num('segments', -1, 24),
+      segments: a.count('segments', -1, 24),
     })),
 
   egg: define(['radius', 'height', 'taper', 'enamel', 'segments'], (a) =>
@@ -391,14 +399,14 @@ const PARTS = {
       height: a.num('height', 1, 0) || undefined,
       taper: a.num('taper', -1, NaN) || undefined,
       enamel: enamelName(a),
-      segments: a.num('segments', -1, 48),
+      segments: a.count('segments', -1, 48),
     })),
 
   pearl: define(['radius', 'oblate', 'segments'], (a) =>
     pearl({
       radius: a.num('radius', 0),
       oblate: a.num('oblate', -1, 0) || undefined,
-      segments: a.num('segments', -1, 48),
+      segments: a.count('segments', -1, 48),
     })),
 
   band: define(['radius', 'width', 'thickness', 'segments'], (a) =>
@@ -417,7 +425,7 @@ const PARTS = {
       whorlDepth: a.num('whorlDepth', -1, NaN) || undefined,
       ribs: a.num('ribs', -1, 0) || undefined,
       ribDepth: a.num('ribDepth', -1, NaN) || undefined,
-      segments: a.num('segments', -1, 32),
+      segments: a.count('segments', -1, 32),
     })),
 
   bell: define(['length', 'mouth', 'throat', 'wall', 'flare', 'lobes', 'lobeDepth', 'rows', 'segments', 'enamel'], (a) =>
@@ -431,7 +439,7 @@ const PARTS = {
       lobes: a.num('lobes', -1, 0) || undefined,
       lobeDepth: a.num('lobeDepth', -1, NaN) || undefined,
       rows: a.num('rows', -1, 24),
-      segments: a.num('segments', -1, 40),
+      segments: a.count('segments', -1, 40),
     })),
 
   petal: define(
@@ -506,7 +514,7 @@ const PARTS = {
       point: a.num('point', -1, 0.22),
       swell: a.num('swell', -1, 1),
       rows: a.num('rows', -1, 40),
-      segments: a.num('segments', -1, 36),
+      segments: a.count('segments', -1, 36),
     })),
 
   bar: define(['length', 'width', 'thickness', 'bore', 'intermediate', 'bevel'], (a) =>
@@ -547,7 +555,7 @@ const PARTS = {
       wall: a.num('wall', 1),
       length: a.num('length', 2),
       belly: a.num('belly', -1, 0.6),
-      segments: a.num('segments', -1, 24),
+      segments: a.count('segments', -1, 24),
     })),
 };
 
