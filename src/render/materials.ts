@@ -77,9 +77,9 @@ export const metals: Record<string, Metal> = {
   // turned haft or a carved stem shows its figure. Colours by eye; `orient`
   // is borrowed to say how strongly the figure shows, as nacre borrows it
   // for its sheen.
-  oak: { name: 'oak', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.52, 0.34, 0.17], orient: 0.35 },
-  walnut: { name: 'walnut', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.24, 0.13, 0.07], orient: 0.45 },
-  ash: { name: 'ash', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.70, 0.56, 0.36], orient: 0.28 },
+  oak: { name: 'oak', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.40, 0.24, 0.10], orient: 0.4 },
+  walnut: { name: 'walnut', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.20, 0.10, 0.05], orient: 0.5 },
+  ash: { name: 'ash', f0: [0.04, 0.04, 0.04], measured: false, model: 'wood', colour: [0.58, 0.45, 0.27], orient: 0.32 },
 };
 
 export interface Finish {

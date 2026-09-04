@@ -523,15 +523,27 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32) -> vec3f {
     // the finish's own colour — no patina, hammer or enamel, only ever metal
     var body = material.baseColour;
     if (wood) {
-      // grain: noise stretched along the part's own Z, so the figure runs
-      // the length of a haft or a stem; banded into growth lines, wobbling
-      // where a knot would pull them, and darker in the late wood between
+      // Growth rings as a stack of warped planes through the part: a haft is
+      // cut from a board, not turned round its own pith, so what shows on a
+      // cylinder is long stripes and cathedrals where the surface cuts the
+      // rings, not concentric circles. Each ring is a sharp dark latewood
+      // band on a paler earlywood ground, and a fine fibre texture runs the
+      // length of Z through both, so the figure reads at every distance.
       let p = in.object;
-      let figure = noise3(vec3f(p.x * 0.55, p.y * 0.55, p.z * 0.045)) * 4.0
-        + noise3(vec3f(p.x * 1.6, p.y * 1.6, p.z * 0.12)) * 0.9;
-      let ring = 0.5 + 0.5 * sin(figure * 6.2831853 + length(p.xy) * 0.9);
-      let late = smoothstep(0.35, 0.85, ring);
-      body = body * mix(1.0 + 0.55 * material.orient, 1.0 - 0.8 * material.orient, late);
+      let wobble = noise3(vec3f(p.x * 0.35, p.y * 0.35, p.z * 0.03)) * 2.6
+        + noise3(vec3f(p.x * 1.3, p.y * 1.3, p.z * 0.11)) * 0.6;
+      let ringCoord = (p.x * 0.94 + p.y * 0.34) * 1.9 + wobble;
+      let ph = fract(ringCoord);
+      // never sharper than the pixel: a ring narrower than the footprint is
+      // averaged toward its mean rather than shimmering
+      let foot = clamp(fwidth(ringCoord) * 1.5, 0.02, 0.5);
+      let late = smoothstep(0.42 - foot, 0.62 + foot, ph) * (1.0 - smoothstep(0.78 - foot, 0.96 + foot, ph));
+      let fibre = noise3(vec3f(p.x * 5.5, p.y * 5.5, p.z * 0.4)) - 0.5;
+      let strength = material.orient;
+      body = material.baseColour
+        * (1.0 + 0.5 * strength * fibre)
+        * mix(1.0 + 0.3 * strength, 1.0 - 1.3 * strength, late)
+        * mix(vec3f(1.0), vec3f(0.92, 0.78, 0.66), late);
     }
     let specular = reflected * (f0 * ab.x + ab.y);
     let irradiance = textureSampleLevel(envSpecular, linearSampler, spin * n, frame.maxLod).rgb;
