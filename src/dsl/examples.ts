@@ -1034,6 +1034,145 @@ form battleaxe {
 }
 `,
 
+  boutique: `# A shop-window spray: seven flowers of six kinds, each in its own enamel,
+# gathered in a gold collar with a leather ribbon and stood in a turned
+# walnut vase. The flowers are the catalogue's own — rose, tulip, daisy,
+# poppy, iris and an allium at the crown — drawn again here at a smaller
+# scale and glazed, since a use()d sketch keeps its own metal and these want
+# colour. Each stands on a one-copy ring, tilted out from the centre so its
+# stem swings in to the collar; the units are then turned round the
+# vase a seventh of a circle apart, so no two heads share a sector and the
+# only overlap is a petal tip brushing a neighbour's leaf.
+material bronze satin
+
+# --- allium: a globe of lilac bells on brass spokes, tallest of the bunch
+part floret  = bell(length: 4, mouth: 5, throat: 0.8, wall: 0.3, flare: 2.8, lobes: 6, lobeDepth: 0.34, rows: 12, segments: 24, enamel: lilac) in silver polished
+part pedicel = wire(path: through((0,0,0), (9,0,0.5), (17,0,0)), radius: 0.45, tip: 1, sections: 20, sides: 6) in brass satin
+part hub     = pod(length: 5, width: 5, segments: 16) in brass satin
+unit ray {
+  place pedicel
+  place floret at (17, 0, 0) pitch 90deg
+}
+part alliumStalk = stem(path: through((0,0,-2), (0.8,0,-28), (-1,0,-56), (0.6,0,-84)), radius: 1.9, tip: 0.5, nodes: 2)
+unit allium {
+  place hub
+  place alliumStalk
+  repeat ray around shell(44, 0, orient: outward)
+}
+
+# --- rose: three courses of ruby petals over a bronze hip
+part heart = petal(length: 10, width: 10, thickness: 0.4, shape: round, cup: 88deg, curl: 34deg, curlBias: 1.8, enamel: ruby)
+part mid   = petal(length: 15, width: 15, thickness: 0.45, shape: round, cup: 66deg, curl: 14deg, curlBias: 2.2, enamel: ruby)
+part outer = petal(length: 20, width: 20, thickness: 0.45, shape: round, cup: 38deg, curl: -34deg, curlBias: 2.8, enamel: ruby)
+part hip   = bell(length: 9, mouth: 9, throat: 3.5, wall: 0.7, flare: 1.7, lobes: 5, lobeDepth: 0.14)
+part roseStalk = stem(path: through((0,0,-8), (1.2,0,-26), (-1.5,0,-44), (0.8,0,-62)), radius: 1.5, tip: 0.65, nodes: 3)
+part roseLeaf  = leaf(length: 18, width: 9, thickness: 0.5, teeth: 20, veins: 3, cup: 26deg, curl: 30deg, enamel: moss)
+unit rose {
+  place hip at (0, 0, -9)
+  place roseStalk
+  repeat heart around phyllotaxis(7, 0.85, tilt: -86deg, fade: 0.25, rise: 1)
+  repeat mid   around phyllotaxis(10, 0.9, start: 8, tilt: -74deg, fade: 0.5, rise: 0.5)
+  repeat outer around phyllotaxis(13, 0.7, start: 18, tilt: -52deg, fade: 0.9)
+  repeat roseLeaf around ring(2, radius: 0.7, z: -30, tilt: -18deg)
+}
+
+# --- tulip: six amber tepals, keeled
+part outerTepal = petal(length: 24, width: 15, thickness: 0.6, shape: round, cup: 62deg, keel: 0.45, curl: -14deg, curlBias: 2.2, enamel: amber)
+part innerTepal = petal(length: 22, width: 13, thickness: 0.6, shape: round, cup: 74deg, keel: 0.55, curl: -8deg, curlBias: 2.2, enamel: amber)
+part pistil = pod(length: 7, width: 3.5, ribs: 3, ribDepth: 0.18, segments: 20) in gold polished
+part tulipStalk = stem(path: through((0.4,0,3), (0,0,-20), (0.3,0,-42), (-0.4,0,-64)), radius: 1.9, tip: 0.6, sections: 80)
+part tulipLeaf  = leaf(length: 30, width: 12, thickness: 0.7, shape: lanceolate, cup: 40deg, keel: 0.4, curl: -46deg, curlBias: 1.5, enamel: moss)
+unit tulip {
+  repeat outerTepal around ring(3, radius: 2.2, tilt: -76deg)
+  repeat innerTepal around ring(3, radius: 1.8, phase: 60deg, tilt: -82deg)
+  place pistil at (0, 0, 4) pitch 90deg
+  place tulipStalk
+  repeat tulipLeaf around ring(1, radius: 0.7, z: -44, phase: 20deg, tilt: -66deg)
+  repeat tulipLeaf around ring(1, radius: 0.7, z: -30, phase: 155deg, tilt: -58deg, scale: 0.7)
+}
+
+# --- daisy: white rays round a gold disc
+part ray    = petal(length: 19, width: 5, thickness: 0.35, shape: strap, edge: notched, cup: 26deg, curl: 16deg, curlBias: 1.6, enamel: white) in silver polished
+part disc   = disc(radius: 6, thickness: 1, bevel: 0.35) in gold satin
+part seed   = bead(radius: 0.65, point: 0.8, segments: 8) in gold polished
+part daisyStalk = stem(path: through((0,0,0.2), (0.5,0,-18), (-0.5,0,-36), (0.8,0,-54)), radius: 1.4, tip: 0.6, nodes: 3)
+part daisyLeaf  = leaf(length: 18, width: 6, thickness: 0.5, shape: spatulate, teeth: 14, cup: 24deg, curl: 34deg, enamel: moss)
+unit daisy {
+  repeat ray around ring(19, radius: 5.5, z: 0.3, tilt: -14deg)
+  place disc
+  repeat seed around phyllotaxis(40, 0.8, rise: 0.5, taper: 0.75)
+  place daisyStalk
+  repeat daisyLeaf around ring(2, radius: 0.5, z: -28, tilt: -22deg)
+}
+
+# --- poppy: four crumpled coral petals round a dark ring of stamens
+part crumple = petal(length: 22, width: 22, thickness: 0.35, shape: round, edge: crenate, edgeCount: 9, edgeDepth: 0.03, cup: 38deg, curl: -14deg, curlBias: 2.2, ruffle: 1.5, ruffleWaves: 5, enamel: coral)
+part capsule = pod(length: 8, width: 7, ribs: 8, ribDepth: 0.09) in silver satin
+part thread  = wire(path: through((0,0,0), (0.5,0,3), (1.5,0,5.5)), radius: 0.28, tip: 0.6, sections: 16, sides: 6) in blackened steel satin
+part anther  = pod(length: 1.8, width: 0.8, segments: 8) in gold polished
+part poppyStalk = stem(path: through((0,0,0), (0.4,0,-20), (-0.5,0,-40), (0.4,0,-60)), radius: 1.5, tip: 0.55, nodes: 3)
+part poppyLeaf  = leaf(length: 20, width: 6, thickness: 0.5, shape: lanceolate, teeth: 18, toothDepth: 0.9, cup: 30deg, curl: 40deg, enamel: moss)
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+unit poppy {
+  place poppyStalk
+  place capsule at (0, 0, 2.5)
+  repeat crumple around ring(4, radius: 1.8, tilt: -15deg)
+  repeat stamen around phyllotaxis(24, 0.8, tilt: -14deg)
+  repeat poppyLeaf around ring(2, radius: 0.6, z: -36, tilt: -26deg)
+}
+
+# --- iris: cobalt standards over peacock falls, each fall with a gold beard
+part standard = petal(length: 21, width: 14, thickness: 0.45, shape: round, cup: 48deg, curl: 34deg, curlBias: 1.8, enamel: cobalt) in silver polished
+part fall     = petal(length: 25, width: 17, thickness: 0.45, shape: lip, edge: crenate, edgeCount: 11, cup: 24deg, curl: 74deg, curlBias: 2.5, enamel: peacock) in silver polished
+part beard    = blade(path: bezier((1.5,0,0), (4,0,0), (7,0,-0.2), (10,0,-0.5)), width: 2.4, thickness: 0.8, sections: 24) in gold polished
+part ovary    = pod(length: 10, width: 4.5, ribs: 3, ribDepth: 0.14) in brass satin
+part irisStalk = stem(path: through((0,0,-5), (0.5,0,-26), (-0.6,0,-48), (0.5,0,-70)), radius: 1.7, tip: 0.6, nodes: 2)
+part sword     = leaf(length: 36, width: 9, thickness: 0.7, shape: linear, cup: 52deg, keel: 0.55, curl: -70deg, curlBias: 2.6, enamel: moss)
+unit hanging {
+  place fall
+  place beard at (0, 0, 0.3)
+}
+unit iris {
+  place ovary at (0, 0, -6)
+  place irisStalk
+  repeat standard around ring(3, radius: 2.4, tilt: -74deg)
+  repeat hanging around ring(3, radius: 2.6, phase: 60deg, tilt: 48deg)
+  repeat sword around ring(1, radius: 0.6, z: -50, tilt: -64deg)
+}
+
+# --- the gather: collar, ribbon, and a walnut vase turned from a bell
+part collar = collar(inner: 7.5, wall: 1.4, length: 6, belly: 0.5) in gold satin
+part ribbon = wire(path: through((7, 0, -3), (13, 4, -12), (11, 9, -24), (16, 12, -36)), radius: 1.6, section: flat, tip: 0.7, sections: 60, enamel: umber) in gold satin
+part vase   = bell(length: 46, mouth: 26, throat: 12, wall: 1.6, flare: 1.5, rows: 32, segments: 48) in walnut satin
+
+# each flower on a one-copy ring, out at its radius and tilted outward so
+# its stem swings in toward the collar; the unit is then turned so the
+# seven share the circle a seventh apart
+unit roseOut  { repeat rose  around ring(1, radius: 40, tilt: 38deg, z: 2) }
+unit tulipOut { repeat tulip around ring(1, radius: 36, tilt: 34deg, z: 12) }
+unit daisyOut { repeat daisy around ring(1, radius: 44, tilt: 42deg, z: -4) }
+unit poppyOut { repeat poppy around ring(1, radius: 42, tilt: 40deg, z: 0) }
+unit irisOut  { repeat iris  around ring(1, radius: 38, tilt: 34deg, z: 12) }
+
+form boutique {
+  place allium at (0, 0, 28)
+  place roseOut scale 0.9
+  place tulipOut turn 51deg
+  place daisyOut turn 103deg
+  place poppyOut turn 154deg
+  place irisOut turn 206deg
+  place roseOut turn 257deg scale 0.85
+  place daisyOut turn 309deg scale 0.9
+  place collar at (0, 0, -58)
+  place ribbon at (0, 0, -58)
+  place ribbon at (0, 0, -58) turn 180deg
+  place vase at (0, 0, -108)
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
@@ -1045,7 +1184,7 @@ export const exampleNames = Object.keys(examples);
  */
 export const exampleGroups: Array<[string, string[]]> = [
   ['Jewellery', ['ring', 'tension', 'cluster', 'necklace', 'earrings', 'studs', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
-  ['Flowers', ['rose', 'tulip', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'allium', 'narcissus', 'digitalis', 'bouquet']],
+  ['Flowers', ['rose', 'tulip', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
   ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
   ['Weapons', ['dagger', 'battleaxe']],
   ['Structures', ['frame', 'tower', 'armillary']],
