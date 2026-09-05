@@ -305,9 +305,13 @@ export function spray(count: number, radius: number, opts: SprayOptions = {}): S
   return out;
 }
 
+/** A number, or a well of numbers drawn from afresh each time. */
+export type Measure = number | (() => number);
+const draw = (m: Measure) => (typeof m === 'function' ? m() : m);
+
 export interface BranchingOptions {
   /** Roll about the parent's axis added each level, so successive forks turn; a quarter turn makes a flat fork three-dimensional. */
-  twist?: number;
+  twist?: Measure;
   /** Only the last level: where the buds and leaves go. */
   tipsOnly?: boolean;
   /** Roll of the first fork at the root. */
@@ -329,9 +333,9 @@ export interface BranchingOptions {
 export function branching(
   depth: number,
   count: number,
-  length: number,
-  spread: number,
-  shrink: number,
+  length: Measure,
+  spread: Measure,
+  shrink: Measure,
   opts: BranchingOptions = {},
 ): Symmetry {
   const { twist = 0, tipsOnly = false, phase = 0 } = opts;
@@ -342,14 +346,18 @@ export function branching(
   for (let level = 1; level <= levels; level++) {
     const next: Symmetry = [];
     for (const parent of current) {
+      // the length is the parent's: one twig, one tip, so it is drawn once per
+      // parent. The rest is each child's own draw — with a plain number that
+      // is the number, with an rnd() it is that child's
+      const tip = draw(length);
       for (let k = 0; k < n; k++) {
-        const roll = phase + twist * (level - 1) + (k / n) * Math.PI * 2;
+        const roll = phase + draw(twist) * (level - 1) + (k / n) * Math.PI * 2;
         // tilt away from the parent's axis, then roll round it, then step to the tip
         const child = multiply(
           parent,
           multiply(
-            translation([length, 0, 0]),
-            multiply(rotationAbout([1, 0, 0], roll), multiply(rotationAbout([0, 0, 1], spread), uniformScale(shrink))),
+            translation([tip, 0, 0]),
+            multiply(rotationAbout([1, 0, 0], roll), multiply(rotationAbout([0, 0, 1], draw(spread)), uniformScale(draw(shrink)))),
           ),
         );
         next.push(child);
@@ -359,4 +367,36 @@ export function branching(
     current = next;
   }
   return out;
+}
+
+/**
+ * Play added to a symmetry: each copy turned about its own face normal,
+ * tilted off it, shifted along each of its axes and scaled, by amounts
+ * drawn for that copy alone within the limits given. Seeded, so the same
+ * sketch shakes the same way every time.
+ */
+export function jitterSymmetry(
+  sym: Symmetry,
+  amounts: { turn?: number; tilt?: number; shift?: number; scale?: number },
+  seed: number,
+): Symmetry {
+  const { turn = 0, tilt = 0, shift = 0, scale = 0 } = amounts;
+  let a = seed >>> 0;
+  const next = () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return (((t ^ (t >>> 14)) >>> 0) / 4294967296) * 2 - 1;
+  };
+  return sym.map((m) => {
+    const play = multiply(
+      translation([next() * shift, next() * shift, next() * shift]),
+      multiply(
+        rotationAbout([0, 0, 1], next() * turn),
+        multiply(rotationAbout([0, 1, 0], next() * tilt), uniformScale(1 + next() * scale)),
+      ),
+    );
+    return multiply(m, play);
+  });
 }

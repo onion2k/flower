@@ -542,3 +542,63 @@ describe('surfaces', () => {
     expect(s.assembly.placements.length).toBe(12);
   });
 });
+
+describe('rnd', () => {
+  const radius = (src: string) => build(src).assembly.placements[0].part.bounds.max[0];
+
+  it('samples within centre ± spread, and the same value every compile', () => {
+    const src = 'part b = bead(radius: rnd(5, 1), point: 2)\nform f { place b }';
+    const r1 = radius(src), r2 = radius(src);
+    expect(r1).toBe(r2);
+    expect(r1).toBeGreaterThanOrEqual(4);
+    expect(r1).toBeLessThanOrEqual(6);
+  });
+
+  it('a different seed, on the call or on the sketch, gives a different value', () => {
+    const base = radius('part b = bead(radius: rnd(5, 1), point: 2)\nform f { place b }');
+    const onCall = radius('part b = bead(radius: rnd(5, 1, seed: 3), point: 2)\nform f { place b }');
+    const onSketch = radius('seed 9\npart b = bead(radius: rnd(5, 1), point: 2)\nform f { place b }');
+    expect(onCall).not.toBe(base);
+    expect(onSketch).not.toBe(base);
+  });
+
+  it('works in arithmetic and in let, as one sampled number', () => {
+    const s = build('let r = rnd(5, 1)\npart b = bead(radius: r * 2, point: 2)\nform f { place b }');
+    const r = s.assembly.placements[0].part.bounds.max[0];
+    expect(r).toBeGreaterThanOrEqual(8);
+    expect(r).toBeLessThanOrEqual(12);
+  });
+
+  it('draws afresh for every twig of a tree, and the same rnd written twice agrees', () => {
+    const twigs = build('part t = bead(radius: 1, point: 1)\nform f { repeat t around tree(depth: 3, count: 2, length: rnd(10, 3), spread: rnd(0.4, 0.2), shrink: 0.8) }');
+    const tips = build('part t = bead(radius: 1, point: 1)\nform f { repeat t around tree(depth: 4, count: 2, length: rnd(10, 3), spread: rnd(0.4, 0.2), shrink: 0.8, tips: yes) }');
+    const lengths = twigs.assembly.placements.slice(1, 3).map((p) => Math.hypot(p.matrix[12], p.matrix[13], p.matrix[14]));
+    // the two first-level children are at the root's tip: one draw, the same for both
+    expect(lengths[0]).toBeCloseTo(lengths[1]);
+    // the grandchildren's own steps differ from each other
+    const g = twigs.assembly.placements.slice(3, 7);
+    const steps = g.map((p, i) => { const parent = twigs.assembly.placements[1 + (i >> 1)]; return Math.hypot(p.matrix[12] - parent.matrix[12], p.matrix[13] - parent.matrix[13], p.matrix[14] - parent.matrix[14]); });
+    expect(new Set(steps.map((v) => v.toFixed(6))).size).toBeGreaterThan(1);
+    // the tips tree, one level deeper, reproduces the twigs' matrices in its first levels
+    const tipsAll = build('part t = bead(radius: 1, point: 1)\nform f { repeat t around tree(depth: 4, count: 2, length: rnd(10, 3), spread: rnd(0.4, 0.2), shrink: 0.8) }');
+    for (let i = 0; i < twigs.assembly.placements.length; i++) {
+      expect(Array.from(tipsAll.assembly.placements[i].matrix)).toEqual(Array.from(twigs.assembly.placements[i].matrix));
+    }
+    expect(tips.assembly.placements.length).toBe(16);
+  });
+
+  it('jitter() shakes each copy of a symmetry differently but reproducibly', () => {
+    const src = 'part t = bead(radius: 1, point: 1)\nform f { repeat t around jitter(ring(6, radius: 10), turn: 0.3, tilt: 0.2, shift: 1, scale: 0.1) }';
+    const a = build(src), b = build(src);
+    expect(a.assembly.placements.length).toBe(6);
+    const pos = (s: typeof a, i: number) => Array.from(s.assembly.placements[i].matrix.slice(12, 15));
+    expect(pos(a, 0)).toEqual(pos(b, 0));
+    const plain = build('part t = bead(radius: 1, point: 1)\nform f { repeat t around ring(6, radius: 10) }');
+    const moved = a.assembly.placements.filter((p, i) => Math.hypot(...p.matrix.slice(12, 15).map((v, k) => v - plain.assembly.placements[i].matrix[12 + k])) > 1e-6);
+    expect(moved.length).toBe(6);
+  });
+
+  it('is not a part', () => {
+    expect(buildErr('part p = rnd(1, 2)\nform f { place p }').message).toMatch(/it is a random number/);
+  });
+});

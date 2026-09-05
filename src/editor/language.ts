@@ -10,7 +10,7 @@ import { BUILTIN_NAMES } from '../dsl/builtins';
  * to colour the text, and a hand-rolled scanner does that from the same token
  * rules the lexer uses without a second grammar to keep in step.
  */
-const STATEMENT = new Set(['use', 'material', 'let', 'part', 'unit', 'form']);
+const STATEMENT = new Set(['use', 'material', 'let', 'part', 'unit', 'form', 'seed']);
 const ACTION = new Set(['place', 'fasten', 'repeat']);
 const MODIFIER = new Set([
   'at', 'turn', 'pitch', 'roll', 'scale', 'offset', 'flip', 'as', 'in', 'to', 'around', 'engraved', 'glow',

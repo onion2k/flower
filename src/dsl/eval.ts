@@ -6,7 +6,7 @@ import { finishes, metals } from '../render/materials';
 import type { Part } from '../parts/types';
 import type { Action, Expr, Placement, Program } from './ast';
 import { parse } from './parser';
-import { Args, BUILTINS, ENGRAVING_NAMES, isEngraving, isInscription, isOutline, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
+import { Args, BUILTINS, ENGRAVING_NAMES, isEngraving, isInscription, isJitter, sampleOnce, isOutline, isPart, isSymmetry, isVec, type CallArg, type Value } from './builtins';
 import { DslError, type Span } from './lexer';
 /**
  * Part geometry survives across compiles. The editor recompiles on every
@@ -160,6 +160,9 @@ function importSketch(name: string, span: Span, ctx: Context): Assembly {
 
 function evaluateIn(program: Program, ctx: Context): Sketch {
   const scope = new Map<string, Value>();
+  /** The sketch's seed: mixed into every rnd(), so "seed 7" reshuffles them all. */
+  let seed = 0;
+  const settle = (v: Value): Value => (isJitter(v) ? sampleOnce(v, 'arithmetic') : v);
   const units = new Map<string, Assembly>();
   const forms = new Map<string, Assembly>();
   const partCache = new Map<Expr, Part>();
@@ -218,14 +221,15 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
       }
 
       case 'unary': {
-        const value = evalExpr(expr.operand);
+        const value = settle(evalExpr(expr.operand));
         if (typeof value !== 'number') throw new DslError('cannot negate this', expr.span);
         return -value;
       }
 
       case 'binary': {
-        const left = evalExpr(expr.left);
-        const right = evalExpr(expr.right);
+        // arithmetic on an rnd() works on its one sampled value
+        const left = settle(evalExpr(expr.left));
+        const right = settle(evalExpr(expr.right));
         if (typeof left !== 'number' || typeof right !== 'number') {
           throw new DslError(`cannot use "${expr.op}" on these`, expr.span);
         }
@@ -254,7 +258,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         const memoised = memoKey === null ? undefined : partMemo.get(memoKey);
         // a hit means this exact call once ran clean, so its arguments need no checking
         if (memoised) return { ...memoised, material: undefined };
-        const reader = new Args(expr.callee, args, expr.span, builtin.known);
+        const reader = new Args(expr.callee, args, expr.span, builtin.known, seed);
         const result = builtin.fn(reader);
         reader.done();
         if (memoKey !== null && isPart(result)) rememberPart(memoKey, result);
@@ -500,6 +504,13 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         break;
       }
 
+      case 'seed': {
+        const value = evalExpr(statement.value);
+        if (typeof value !== 'number') throw new DslError('"seed" takes a number', statement.value.span);
+        seed = value;
+        break;
+      }
+
       case 'let':
         claim(statement.name, statement.span);
         scope.set(statement.name, evalExpr(statement.value));
@@ -578,6 +589,7 @@ function describeValue(value: Value): string {
   if (isOutline(value)) return 'it is an outline';
   if (isEngraving(value)) return 'it is an engraving';
   if (isInscription(value)) return 'it is lettering';
+  if (isJitter(value)) return 'it is a random number';
   return 'it is a path';
 }
 

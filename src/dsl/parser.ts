@@ -232,6 +232,11 @@ export function parse(source: string): Program {
       return { kind: 'material', words: parseMaterial(), span: spanFrom(start) };
     }
 
+    if (at('seed')) {
+      next();
+      return { kind: 'seed', value: parseExpr(), span: spanFrom(start) };
+    }
+
     if (at('let')) {
       next();
       const name = expectIdent('after "let"').text;
@@ -262,7 +267,7 @@ export function parse(source: string): Program {
     }
 
     throw new DslError(
-      `expected use, material, let, part, unit or form, found "${describe(peek())}"`,
+      `expected use, material, seed, let, part, unit or form, found "${describe(peek())}"`,
       peek().span,
     );
   }
@@ -278,7 +283,7 @@ const ACTION_KEYWORDS = [
 ];
 const isActionKeyword = (text: string) => ACTION_KEYWORDS.includes(text);
 
-const STATEMENT_KEYWORDS = ['use', 'material', 'let', 'part', 'unit', 'form'];
+const STATEMENT_KEYWORDS = ['use', 'material', 'let', 'part', 'unit', 'form', 'seed'];
 const isStatementKeyword = (text: string) => STATEMENT_KEYWORDS.includes(text);
 
 const describe = (token: Token) => (token.kind === 'eof' ? 'end of sketch' : token.text);

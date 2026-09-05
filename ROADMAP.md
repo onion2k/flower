@@ -281,6 +281,18 @@ bytes at the end of the record (pattern selector and params, glyph range,
 letter params); item 6 took the last 16 for emission. The record is full:
 the next field means growing `MATERIAL_STRIDE` past 256.
 
+### Play
+
+`rnd(centre, spread)` (September 2026) is a number with play in it. Used
+where a number is wanted it samples once; `tree` draws afresh per limb
+(length once per parent, since a twig is one mesh, spread/shrink/twist per
+child); `jitter(symmetry, turn, tilt, shift, scale)` shakes any symmetry
+per copy. Draws are seeded from the rnd's own numbers plus a sketch-wide
+`seed n` statement, and each consuming parameter gets its own stream, so
+identical rnd()s agree (leaves follow limbs) while a spread and a twist
+written alike do not move in step. Per-placement *geometry* variation is
+not possible: placements share one mesh.
+
 ### DSL grammar changes
 
 Collected here because they are easy to forget:

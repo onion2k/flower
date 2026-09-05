@@ -35,7 +35,7 @@ describe('parse: statements', () => {
   });
 
   it('rejects a statement that starts with an unknown keyword', () => {
-    expect(() => parse('bogus x = 1')).toThrow(/expected use, material, let, part, unit or form/);
+    expect(() => parse('bogus x = 1')).toThrow(/expected use, material, seed, let, part, unit or form/);
   });
 
   it('rejects an unclosed block', () => {

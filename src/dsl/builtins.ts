@@ -29,7 +29,7 @@ import { bar, disc, gusset, plate } from '../parts/panel';
 import { helicoidPart, mobiusPart, patchPart, ripplePart, saddlePart, shellPart } from '../parts/surface';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription, type Part } from '../parts/types';
 import {
-  along, branching, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
+  along, branching, compose, dihedral, helical, jitterSymmetry, mirror, nested, phyllotaxis, radial, ring, spray,
   sphereShell, type Symmetry,
 } from '../pattern/symmetry';
 import { DslError, type Span } from './lexer';
@@ -40,7 +40,62 @@ import { DslError, type Span } from './lexer';
  */
 export interface Outline { loop: Vec2[] }
 
-export type Value = number | string | Vec3 | Curve | Outline | Engraving | Inscription | Part | Symmetry;
+/**
+ * A number with play in it: uniform between centre - spread and centre +
+ * spread. Where a plain number is wanted it is sampled once; a symmetry
+ * that grows copies one by one draws a fresh sample for each, which is
+ * what makes a grown form look grown.
+ *
+ * Every draw is seeded from the numbers themselves and the sketch's seed,
+ * so the same rnd() written twice agrees — a tree's leaves follow its limbs
+ * — and a sketch renders the same on every compile.
+ */
+export interface Jitter { centre: number; spread: number; seed: number }
+
+export type Value = number | string | Vec3 | Curve | Outline | Engraving | Inscription | Part | Symmetry | Jitter;
+
+export const isJitter = (v: Value): v is Jitter =>
+  typeof v === 'object' && v !== null && typeof (v as Jitter).spread === 'number' && typeof (v as Jitter).centre === 'number';
+
+/** A small fast PRNG (mulberry32) over a 32-bit seed. */
+function mulberry(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = a;
+    t = Math.imul(t ^ (t >>> 15), t | 1);
+    t ^= t + Math.imul(t ^ (t >>> 7), t | 61);
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** Mix numbers and a name into one 32-bit seed. */
+function hashSeed(parts: Array<number | string>): number {
+  let h = 2166136261;
+  const mix = (n: number) => { h ^= n; h = Math.imul(h, 16777619) >>> 0; };
+  for (const p of parts) {
+    if (typeof p === 'string') { for (let i = 0; i < p.length; i++) mix(p.charCodeAt(i)); }
+    else {
+      const f = new Float64Array([p]);
+      const u = new Uint32Array(f.buffer);
+      mix(u[0]); mix(u[1]);
+    }
+  }
+  return h >>> 0;
+}
+
+/**
+ * Draws from a jitter, one stream per use. `stream` tells a builtin's
+ * different parameters apart, so a spread and a twist written with the same
+ * rnd() do not move in step.
+ */
+export function sampler(j: Jitter, stream = ''): () => number {
+  const next = mulberry(hashSeed([j.centre, j.spread, j.seed, stream]));
+  return () => j.centre + (next() * 2 - 1) * j.spread;
+}
+
+/** The single value a jitter stands for where only one number is wanted. */
+export const sampleOnce = (j: Jitter, stream = ''): number => sampler(j, stream)();
 
 export const isVec = (v: Value): v is Vec3 =>
   Array.isArray(v) && v.length === 3 && v.every((n) => typeof n === 'number');
@@ -99,6 +154,8 @@ export class Args {
     private args: CallArg[],
     readonly span: Span,
     private known: string[],
+    /** The sketch's seed, mixed into every rnd() made here. */
+    readonly seed = 0,
   ) {
     // Check names up front, not in done(). Otherwise a misspelled argument reads
     // as a missing one — "leaf needs width" when what was written was "widht" —
@@ -140,10 +197,34 @@ export class Args {
       if (fallback !== undefined) return fallback;
       throw new DslError(`${this.callee} needs "${name}"`, this.span);
     }
+    if (isJitter(arg.value)) return sampleOnce(arg.value, `${this.callee}.${name}`);
     if (typeof arg.value !== 'number') {
       throw new DslError(`"${name}" must be a number in ${this.callee}`, arg.span);
     }
     return arg.value;
+  }
+
+  /**
+   * A number to draw again and again: a fresh sample per call from an
+   * rnd(), or the same value every time from a plain number. For the
+   * builtins that make many copies and want each a little different.
+   */
+  sampler(name: string, positional: number, fallback?: number): () => number {
+    if (this.recorder) {
+      this.record({ name, kind: 'number', required: fallback === undefined, fallback });
+      return () => (fallback === undefined || Number.isNaN(fallback) ? 1 : fallback);
+    }
+    const arg = this.find(name, positional);
+    if (!arg) {
+      if (fallback !== undefined) return () => fallback;
+      throw new DslError(`${this.callee} needs "${name}"`, this.span);
+    }
+    if (isJitter(arg.value)) return sampler(arg.value, `${this.callee}.${name}`);
+    if (typeof arg.value !== 'number') {
+      throw new DslError(`"${name}" must be a number in ${this.callee}`, arg.span);
+    }
+    const value = arg.value;
+    return () => value;
   }
 
   /** Like num(), but for a tessellation count that a generator divides by — segments, sides and the like are never 0 or negative. */
@@ -433,6 +514,15 @@ const inscriptionOf = (script: Inscription['script']) =>
   });
 
 const INSCRIPTIONS = { text: inscriptionOf('text'), runes: inscriptionOf('runes') };
+
+/** Play. rnd(22deg, 3deg) is somewhere between 19 and 25 degrees, the same somewhere every compile. */
+const RANDOM = {
+  rnd: define(['centre', 'spread', 'seed'], (a): Jitter => ({
+    centre: a.num('centre', 0),
+    spread: Math.abs(a.num('spread', 1, 0)),
+    seed: hashSeed([a.seed, a.num('seed', 2, 0)]),
+  })),
+};
 
 /** An argument that may be absent (NaN) or deliberately zero — 0 must survive. */
 const optional = (v: number) => (Number.isNaN(v) ? undefined : v);
@@ -1019,13 +1109,24 @@ const SYMMETRIES = {
       spin: a.num('spin', -1, 0),
     })),
 
-  // not "branch": that is a part. A tree of placements: a twig at each twig's tip.
+  // not "branch": that is a part. A tree of placements: a twig at each twig's
+  // tip. Its measures are drawn afresh for every twig, so an rnd() here is
+  // a different length or lean on each — a grown thing rather than a drawn one.
   tree: define(['depth', 'count', 'length', 'spread', 'shrink', 'twist', 'tips', 'phase'], (a) =>
-    branching(a.count('depth', 0, 3), a.count('count', 1, 2), a.num('length', 2), a.num('spread', 3, 0.5), a.num('shrink', 4, 0.7), {
-      twist: a.num('twist', -1, 0),
+    branching(a.count('depth', 0, 3), a.count('count', 1, 2), a.sampler('length', 2), a.sampler('spread', 3, 0.5), a.sampler('shrink', 4, 0.7), {
+      twist: a.sampler('twist', -1, 0),
       tipsOnly: a.flag('tips', -1, false),
       phase: a.num('phase', -1, 0),
     })),
+
+  // play added to any symmetry: each copy turned, tilted, shifted and scaled
+  // by its own draw within the amounts given
+  jitter: define(['symmetry', 'turn', 'tilt', 'shift', 'scale', 'seed'], (a) => {
+    const sym = a.symmetry('symmetry', 0);
+    const amounts = { turn: a.num('turn', -1, 0), tilt: a.num('tilt', -1, 0), shift: a.num('shift', -1, 0), scale: a.num('scale', -1, 0) };
+    const seed = hashSeed([a.seed, a.num('seed', -1, 0), amounts.turn, amounts.tilt, amounts.shift, amounts.scale]);
+    return jitterSymmetry(sym, amounts, seed);
+  }),
 
   nested: define(['count', 'factor', 'spin'], (a) =>
     nested(a.num('count', 0), a.num('factor', 1), a.num('spin', 2, 0))),
@@ -1035,7 +1136,7 @@ const SYMMETRIES = {
 };
 
 export const BUILTINS: Record<string, { known: string[]; fn: Builtin }> = {
-  ...CURVES, ...OUTLINES, ...ENGRAVINGS, ...INSCRIPTIONS, ...PARTS, ...SYMMETRIES,
+  ...CURVES, ...OUTLINES, ...ENGRAVINGS, ...INSCRIPTIONS, ...PARTS, ...SYMMETRIES, ...RANDOM,
 };
 
 export const ENGRAVING_NAMES = [...Object.keys(ENGRAVINGS), ...Object.keys(INSCRIPTIONS)];
