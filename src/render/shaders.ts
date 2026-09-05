@@ -68,11 +68,18 @@ fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
   if (light.shadow < 0.0) { return 1.0; }
   let layer = i32(light.shadow);
   let size = f32(textureDimensions(localShadows).x);
-  // step the point out along its normal by about a texel at its distance,
-  // so a surface does not shadow itself where the map's resolution runs out
+  // step the point out along its normal before the lookup, so a surface does
+  // not shadow itself where the map's resolution runs out. A texel of the map
+  // at the point's distance is the unit; where the light skims the surface
+  // the depth changes by far more than that across one texel, so the step
+  // grows with the slope — a tube an eighth of an inch above a plate lights
+  // most of that plate at a grazing angle
   var d = p - light.position;
   let dist = length(d);
-  let offset = n * (dist * 2.0 / size) * 1.5 * max(0.0, 1.0 - abs(dot(n, d / max(dist, 1e-4))) * 0.5);
+  let texel = dist * 2.0 / size;
+  let ndl = clamp(dot(n, -d / max(dist, 1e-4)), 0.0, 1.0);
+  let slope = sqrt(max(1.0 - ndl * ndl, 0.0)) / max(ndl, 0.05);
+  let offset = n * texel * (1.5 + min(slope, 8.0));
   d = p + offset - light.position;
   let a = abs(d);
   var face = 0;
