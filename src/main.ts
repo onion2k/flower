@@ -12,6 +12,7 @@ import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
 import { Viewer, tableNames, type Quality, type TableName } from './render/viewer';
+import { meanRadiance, parseHdr } from './render/hdr';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
 import { sketchNames } from './editor/help';
@@ -48,11 +49,15 @@ const state = {
   subject: formNames[0],
   metal: 'gold',
   finish: 'polished',
-  environment: 'studio' as EnvPreset,
+  environment: 'studio' as EnvPreset | 'image',
   table: 'matte' as TableName,
   exposure: 1,
   bloom: 0.018,
   glow: 1,
+  tonemap: 'agx' as 'agx' | 'aces',
+  vignette: 0.3,
+  grain: 0.25,
+  fringe: 0.3,
   envSpin: 0,
   background: '#0b0c0e',
   keyElevation: Math.PI / 4,
@@ -340,16 +345,52 @@ materialSet.append(
   }, (sel) => { finishSelect = sel; }),
 );
 
+let environmentPicker: HTMLSelectElement | null = null;
 const lightSet = document.createElement('fieldset');
 lightSet.innerHTML = '<legend>Light</legend>';
 lightSet.append(
   picker('environment', ['studio', 'daylight', 'dusk', 'gallery'], state.environment, (v) => {
-    state.environment = v as EnvPreset;
+    state.environment = v as EnvPreset | 'image';
     const env = viewer.setEnvironment(state.environment);
     hdrNote.textContent = env.highDynamicRange
       ? ''
       : 'float render targets unavailable — baked at 8 bits';
-  }),
+  }, (sel) => { environmentPicker = sel; }),
+  (() => {
+    // a photographed environment: a Radiance .hdr light probe from disk
+    const row = document.createElement('div');
+    row.className = 'row actions';
+    const b = document.createElement('button');
+    b.textContent = 'load HDRI…';
+    b.title = 'light the piece with a Radiance .hdr light probe from disk';
+    b.addEventListener('click', () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.accept = '.hdr,.pic';
+      input.addEventListener('change', async () => {
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+          const img = parseHdr(await file.arrayBuffer());
+          viewer.setEnvironmentImage(img, meanRadiance(img));
+          if (environmentPicker && ![...environmentPicker.options].some((o) => o.value === 'image')) {
+            const opt = document.createElement('option');
+            opt.value = 'image';
+            opt.textContent = 'image';
+            environmentPicker.append(opt);
+          }
+          if (environmentPicker) environmentPicker.value = 'image';
+          state.environment = 'image';
+          hdrNote.textContent = `${file.name} — ${img.width}×${img.height}`;
+        } catch (err) {
+          hdrNote.textContent = `could not read ${file.name}: ${(err as Error).message}`;
+        }
+      });
+      input.click();
+    });
+    row.append(b);
+    return row;
+  })(),
   slider('exposure', 0.15, 4, 0.05, state.exposure, (v) => `${v.toFixed(2)}×`, (v) => {
     state.exposure = v;
     viewer.setExposure(v);
@@ -426,7 +467,29 @@ viewSet.append(
 
 applyKey();
 viewer.setBackground(hexToRgb(state.background));
-controlsEl.append(subjectSet, materialSet, lightSet, keySet, viewSet);
+// the film: how the finished frame comes to the screen
+const filmSet = document.createElement('fieldset');
+filmSet.innerHTML = '<legend>Film</legend>';
+filmSet.append(
+  picker('tonemap', ['agx', 'aces'], state.tonemap, (v) => {
+    state.tonemap = v as 'agx' | 'aces';
+    viewer.setFilm({ tonemap: v === 'agx' ? 1 : 0 });
+  }),
+  slider('vignette', 0, 1, 0.02, state.vignette, (v) => v.toFixed(2), (v) => {
+    state.vignette = v;
+    viewer.setFilm({ vignette: v });
+  }),
+  slider('grain', 0, 1, 0.02, state.grain, (v) => v.toFixed(2), (v) => {
+    state.grain = v;
+    viewer.setFilm({ grain: v });
+  }),
+  slider('fringe', 0, 1, 0.02, state.fringe, (v) => v.toFixed(2), (v) => {
+    state.fringe = v;
+    viewer.setFilm({ fringe: v });
+  }),
+);
+
+controlsEl.append(subjectSet, materialSet, lightSet, keySet, filmSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {

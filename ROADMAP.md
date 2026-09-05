@@ -202,6 +202,27 @@ bake sidesteps it.
 | 8 | **A studio rig.** Fill and rim lights beside the key, as presets; the key machinery exists. | Medium | Low to moderate |
 | 9 | **A progressive path tracer for final quality.** A BVH built on the CPU, a compute shader accumulating samples while the view is still, the raster path kept for editing. Interreflection, soft shadows, refraction and bounce become exact. | The real answer | High, but bounded |
 
+### Done so far
+
+- **2, HDRI (September 2026):** `render/hdr.ts` parses Radiance files
+  (run-length and flat); `bakeEnvironment` takes an `image` and draws the
+  cube from it with an equirect lookup (+Z up, horizon in the middle) before
+  the same mip chain, GGX prefilter and readback. The image is uploaded as
+  half floats so it filters; a loaded probe is scaled by its mean radiance
+  to the studio preset's (1.08), so exposure means the same under both. A
+  "load HDRI…" button in the light panel adds `image` to the environment
+  picker. The key light stays a separate light: a probe has no sun of its
+  own.
+- **4, film (September 2026):** the composite pass gained AgX (Sobotka's
+  base look, inset/outset matrices, the sigmoid fit) beside the ACES fit, a
+  real sRGB curve instead of a 2.2 power, a vignette, pixel-fixed grain that
+  weakens in the highlights, and lateral fringe. A Film panel: tonemap,
+  vignette, grain, fringe. The page colour behind the piece is inverted
+  through whichever tonemap is active (AgX by iteration, since it mixes
+  channels), so it still comes out as itself. AgX renders bright gold as a
+  paler champagne — its rolloff — where ACES keeps it saturated; both are a
+  click apart.
+
 ### Caveats and order
 
 Items 1–8 each patch one symptom of not tracing rays. They stack, and they

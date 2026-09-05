@@ -15,6 +15,23 @@
 
 import { FULLSCREEN_VERT, halfToFloat, readbackLayer, shader, type GpuContext } from '../gpu/context';
 
+/** IEEE half from a float, round to nearest, for uploading a probe. */
+function floatToHalf(value: number): number {
+  const f32 = new Float32Array(1); const u32 = new Uint32Array(f32.buffer);
+  f32[0] = value;
+  const x = u32[0];
+  const sign = (x >>> 16) & 0x8000;
+  let exp = ((x >>> 23) & 0xff) - 127 + 15;
+  let mant = x & 0x7fffff;
+  if (exp <= 0) {
+    if (exp < -10) return sign;
+    mant = (mant | 0x800000) >>> (1 - exp);
+    return sign | ((mant + 0x1000) >>> 13);
+  }
+  if (exp >= 31) return sign | 0x7c00;
+  return sign | (exp << 10) | ((mant + 0x1000) >>> 13);
+}
+
 export type EnvPreset = 'studio' | 'dusk' | 'gallery' | 'daylight';
 
 export interface EnvSamples {
@@ -164,6 +181,26 @@ fn daylight(d: vec3f) -> vec3f {
   return vec4f(col, 1.0);
 }`;
 
+/**
+ * A photographed environment: an equirectangular map looked up by direction.
+ * Longitude runs across the image, latitude down it with the horizon in the
+ * middle, and +Z is up, as everywhere else here.
+ */
+const EQUIRECT = `
+${FULLSCREEN_VERT}
+${CUBE_BASIS}
+@group(0) @binding(1) var image: texture_2d<f32>;
+@group(0) @binding(2) var samp: sampler;
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let p = uv * 2.0 - 1.0;
+  let d = normalize(basis.forward + basis.right * p.x + basis.up * p.y);
+  let lon = atan2(d.y, d.x);
+  let lat = asin(clamp(d.z, -1.0, 1.0));
+  let st = vec2f(0.5 - lon / 6.2831853, 0.5 - lat / 3.14159265);
+  // basis.roughness carries the exposure scale for a loaded image
+  return vec4f(textureSampleLevel(image, samp, st, 0.0).rgb * basis.roughness, 1.0);
+}`;
+
 /** One mip level down: a linear sample at the centre of each texel averages the four beneath. */
 const DOWNSAMPLE = `
 ${FULLSCREEN_VERT}
@@ -285,10 +322,13 @@ const BASIS_STRIDE = 256;
 
 interface Pipelines {
   sky: GPURenderPipeline;
+  equirect: GPURenderPipeline;
   down: GPURenderPipeline;
   prefilter: GPURenderPipeline;
   brdf: GPURenderPipeline;
   sampler: GPUSampler;
+  /** For the photograph: wraps round in longitude. */
+  imageSampler: GPUSampler;
 }
 
 const pipelines = new WeakMap<GPUDevice, Pipelines>();
@@ -302,6 +342,13 @@ function getPipelines(device: GPUDevice): Pipelines {
     binding: 0, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'uniform', hasDynamicOffset: true },
   };
   const skyLayout = device.createBindGroupLayout({ entries: [basisEntry] });
+  const equirectLayout = device.createBindGroupLayout({
+    entries: [
+      basisEntry,
+      { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+      { binding: 2, visibility: GPUShaderStage.FRAGMENT, sampler: {} },
+    ],
+  });
   const prefilterLayout = device.createBindGroupLayout({
     entries: [
       basisEntry,
@@ -320,6 +367,7 @@ function getPipelines(device: GPUDevice): Pipelines {
   };
   p = {
     sky: make(SKY, 'env sky', skyLayout),
+    equirect: make(EQUIRECT, 'env equirect', equirectLayout),
     down: make(DOWNSAMPLE, 'env downsample'),
     prefilter: make(PREFILTER, 'env prefilter', prefilterLayout),
     brdf: make(BRDF, 'env brdf'),
@@ -327,17 +375,43 @@ function getPipelines(device: GPUDevice): Pipelines {
       magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
       addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge', addressModeW: 'clamp-to-edge',
     }),
+    imageSampler: device.createSampler({
+      magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'clamp-to-edge',
+    }),
   };
   pipelines.set(device, p);
   return p;
 }
 
+/** A photographed environment to bake from: an equirectangular float image, and the factor that brings it to the presets' scale. */
+export interface EnvImage {
+  width: number;
+  height: number;
+  /** RGBA floats, row 0 at the top. */
+  data: Float32Array;
+  scale: number;
+}
+
 export function bakeEnvironment(
   ctx: GpuContext,
   preset: EnvPreset,
-  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number]; sunSize?: number } = {},
+  opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number]; sunSize?: number; image?: EnvImage } = {},
 ): Environment {
   const { device } = ctx;
+  // a photograph, uploaded as a float texture for the equirect pipeline to read
+  let imageTexture: GPUTexture | null = null;
+  if (opts.image) {
+    const img = opts.image;
+    // half floats: a 32-bit float texture cannot be filtered without an
+    // optional feature, and the probe is sampled bilinearly into the cube
+    const half = new Uint16Array(img.data.length);
+    for (let i = 0; i < img.data.length; i++) half[i] = floatToHalf(img.data[i]);
+    imageTexture = device.createTexture({
+      label: 'env image', size: [img.width, img.height], format: FORMAT,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST,
+    });
+    device.queue.writeTexture({ texture: imageTexture }, half as Uint16Array<ArrayBuffer>, { bytesPerRow: img.width * 8 }, [img.width, img.height]);
+  }
   const size = opts.size ?? 512;
   const mips = opts.mips ?? 8;
   const brdfSize = opts.brdfSize ?? 128;
@@ -369,7 +443,8 @@ export function bakeEnvironment(
       (slot * BASIS_STRIDE) / 4,
     );
   };
-  for (let face = 0; face < 6; face++) setBasis(face, face, 0);
+  // for a photograph the roughness slot of the sky draws carries its exposure scale
+  for (let face = 0; face < 6; face++) setBasis(face, face, opts.image ? opts.image.scale : 0);
   for (let level = 0; level < mips; level++) {
     for (let face = 0; face < 6; face++) setBasis(6 + level * 6 + face, face, mips > 1 ? level / (mips - 1) : 0);
   }
@@ -390,12 +465,19 @@ export function bakeEnvironment(
   const encoder = device.createCommandEncoder({ label: 'env bake' });
 
   // --- 1. the environment itself, then its mip chain one level at a time ---
+  const skyPipe = imageTexture ? pipes.equirect : pipes.sky;
   const skyBind = device.createBindGroup({
-    layout: pipes.sky.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } }],
+    layout: skyPipe.getBindGroupLayout(0),
+    entries: imageTexture
+      ? [
+        { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
+        { binding: 1, resource: imageTexture.createView() },
+        { binding: 2, resource: pipes.imageSampler },
+      ]
+      : [{ binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } }],
   });
   for (let face = 0; face < 6; face++) {
-    drawTo(encoder, faceView(background, face, 0), pipes.sky, skyBind, [face * BASIS_STRIDE]);
+    drawTo(encoder, faceView(background, face, 0), skyPipe, skyBind, [face * BASIS_STRIDE]);
   }
   for (let level = 1; level < backgroundMips; level++) {
     for (let face = 0; face < 6; face++) {
@@ -458,6 +540,7 @@ export function bakeEnvironment(
       specular.destroy();
       brdf.destroy();
       basisBuffer.destroy();
+      imageTexture?.destroy();
     },
   };
 }

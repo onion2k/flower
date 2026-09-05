@@ -19,13 +19,15 @@ import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
 import { CushionBake, CUSHION_SIZE } from './cushion';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey } from './glyphs';
-import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
+import { bakeEnvironment, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
-import { PostChain, inverseTonemap } from './post';
+import { PostChain, inverseTonemap, type Film } from './post';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
+/** The studio preset's mean radiance over the sphere; a loaded photograph is scaled to match it. */
+const PRESET_MEAN_RADIANCE = 1.08;
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
@@ -358,7 +360,7 @@ export class Viewer {
     });
     this.post = new PostChain(ctx);
     // the scene is linear HDR until the composite, so clear to what tonemaps to the page colour
-    this.background = inverseTonemap(BACKGROUND);
+    this.background = inverseTonemap(BACKGROUND, this.film.tonemap);
 
     this.sampler = device.createSampler({
       magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
@@ -549,13 +551,29 @@ export class Viewer {
   }
 
   /** The current preset, so a moving sun knows whether it has a sky to move. */
-  private preset: EnvPreset = 'studio';
+  private preset: EnvPreset | 'image' = 'studio';
   private sunRebake = 0;
 
-  setEnvironment(preset: EnvPreset) {
+  /** A loaded photograph, once one has been given; 'image' in the picker then bakes from it. */
+  private envImage: EnvImage | null = null;
+
+  /**
+   * Take a photographed environment. The image is brought to the presets'
+   * scale by its mean radiance, so exposure means the same under it as under
+   * the studio, and any further difference is the slider's to make.
+   */
+  setEnvironmentImage(img: { width: number; height: number; data: Float32Array }, meanRadiance: number) {
+    this.envImage = { ...img, scale: meanRadiance > 0 ? PRESET_MEAN_RADIANCE / meanRadiance : 1 };
+    this.setEnvironment('image');
+  }
+
+  setEnvironment(preset: EnvPreset | 'image') {
+    if (preset === 'image' && !this.envImage) return this.environment!;
     this.preset = preset;
     const previous = this.environment;
-    const env = bakeEnvironment(this.ctx, preset, { sun: this.keyDir, sunSize: this.keySize });
+    const env = bakeEnvironment(this.ctx, preset === 'image' ? 'studio' : preset, {
+      sun: this.keyDir, sunSize: this.keySize, image: preset === 'image' ? this.envImage! : undefined,
+    });
     this.environment = env;
     this.envSamples = null;
     this.rebuildFrameBind();
@@ -579,6 +597,17 @@ export class Viewer {
   }
 
   setBloom(v: number) { this.bloom = v; this.dirty = true; }
+
+  /** The film look: which tonemap, and how much vignette, grain and fringe. */
+  film: Film = { tonemap: 1, vignette: 0.3, grain: 0.25, fringe: 0.3 };
+  private backgroundSrgb: Vec3 = BACKGROUND;
+  setFilm(film: Partial<Film>) {
+    this.film = { ...this.film, ...film };
+    // the page colour behind the piece is painted in radiance the film maps
+    // back to it, so a change of film moves it
+    this.setBackground(this.backgroundSrgb);
+    this.dirty = true;
+  }
 
   /** Scale every light in the piece, tubes and diodes alike: 0 puts them out. */
   setGlow(v: number) { this.glowScale = v; this.writeMaterials(); this.dirty = true; }
@@ -637,7 +666,8 @@ export class Viewer {
 
   /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */
   setBackground(rgb: Vec3) {
-    this.background = inverseTonemap(rgb);
+    this.backgroundSrgb = rgb;
+    this.background = inverseTonemap(rgb, this.film.tonemap);
     this.dirty = true;
     if (this.occlusion) {
       this.ctx.device.queue.writeBuffer(this.groundBuffer, 16, new Float32Array([...this.background, 0]));
@@ -1042,7 +1072,7 @@ export class Viewer {
     pass.end();
 
     this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
-      bloom: this.bloom, raw: this.debugMode > 0,
+      bloom: this.bloom, raw: this.debugMode > 0, film: this.film,
       focus: this.controls.distance * this.focusScale, dof: this.dof, subject: this.controls.distance,
     });
     device.queue.submit([encoder.finish()]);
