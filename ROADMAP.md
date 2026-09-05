@@ -145,6 +145,49 @@ each consuming parameter gets its own stream, so identical rnd()s agree —
 leaves follow limbs — while a spread and a twist written alike do not move
 in step. A sketch renders the same on every keystroke.
 
+## Third phase: the catalogue of sketches
+
+Asked for at the end of September 2026, once the renderer was where it
+needed to be: more examples, especially flowers, jewellery and art deco.
+Twenty-nine were added, every one from parts the catalogue already had,
+and the picker now groups them as Jewellery (23), Art deco (9), Flowers
+(26), Foliage & seed, Weapons, Structures and Techniques.
+
+- **Flowers:** lily, peony, lotus, snowdrop, sunflower, magnolia, dahlia,
+  hydrangea, bluebell, crocus, calla, cherry.
+- **Jewellery:** bangle, tiara, girandole, signet, eternity, halo, hoops,
+  rivière, locket, cufflinks.
+- **Art deco:** skyscraper clip, cocktail ring, mantel clock, powder
+  compact, table lamp, scent bottle, cuff, vanity mirror.
+
+`src/dsl/__tests__/examples.test.ts` compiles every example and checks the
+groups, so a sketch cannot rot in the picker. Every new piece was drawn on
+a contact sheet in the hidden pane and adjusted before it went in, and the
+language did not need to change for any of them. What the round taught,
+recorded here because the next round will want it:
+
+- **Orientation words.** `pitch 90deg` maps +Z to +X and +X to −Z, so a
+  fan plate pitched a quarter opens downward with its face forward, and a
+  pendant drawn along +X from its ring hangs. `roll 90deg turn 90deg`
+  stands a flat plate up with its outline's +Y as up and its face toward
+  +X, where the default camera is; the composition is fixed (roll, then
+  turn) whatever order the words are written in. A shank's crown is at the
+  band's outer radius on +X, so a ring's head is built flat as a unit and
+  pitched onto it.
+- **What `along()` does.** Its path runs down a placed unit's local Y, with
+  local X pointing sideways off the path; settings on a flat arc stay
+  upright, and a chain is a two-link unit with the second link stepped
+  along Y and pitched a quarter, repeated at half the count.
+- **Flowers.** A bell is built mouth up, so turned over inside its unit it
+  hangs from a raceme; a wire whose path already rises needs no tilt on a
+  ring; a lily's recurve wanted width 17, cup 30 and curl −80 on a −36
+  tilt; a sunflower's head is a unit pitched onto a stalk that bends
+  through a right angle.
+- **Gotchas.** A part name shadows a word (`part quill = petal(shape:
+  quill)` fails); a mirror reflects the dark studio and reads as black
+  glass; a step-cut aquamarine seen from the side does too, and moonstone
+  reads as frosted glass instead.
+
 ## Infrastructure as it stands
 
 - `Material` is 272 of a 512-byte stride (grown for the gem planes), so
