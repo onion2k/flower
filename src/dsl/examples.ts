@@ -1378,6 +1378,360 @@ form boutique {
 }
 `,
 
+  lily: `# Lilium — six tepals thrown right back, six long stamens, one style
+material silver polished
+
+# A lily's tepals recurve so far that the flower is wider than it is deep:
+# the curl is the largest of any flower here, and a shallow keel keeps each
+# tepal from reading as a strap once it has bent that far. Two whorls of
+# three, the inner one a shade smaller and steeper, as in the plant.
+part tepal    = petal(length: 38, width: 17, thickness: 0.6, shape: pointed, cup: 30deg, keel: 0.25, curl: -80deg, curlBias: 2.4, ruffle: 0.5, ruffleWaves: 3)
+part filament = wire(path: through((0,0,0), (4,0,14), (11,0,26)), radius: 0.45, tip: 0.6, sections: 30, sides: 8) in gold polished
+part anther   = pod(length: 5, width: 1.4, segments: 12) in bronze satin
+part style    = wire(path: through((0,0,0), (0.6,0,16), (2,0,30)), radius: 0.7, tip: 0.8, sections: 30, sides: 8) in gold polished
+part stigma   = bud(length: 3, width: 3, lobes: 3, lobeDepth: 0.2, point: 0.2) in bronze satin
+part floor    = disc(radius: 4, thickness: 1.8, bevel: 0.4) in bronze satin
+part stalk    = stem(path: through((0,0,-1), (1,0,-24), (-1.5,0,-50), (1,0,-76)), radius: 1.8, tip: 0.6, nodes: 3) in bronze satin
+part blade    = leaf(length: 26, width: 5, thickness: 0.5, shape: lanceolate, cup: 30deg, curl: -40deg, curlBias: 2) in bronze satin
+
+unit stamen {
+  place filament
+  fasten anther to filament.tip
+}
+
+form lily {
+  place floor
+  place stalk
+  repeat tepal around ring(3, radius: 2.8, tilt: -36deg)
+  repeat tepal around ring(3, radius: 2.6, phase: 60deg, tilt: -46deg, scale: 0.94)
+  # the filaments already rise in their own path, so the ring only spreads them
+  repeat stamen around ring(6, radius: 1.8, z: 0.8)
+  place style at (0, 0, 0.8)
+  fasten stigma to style.tip
+  # leaves in whorls up the stem, as a lily carries them
+  repeat blade around ring(5, radius: 1.5, z: -40, tilt: -30deg)
+  repeat blade around ring(5, radius: 1.5, z: -60, phase: 36deg, tilt: -26deg, scale: 0.9)
+}
+`,
+
+  peony: `# Paeonia — a bowl of ruffled petals, course upon course
+material rose gold satin
+
+# The peony is a rose with the discipline taken out: more petals, every one
+# of them crimped along its edge, and the courses not so much nested as
+# heaped. Three sizes again, but the ruffle does most of the work.
+part heart = petal(length: 14, width: 14, thickness: 0.4, shape: round, edge: crenate, edgeCount: 7, cup: 80deg, curl: 20deg, curlBias: 1.8, ruffle: 1.0, ruffleWaves: 4)
+part mid   = petal(length: 21, width: 21, thickness: 0.45, shape: round, edge: crenate, edgeCount: 9, cup: 60deg, curl: 6deg, curlBias: 2, ruffle: 1.2, ruffleWaves: 5)
+part outer = petal(length: 28, width: 28, thickness: 0.5, shape: round, edge: crenate, edgeCount: 11, cup: 40deg, curl: -20deg, curlBias: 2.6, ruffle: 1.0, ruffleWaves: 5)
+part carpel = pod(length: 6, width: 3, segments: 14) in gold polished
+part thread = wire(path: through((0,0,0), (0.5,0,4), (1.4,0,7)), radius: 0.3, tip: 0.6, sections: 18, sides: 6) in gold polished
+part anther = pod(length: 2, width: 0.9, segments: 8) in bronze satin
+part cup    = bell(length: 8, mouth: 10, throat: 4, wall: 0.8, flare: 1.6, lobes: 5, lobeDepth: 0.16) in bronze satin
+part floor  = disc(radius: 4.5, thickness: 2, bevel: 0.4) in bronze satin
+part stalk  = stem(path: through((0,0,0), (2,0,-22), (-2,0,-44), (1,0,-62)), radius: 1.9, tip: 0.6, nodes: 3) in bronze satin
+part foliage = leaf(length: 24, width: 12, thickness: 0.6, lobes: 3, spread: 1.4, veins: 3, cup: 20deg, curl: 24deg) in bronze satin
+
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+
+form peony {
+  place cup at (0, 0, -8)
+  place floor
+  place stalk
+  repeat carpel around ring(5, radius: 1.4, z: 1, tilt: -70deg)
+  repeat stamen around phyllotaxis(30, 0.9, start: 5, tilt: -12deg)
+  repeat heart around phyllotaxis(8, 1.2, start: 14, tilt: -84deg, fade: 0.3, rise: 1.2)
+  repeat mid   around phyllotaxis(12, 1.1, start: 22, tilt: -70deg, fade: 0.5, rise: 0.6)
+  repeat outer around phyllotaxis(14, 0.95, start: 34, tilt: -50deg, fade: 0.9)
+  repeat foliage around ring(3, radius: 0.9, z: -36, tilt: -20deg)
+}
+`,
+
+  lotus: `# Nelumbo — whorls of keeled petals round a seed head
+material gold satin
+
+# The receptacle is the lotus: a flat-topped cone with the seeds set into
+# its face. A bell with a wide throat is that cone, mouth up, and the
+# seeds are beads laid on a phyllotaxis inside the mouth.
+part outer = petal(length: 30, width: 16, thickness: 0.6, shape: pointed, cup: 50deg, keel: 0.25, curl: -22deg, curlBias: 2.2)
+part inner = petal(length: 24, width: 13, thickness: 0.6, shape: pointed, cup: 62deg, keel: 0.3, curl: -6deg, curlBias: 2)
+part head  = bell(length: 8, mouth: 13, throat: 6, wall: 1.2, flare: 1.1, rows: 12) in bronze satin
+part seed  = bead(radius: 1.2, point: 0.6, segments: 12) in gold polished
+part thread = wire(path: through((0,0,0), (0.8,0,5), (2.2,0,9)), radius: 0.3, tip: 0.6, sections: 18, sides: 6) in gold polished
+part anther = pod(length: 2.2, width: 0.9, segments: 8) in bronze satin
+part stalk = stem(path: through((0,0,0), (1,0,-14), (-1,0,-28), (0.5,0,-40)), radius: 1.6, tip: 0.7, nodes: 2, sections: 60) in bronze satin
+
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+unit seeds {
+  repeat seed around phyllotaxis(13, 1.9)
+}
+
+form lotus {
+  place head
+  place seeds at (0, 0, 7.6)
+  repeat stamen around ring(24, radius: 6.4, z: 1.5, tilt: -10deg)
+  repeat outer around ring(8, radius: 5, tilt: -58deg)
+  repeat inner around ring(8, radius: 4, phase: 22.5deg, z: 0.6, tilt: -70deg)
+  place stalk
+}
+`,
+
+  snowdrop: `# Galanthus — one nodding bell on a bent scape, over two strap leaves
+material silver polished
+
+# Built upright, then hung: the flower is a unit assembled the right way up
+# and turned over at the end of its stalk, the way the fuchsia is, so its
+# tilts are reasoned about the right way round. The scape bends through a
+# right angle at the top, which is what makes a snowdrop nod rather than
+# merely lean.
+let bend = through((0,0,0), (0,0,34), (2,0,42), (8,0,42))
+
+part scape  = stem(path: bend, radius: 1.0, tip: 0.6, nodes: 0, sections: 60) in bronze satin
+part spathe = leaf(length: 9, width: 3, thickness: 0.4, shape: lanceolate, cup: 40deg, curl: 20deg) in bronze satin
+part ovary  = pod(length: 4, width: 3, segments: 14) in bronze satin
+part outer  = petal(length: 14, width: 7, thickness: 0.4, shape: spoon, cup: 46deg, curl: -10deg, curlBias: 2, enamel: white)
+part inner  = petal(length: 8, width: 5, thickness: 0.4, shape: round, edge: notched, cup: 70deg, curl: 4deg, enamel: white)
+part blade  = leaf(length: 38, width: 4.5, thickness: 0.6, shape: linear, cup: 36deg, keel: 0.4, curl: -30deg, curlBias: 2) in bronze satin
+
+unit flower {
+  place ovary pitch 90deg
+  repeat outer around ring(3, radius: 1.8, z: 3.5, tilt: -64deg)
+  repeat inner around ring(3, radius: 1.4, z: 3.6, phase: 60deg, tilt: -78deg)
+}
+
+form snowdrop {
+  place scape
+  place flower at (8, 0, 42) pitch 180deg
+  place spathe at (2, 0, 42) turn 20deg
+  repeat blade around ring(2, radius: 0.8, phase: 90deg, tilt: -70deg)
+}
+`,
+
+  bangle: `# A bangle: a hammered hoop with a course of sapphires round its crown
+material gold hammered
+
+# A band is a hoop lying flat; the settings sit on its outer face, so the
+# ring that places them is tilted a quarter turn to point their seats
+# outward, at the band's outer radius. A polished wire either edge frames
+# the hammered face the way a rolled rim does.
+part hoop   = band(radius: 32, width: 9, thickness: 2.4)
+part rim    = wire(path: circle(radius: 33.4, z: 4.2), radius: 0.7, closed: yes, sections: 180) in gold polished
+part rimB   = wire(path: circle(radius: 33.4, z: -4.2), radius: 0.7, closed: yes, sections: 180) in gold polished
+part collet = setting(width: 4.4, style: bezel, height: 1.8) in gold polished
+part stone  = gem(cut: brilliant, width: 4.4) in sapphire
+
+unit set {
+  place collet
+  fasten stone to collet.seat
+}
+
+form bangle {
+  place hoop
+  place rim
+  place rimB
+  repeat set around ring(16, radius: 33.2, tilt: 90deg)
+}
+`,
+
+  tiara: `# A tiara: graduated brilliants along a double arch, pearls on the peaks
+material platinum polished
+
+# Drawn flat, as a circlet is seen from above: two rails on the same arc,
+# one a little inside the other, and the stones spaced by arc length with
+# the largest at the middle — "taper" shrinks them toward the ends.
+let sweep = arc(radius: 40, from: 20deg, to: 160deg)
+let inner = arc(radius: 36, from: 22deg, to: 158deg)
+
+part rail   = wire(path: sweep, radius: 0.9, sections: 160)
+part rail2  = wire(path: inner, radius: 0.8, sections: 160)
+part collet = setting(width: 5, style: claw, claws: 4, height: 2.6)
+part stone  = gem(cut: brilliant, width: 5) in diamond
+part spike  = wire(path: through((0,0,0), (0,0,5), (0,0,9)), radius: 0.5, tip: 0.5, sections: 20)
+part drop   = pearl(radius: 2.2) in white pearl
+part brace  = wire(path: through((36,0,0), (38,0,0.8), (40,0,0)), radius: 0.6, tip: 1, sections: 12)
+
+unit set {
+  place collet
+  fasten stone to collet.seat
+}
+unit finial {
+  place spike
+  fasten drop to spike.tip
+}
+
+form tiara {
+  place rail
+  place rail2
+  repeat set around along(sweep, 9, from: 0.06, to: 0.94, taper: 0.5)
+  place brace turn 50deg
+  place brace turn 90deg
+  place brace turn 130deg
+  place finial at (0, 40, 0)
+  place finial at (-24, 32, 0) scale 0.8
+  place finial at (24, 32, 0) scale 0.8
+}
+`,
+
+  girandole: `# Girandole earrings: a stud, a fan of a bow, and three pear drops on rings
+material gold polished
+
+# The pair hangs in the plane a mirror reflects across, one either side,
+# and every piece is turned a quarter to face forward: a fan opens along
+# +X, so pitched a quarter it opens downward, which is a bow; a bezel's
+# seat and a jump ring's face turn the same way.
+part hook   = wire(path: through((0, 14, 48), (0, 16.5, 46), (0, 19, 40), (0, 18, 34), (0, 15.5, 30)), radius: 0.45, tip: 0.7, sections: 60)
+part top    = setting(width: 5, style: bezel, height: 2.2)
+part topStone = gem(cut: brilliant, width: 5) in amethyst
+part bow    = plate(fan(radius: 7, spread: 110deg, blades: 5, inner: 1.6), thickness: 1) engraved rays(scale: 0.5, depth: 0.03)
+part link   = jumpRing(radius: 1.2, wireRadius: 0.3)
+part collet = setting(width: 4, style: bezel, height: 2)
+part drop   = gem(cut: pear, width: 4, length: 6.5) in amethyst
+
+# a pendant is drawn flat along +X from its ring, so pitched a quarter it hangs
+unit pendant {
+  place link
+  place collet at (5.2, 0, 0)
+  fasten drop to collet.seat
+}
+
+unit ear {
+  place hook
+  place top at (0, 14, 28) pitch 90deg
+  fasten topStone to top.seat
+  place bow at (0, 14, 26) pitch 90deg
+  place pendant at (0, 9, 20) pitch 90deg
+  place pendant at (0, 14, 18.5) pitch 90deg
+  place pendant at (0, 19, 20) pitch 90deg
+}
+
+form girandole {
+  repeat ear around mirror()
+}
+`,
+
+  signet: `# A signet ring: a bevelled face with a device cut into it, on a shank
+# that swells up to meet it. The face is a plate fastened by its back to
+# the shank's crown, flipped so the back is what meets the metal.
+material gold satin
+
+part band = shank(size: 18, width: 4.5, thickness: 2, shoulder: 0.9, shoulderSpread: 0.6)
+part face = plate(card(width: 13, height: 11, corner: 3.5), thickness: 2.4, bevel: 0.7) in gold polished engraved runes("tyr", size: 5, depth: 0.16)
+
+form signet {
+  place band
+  fasten face.back to band.crown flip
+}
+`,
+
+  skyscraper: `# Art deco: a skyscraper clip. Setbacks in platinum over a black shadow,
+# a row of baguettes on every terrace, a sunburst finial. Flat, as a clip
+# is worn: the tower's steps are drawn by the ziggurat outline, and each
+# setback carries a black sash with baguettes let into it.
+material platinum polished
+
+part shadow = plate(ziggurat(width: 24, height: 35, steps: 6, top: 8), thickness: 1, enamel: black)
+part tower  = plate(ziggurat(width: 20, height: 32, steps: 6, top: 5), thickness: 2)
+part sash   = plate(card(width: 12, height: 1.6, corner: 0.2), thickness: 0.6, enamel: black)
+part bag    = gem(cut: baguette, width: 1.5, length: 3.6) in diamond
+part collet = setting(width: 3.2, style: bezel, height: 1.4)
+part cap    = gem(cut: brilliant, width: 3.2) in diamond
+part burst  = plate(fan(radius: 9, spread: 180deg, blades: 9, inner: 2), thickness: 1) in gold satin engraved rays(scale: 0.5, depth: 0.04)
+
+# a sash across a setback, with four baguettes let into it
+unit terrace {
+  place sash
+  place bag at (-4, 0, 0.5)
+  place bag at (-1.3, 0, 0.5)
+  place bag at (1.3, 0, 0.5)
+  place bag at (4, 0, 0.5)
+}
+
+# the tower's steps are 32/6 apart; each terrace sits just above one, sized to it
+form skyscraper {
+  place shadow at (0, -1.5, -1.5)
+  place tower
+  place terrace at (0, 6.1, 1.3)
+  place terrace at (0, 11.5, 1.3) scale 0.85
+  place terrace at (0, 16.8, 1.3) scale 0.7
+  place terrace at (0, 22.1, 1.3) scale 0.55
+  place collet at (0, 28.5, 1)
+  fasten cap to collet.seat
+  place burst at (0, 32, 0) turn 90deg
+}
+`,
+
+  cocktail: `# Art deco cocktail ring: a step-cut onyx in a stepped platinum head,
+# brilliants at the corners, black enamel between. The head is built flat
+# as a unit and pitched a quarter turn onto the shank's crown, which sits
+# at the band's outer radius on +X.
+material platinum polished
+
+part band   = shank(size: 17, width: 3, thickness: 2, shoulder: 0.6)
+part table  = plate(card(width: 15, height: 15, corner: 2), thickness: 1.6, tiers: 2, shrink: 0.12)
+part frame  = plate(card(width: 11.5, height: 11.5, corner: 1.2), thickness: 0.6, enamel: black)
+part mount  = setting(width: 7, style: bezel, height: 2.2)
+part stone  = gem(cut: step, width: 7) in onyx
+part collet = setting(width: 2.2, style: bezel, height: 1.2)
+part chip   = gem(cut: brilliant, width: 2.2) in diamond
+
+unit corner {
+  place collet
+  fasten chip to collet.seat
+}
+unit head {
+  place table
+  place frame at (0, 0, 1.9)
+  place mount at (0, 0, 2.2)
+  fasten stone to mount.seat
+  repeat corner around ring(4, radius: 5.8, phase: 45deg, z: 2.2)
+}
+
+form cocktail {
+  place band
+  place head at (12.1, 0, 0) pitch 90deg
+}
+`,
+
+  mantel: `# Art deco: a mantel clock. A keystone case in black enamel over a
+# stepped foot, a roundel dial cut with rays, a chapter ring of baguettes
+# for the hours, and hands. The face is what the engraving is for: rays
+# from the dial's centre, like the sunburst dials of the thirties.
+material brass satin
+
+part foot  = plate(ziggurat(width: 60, height: 8, steps: 3, top: 44), thickness: 6, tiers: 1) in blackened steel satin
+part case  = plate(keystone(width: 44, height: 40, flare: 0.25, corner: 3), thickness: 8, enamel: black)
+part rim   = wire(path: circle(radius: 16), radius: 1.2, closed: yes, sections: 120) in brass polished
+part dial  = plate(roundel(radius: 15.5), thickness: 1) in silver satin engraved rays(scale: 0.7, depth: 0.04)
+part hour  = gem(cut: baguette, width: 1.2, length: 3) in onyx
+part boss  = rivet(head: 2.4, height: 0.8, shank: 1.2, grip: 0.8) in brass polished
+part hand  = plate(lozenge(length: 11, width: 2), thickness: 0.5) in blackened steel polished
+part minute = plate(lozenge(length: 14, width: 1.6), thickness: 0.5) in blackened steel polished
+part fin   = plate(chevron(width: 10, rise: 4, bar: 1.6), thickness: 1) in brass polished
+
+unit face {
+  place dial
+  place rim at (0, 0, 0.5)
+  repeat hour around ring(12, radius: 12.5, z: 0.6)
+  place hand at (2.8, 4.2, 0.9) turn 56deg
+  place minute at (-1.8, 6.6, 1.4) turn 105deg
+  place boss at (0, 0, 1)
+}
+
+# a plate is drawn flat; roll stands it up, and the quarter turn after it
+# brings its face round to +X, the way the piece is looked at
+form mantel {
+  place foot roll 90deg turn 90deg
+  place case at (0, 0, 8) roll 90deg turn 90deg
+  place face at (4.2, 0, 30) roll 90deg turn 90deg
+  place fin at (4.2, 0, 52) roll 90deg turn 90deg
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
@@ -1388,11 +1742,13 @@ export const exampleNames = Object.keys(examples);
  * group is still shown, under "Other", rather than lost.
  */
 export const exampleGroups: Array<[string, string[]]> = [
-  ['Jewellery', ['ring', 'tension', 'cluster', 'necklace', 'earrings', 'studs', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
-  ['Flowers', ['rose', 'tulip', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
+  ['Jewellery', ['ring', 'tension', 'cluster', 'signet', 'cocktail', 'bangle', 'tiara', 'necklace', 'earrings', 'studs', 'girandole', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
+  ['Art deco', ['deco', 'skyscraper', 'mantel', 'trefoil']],
+  ['Flowers', ['rose', 'peony', 'tulip', 'lily', 'lotus', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'snowdrop', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
   ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
   ['Weapons', ['dagger', 'battleaxe']],
   ['Structures', ['frame', 'tower', 'armillary']],
+  ['Techniques', ['engraved', 'inscribed', 'neon', 'solids', 'coral', 'bonsai']],
 ];
 {
   const placed = new Set(exampleGroups.flatMap(([, names]) => names));
