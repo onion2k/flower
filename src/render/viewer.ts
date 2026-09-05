@@ -29,9 +29,9 @@ const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
 /** The studio preset's mean radiance over the sphere; a loaded photograph is scaled to match it. */
 const PRESET_MEAN_RADIANCE = 1.08;
 const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]);
-const MATERIAL_STRIDE = 256;
+const MATERIAL_STRIDE = 512;
 /** Bytes of each material record that the shader reads. */
-const MATERIAL_SIZE = 256;
+const MATERIAL_SIZE = 272;
 const FRAME_SIZE = 256;
 /** The reflection probe: face size and prefilter levels. */
 const PROBE_SIZE = 256;
@@ -64,6 +64,9 @@ export interface InstanceGroup {
   inscription?: Inscription;
   /** Radiance of a light, in sky units, overriding its material's. */
   glow?: number;
+  /** A cut stone's facet planes, and its width. */
+  gemPlanes?: Float32Array;
+  gemSize?: number;
 }
 
 interface GpuGroup {
@@ -408,6 +411,8 @@ export class Viewer {
         // lettering: every placed glyph in the scene, and the atlas they are read from
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
         { binding: 2, visibility: GPUShaderStage.FRAGMENT, texture: { sampleType: 'float' } },
+        // every stone's facet planes, for tracing light through them
+        { binding: 3, visibility: GPUShaderStage.FRAGMENT, buffer: { type: 'read-only-storage' } },
       ],
     });
     this.groundLayout = device.createBindGroupLayout({
@@ -785,12 +790,14 @@ export class Viewer {
       usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
     });
     this.layoutLettering();
+    this.packGemPlanes();
     this.materialBind = device.createBindGroup({
       layout: this.materialLayout,
       entries: [
         { binding: 0, resource: { buffer: this.materialBuffer, size: MATERIAL_SIZE } },
         { binding: 1, resource: { buffer: this.glyphBuffer! } },
         { binding: 2, resource: this.atlasTexture!.createView() },
+        { binding: 3, resource: { buffer: this.gemPlaneBuffer! } },
       ],
     });
 
@@ -1200,6 +1207,22 @@ export class Viewer {
     this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView) }));
   }
 
+  /** All the stones' facet planes in one buffer, each group's run remembered for its material record. */
+  private gemPlaneBuffer: GPUBuffer | null = null;
+  private gemPlaneRanges: Array<{ base: number; count: number }> = [];
+  private packGemPlanes() {
+    const planes: number[] = [];
+    this.gemPlaneRanges = this.groups.map((g) => {
+      const p = g.source.gemPlanes;
+      if (!p || p.length / 4 > 160) return { base: 0, count: 0 };
+      const base = planes.length / 4;
+      planes.push(...p);
+      return { base, count: p.length / 4 };
+    });
+    this.gemPlaneBuffer?.destroy();
+    this.gemPlaneBuffer = bufferFrom(this.ctx.device, planes.length ? new Float32Array(planes) : new Float32Array(4), GPUBufferUsage.STORAGE, 'gem planes');
+  }
+
   /**
    * Lay every group's lettering out into one glyph buffer and make sure the
    * atlas holds every glyph used. Each glyph is a cell's box in the surface's
@@ -1286,6 +1309,9 @@ export class Viewer {
       const glow = m.model === 'light' ? (g.source.glow ?? m.glow ?? 1) * this.glowScale : 0;
       const c = m.colour ?? [1, 1, 1];
       f32.set(glow > 0 ? [c[0] * glow, c[1] * glow, c[2] * glow, 1] : [0, 0, 0, 0], o + 60);
+      const gp = this.gemPlaneRanges[k] ?? { base: 0, count: 0 };
+      u32.set([gp.base, gp.count], o + 64);
+      f32.set([g.source.gemSize ?? 5, 0], o + 66);
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
     this.writeLights();

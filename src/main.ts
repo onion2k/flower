@@ -493,7 +493,7 @@ controlsEl.append(subjectSet, materialSet, lightSet, keySet, filmSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
-  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription; glow?: number };
+  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription; glow?: number; gemPlanes?: Float32Array; gemSize?: number };
   // Two parts made by the same call share a mesh, so the mesh alone is not
   // the group: what is drawn on the surface has to match as well.
   const byMesh = new Map<Mesh, Group[]>();
@@ -505,7 +505,7 @@ function groupByMesh(assembly: Assembly) {
     if (!groups) { groups = []; byMesh.set(p.part.mesh, groups); }
     let group = groups.find((g) => sameSurface(g, p.part));
     if (!group) {
-      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription, glow: p.part.glow };
+      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription, glow: p.part.glow, gemPlanes: p.part.gemPlanes, gemSize: p.part.gemSize };
       groups.push(group);
     }
     for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
@@ -524,6 +524,8 @@ function groupByMesh(assembly: Assembly) {
     engraving: g.engraving,
     inscription: g.inscription,
     glow: g.glow,
+    gemPlanes: g.gemPlanes,
+    gemSize: g.gemSize,
   }));
 }
 

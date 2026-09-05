@@ -45,6 +45,10 @@ export interface Part {
   solderable?: boolean;
   /** Facets round a stone's pavilion, for the shader to bounce light off. */
   pavilionFacets?: number;
+  /** A cut stone's facets as planes — normal and offset, four floats each, in the part's own space — for the shader to trace through. */
+  gemPlanes?: Float32Array;
+  /** The stone's width, the length its colour is judged over. */
+  gemSize?: number;
   /** A pattern cut into the surface, drawn per pixel by the shader. */
   engraving?: Engraving;
   /** Lettering cut into the surface, drawn per pixel by the shader. */

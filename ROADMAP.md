@@ -146,12 +146,13 @@ in step. A sketch renders the same on every keystroke.
 
 ## Infrastructure as it stands
 
-- `Material` is 256 of a 256-byte stride. The next field means growing
-  `MATERIAL_STRIDE`, and the TypeScript packing in `writeMaterials()` with it.
+- `Material` is 272 of a 512-byte stride (grown for the gem planes), so
+  there is room for the next few fields.
 - Frame group bindings: 0 frame, 1 environment, 2 BRDF, 3 sampler, 4
   occlusion, 5 key shadow, 6 comparison sampler, 7 lights, 8 local shadow
-  array. Material group: 0 record, 1 glyph buffer, 2 glyph atlas. Ground
-  group: 0 record (80 bytes), 1 occlusion, 2 cushion height.
+  array, 9 reflection probe. Material group: 0 record, 1 glyph buffer, 2
+  glyph atlas, 3 gem planes. Ground group: 0 record (80 bytes), 1 occlusion,
+  2 cushion height.
 - Draw groups are keyed on mesh **and** surface (metal, finish, enamel, vein
   metal, engraving, inscription, glow): memoised parts share one mesh object
   across materials, and grouping by mesh alone once gave the second part the
@@ -223,6 +224,30 @@ bake sidesteps it.
   paler champagne — its rolloff — where ACES keeps it saturated; both are a
   click apart.
 
+- **1, reflection probe (September 2026):** the lit scene is drawn from
+  just above the piece into six 256² faces whenever anything that shows in a
+  reflection changes (piece, materials, lights, key, sky, table, occlusion),
+  filtered by roughness with the sky's own pipeline (`filterCube`), and read
+  everywhere the sky was read (`reflectionAt`, `irradianceAt`) with parallax
+  against a sphere of the scene's size, blending back to the sky where the
+  probe saw nothing. Alpha is made a hit mask on the way in: the scene writes
+  distances there for the depth of field. Two lessons: the probe must stand
+  in clear air — the scene's centroid is often inside a stone, and a probe
+  drawn from inside a gem fills every reflection with the inside of a gem;
+  and single-sample variants of the scene pipelines were needed, since the
+  main ones are multisampled. Gold on oak now takes the oak; a ring's
+  underside takes the velvet. One bounce: the probe does not see itself.
+- **3, traced gems (September 2026):** every facet of a cut is recorded as a
+  plane by the generator (`Part.gemPlanes`, ~130 for a brilliant since each
+  antiprism triangle is its own), packed into a storage buffer at material
+  binding 3, and `gemTraced` runs three channels through the convex stone:
+  Fresnel at entry, up to five internal bounces with total internal
+  reflection and Beer's-law absorption judged over the stone's width, and
+  each escape looked up in the probe and sky. The material record grew to a
+  512-byte stride for the plane range and size. Cabochons keep the folded
+  approximation. A brilliant now shows real facet structure and fire, with
+  its table's oak seen through the pavilion.
+
 ### Caveats and order
 
 Items 1–8 each patch one symptom of not tracing rays. They stack, and they
@@ -239,4 +264,5 @@ Suggested order: 2 and 4 first (cheap, change the look at once), then 1 and
 - Shadow softness that grows with a light's size.
 - Per-placement geometry variation is not possible while placements share a
   mesh; size varies through shrink, shape does not.
-- Growing the material record when the next material feature arrives.
+- The probe holds one bounce and stands at one point; a second probe, or a
+  second bounce, would close the gap to a path tracer further.

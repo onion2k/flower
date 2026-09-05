@@ -379,8 +379,14 @@ struct Material {
   _pad5: u32,
   letter: vec4f,       // depth mm, angle, centre x, centre y
   emission: vec4f,     // radiance of a light, rgb; w is 1 for a light
+  // a cut stone's facets, as planes in the part's own space, to trace through
+  gemPlaneBase: u32,
+  gemPlaneCount: u32,
+  gemSize: f32,        // the stone's width: the distance its colour is judged over
+  _pad7: f32,
 };
 @group(1) @binding(0) var<uniform> material: Material;
+@group(1) @binding(3) var<storage, read> gemPlanes: array<vec4f>;
 
 /** One placed glyph: its box in surface mm before the inscription's turn, and its atlas rectangle. */
 struct Glyph { box: vec4f, rect: vec4f };
@@ -651,6 +657,84 @@ fn letterHeight(e: vec2f) -> f32 {
   // a narrow wall: wide enough to catch light, never so wide the letter reads as embossed
   let bevel = min(0.15, material.letterSpread * 0.3);
   return -material.letter.x * (1.0 - smoothstep(-bevel, bevel, dist));
+}
+
+/**
+ * Light through a cut stone, traced.
+ *
+ * The stone is a convex solid bounded by its facet planes, so a ray inside
+ * it leaves through whichever plane it meets first — one test per plane,
+ * no mesh. From the point where the eye's ray enters, each channel is bent
+ * in by its own index (red least, blue most: the fire), run to the far
+ * facet, and there either bounces back in, when it strikes too shallow to
+ * escape, or splits by Fresnel into a part that leaves and a part that goes
+ * on. What leaves is looked up in the room — the probe and the sky — in the
+ * direction it left. The stone's colour is what a trip of its own width
+ * through it leaves of the light, Beer's law between bounces.
+ */
+fn fresnelDielectric(cosI: f32, eta: f32) -> f32 {
+  // eta is the index the ray is entering over the one it is leaving
+  let sinT2 = (1.0 - cosI * cosI) / (eta * eta);
+  if (sinT2 >= 1.0) { return 1.0; }
+  let cosT = sqrt(1.0 - sinT2);
+  let rs = (cosI - eta * cosT) / (cosI + eta * cosT);
+  let rp = (eta * cosI - cosT) / (eta * cosI + cosT);
+  return 0.5 * (rs * rs + rp * rp);
+}
+
+fn gemTraced(p: vec3f, v: vec3f, n: vec3f, side: vec3f, axis: vec3f, ior: f32, dispersion: f32, tint: vec3f, worldP: vec3f) -> vec3f {
+  // into the part's own space: its axes in the world are the varyings
+  let yAxis = cross(axis, side);
+  let toObject = mat3x3f(side, yAxis, axis);   // columns: object x, y, z in world
+  let vo = normalize(transpose(toObject) * v);
+  let no = normalize(transpose(toObject) * n);
+  // colour as absorption per millimetre, from what survives the stone's width
+  let absorb = -log(max(tint, vec3f(1e-3))) / max(material.gemSize, 0.5);
+  let base = material.gemPlaneBase;
+  let count = material.gemPlaneCount;
+  var out = vec3f(0.0);
+  for (var c = 0; c < 3; c++) {
+    // the traced stone needs far less help than the folded one: its fire
+    // comes from real bounces, so the spread is only doubled
+    let eta = max(ior + dispersion * 2.0 * (f32(c) - 1.0), 1.02);
+    let cosI = max(dot(vo, no), 1e-4);
+    var throughput = 1.0 - fresnelDielectric(cosI, eta);
+    var dir = refract(-vo, no, 1.0 / eta);
+    if (dot(dir, dir) < 1e-6) { continue; }
+    var pos = p;
+    var gathered = 0.0;
+    for (var bounce = 0; bounce < 5; bounce++) {
+      // the nearest plane ahead
+      var tBest = 1e9;
+      var nHit = no;
+      for (var i = 0u; i < count; i++) {
+        let pl = gemPlanes[base + i];
+        let denom = dot(dir, pl.xyz);
+        if (denom <= 1e-6) { continue; }
+        let t = (pl.w - dot(pl.xyz, pos)) / denom;
+        if (t > 1e-4 && t < tBest) { tBest = t; nHit = pl.xyz; }
+      }
+      if (tBest >= 1e9) { break; }
+      pos += dir * tBest;
+      throughput *= exp(-absorb[c] * tBest);
+      // leaving: the ray meets the facet from inside, so the normal to bend
+      // against points back in
+      let cosHit = max(dot(dir, nHit), 1e-4);
+      let f = fresnelDielectric(cosHit, 1.0 / eta);
+      if (f < 1.0) {
+        let outDir = refract(dir, -nHit, eta);
+        if (dot(outDir, outDir) > 1e-6) {
+          let world = normalize(toObject * outDir);
+          gathered += throughput * (1.0 - f) * dot(reflectionAt(world, 0.0, worldP), vec3f(f32(c == 0), f32(c == 1), f32(c == 2)));
+        }
+      }
+      throughput *= f;
+      if (throughput < 0.01) { break; }
+      dir = reflect(dir, nHit);
+    }
+    out += gathered * vec3f(f32(c == 0), f32(c == 1), f32(c == 2));
+  }
+  return out;
 }
 
 /** Engraved height: grooves cut in by the depth, or raised by a negative one. */
@@ -998,10 +1082,18 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
     let step = 6.2831853 / max(material.gemPavilion, 2.0);
     let az = (floor(atan2(in.object.y, in.object.x) / step) + 0.5) * step;
     let lateral = across * cos(az) + cross(axis, across) * sin(az);
-    let interior = gemInterior(v, n, axis, lateral, ior, material.gemDispersion, in.world) * material.baseColour * ao;
-    let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
-    let flash = gemSparkle(n, r, lit, material.gemSparkle);
-    colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
+    var interior: vec3f;
+    if (material.gemPlaneCount > 0u) {
+      // a faceted stone is traced: the Fresnel split at the entry is inside
+      // the trace, so nothing is taken off again here
+      interior = gemTraced(in.object, v, n, normalize(in.side), axis, ior, material.gemDispersion, material.baseColour, in.world);
+      colour = (mirror + interior) * frame.exposure;
+    } else {
+      interior = gemInterior(v, n, axis, lateral, ior, material.gemDispersion, in.world) * material.baseColour * ao;
+      let lit = smoothstep(0.8, 4.0, dot(reflected, vec3f(0.2126, 0.7152, 0.0722)));
+      let flash = gemSparkle(n, r, lit, material.gemSparkle);
+      colour = (mirror + interior * (1.0 - fresnel) + reflected * flash) * frame.exposure;
+    }
     keyF0 = vec3f(g0);
   } else if (light) {
     // the source itself: its radiance straight out through a glass skin that

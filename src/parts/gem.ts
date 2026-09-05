@@ -57,9 +57,10 @@ export function gem(spec: GemSpec): Part {
   const pavilion = p.pavilion * spec.width * squash;
   const table = spec.table ?? p.table;
 
+  const planes: number[] = [];
   const mesh = cut === 'cabochon'
     ? cabochon(halfW, crown, spec.segments ?? 40)
-    : faceted(cut, p, halfL, halfW, crown, pavilion, girdleT, table, spec.facets);
+    : faceted(cut, p, halfL, halfW, crown, pavilion, girdleT, table, spec.facets, planes);
 
   const anchors: Anchor[] = [
     // first, so fastening a stone to a mount seats it by its girdle
@@ -71,6 +72,10 @@ export function gem(spec: GemSpec): Part {
   return {
     name: spec.name ?? cut, mesh, bounds: meshBounds(mesh), anchors,
     solderable: false, pavilionFacets: p.mains,
+    // every facet as a plane, for the shader to trace light through the stone;
+    // a cabochon's dome is no facet and keeps the folded-room approximation
+    gemPlanes: planes.length ? new Float32Array(planes) : undefined,
+    gemSize: spec.width,
   };
 }
 
@@ -204,6 +209,7 @@ function faceted(
   halfL: number, halfW: number,
   crown: number, pavilion: number, girdleT: number, table: number,
   requested: number | undefined,
+  planes: number[] = [],
 ): Mesh {
   const n = cut === 'step' || cut === 'baguette'
     ? girdleOutline(cut, 0, halfL, halfW, 0).length
@@ -220,15 +226,23 @@ function faceted(
     return girdleOutline(cut, n, halfL, halfW, t.phase).map(([x, y]) => [x * t.scale, y * t.scale, t.z] as Vec3);
   };
   const rings = tiers.map(ringOf);
+  const record = (normal: Vec3, point: Vec3) => {
+    // one plane per facet: normal and offset, so n·x = d on it and n·x < d inside
+    const d = normal[0] * point[0] + normal[1] * point[1] + normal[2] * point[2];
+    for (let i = 0; i < planes.length; i += 4) {
+      if (Math.abs(planes[i] - normal[0]) < 1e-5 && Math.abs(planes[i + 1] - normal[1]) < 1e-5 && Math.abs(planes[i + 2] - normal[2]) < 1e-5 && Math.abs(planes[i + 3] - d) < 1e-4) return;
+    }
+    planes.push(normal[0], normal[1], normal[2], d);
+  };
 
   for (let k = 0; k + 1 < tiers.length; k++) {
     const a = rings[k], b = rings[k + 1];
     if (!a && b) {
       const apex: Vec3 = [0, 0, tiers[k].z];
-      for (let i = 0; i < b.length; i++) facet(mb, [apex, b[(i + 1) % b.length], b[i]], uvOf);
+      for (let i = 0; i < b.length; i++) facet(mb, [apex, b[(i + 1) % b.length], b[i]], uvOf, undefined, record);
     } else if (a && !b) {
       const apex: Vec3 = [0, 0, tiers[k + 1].z];
-      for (let i = 0; i < a.length; i++) facet(mb, [apex, a[i], a[(i + 1) % a.length]], uvOf);
+      for (let i = 0; i < a.length; i++) facet(mb, [apex, a[i], a[(i + 1) % a.length]], uvOf, undefined, record);
     } else if (a && b) {
       const offset = Math.abs(tiers[k + 1].phase - tiers[k].phase) > 1e-6;
       for (let i = 0; i < a.length; i++) {
@@ -236,10 +250,10 @@ function faceted(
         if (offset) {
           // an antiprism band: b[i] sits between a[i] and a[j], so the band
           // tiles as alternating triangles pointing up and down
-          facet(mb, [a[i], a[j], b[i]], uvOf);
-          facet(mb, [b[i], b[j], a[j]], uvOf);
+          facet(mb, [a[i], a[j], b[i]], uvOf, undefined, record);
+          facet(mb, [b[i], b[j], a[j]], uvOf, undefined, record);
         } else {
-          facet(mb, [a[i], a[j], b[j], b[i]], uvOf);
+          facet(mb, [a[i], a[j], b[j], b[i]], uvOf, undefined, record);
         }
       }
     }
@@ -247,9 +261,9 @@ function faceted(
 
   // the table, and the flat back of a cut that has one
   const top = rings[rings.length - 1];
-  if (top) facet(mb, top, uvOf, [0, 0, 1]);
+  if (top) facet(mb, top, uvOf, [0, 0, 1], record);
   const bottom = rings[0];
-  if (bottom) facet(mb, [...bottom].reverse(), uvOf, [0, 0, -1]);
+  if (bottom) facet(mb, [...bottom].reverse(), uvOf, [0, 0, -1], record);
 
   return mb.build();
 }
@@ -262,7 +276,7 @@ function faceted(
  * the stone. `outward` is the direction the facet ought to face; for a side
  * facet that is simply away from the axis.
  */
-function facet(mb: MeshBuilder, pts: Vec3[], uvOf: (p: Vec3) => Vec2, outward?: Vec3) {
+function facet(mb: MeshBuilder, pts: Vec3[], uvOf: (p: Vec3) => Vec2, outward?: Vec3, onPlane?: (normal: Vec3, point: Vec3) => void) {
   // Newell's normal, which is right for a polygon that is only nearly planar
   let nx = 0, ny = 0, nz = 0;
   let cx = 0, cy = 0;
@@ -284,6 +298,7 @@ function facet(mb: MeshBuilder, pts: Vec3[], uvOf: (p: Vec3) => Vec2, outward?: 
     order = [...pts].reverse();
   }
 
+  onPlane?.(normal, order[0]);
   const base = mb.vertexCount;
   for (const q of order) {
     const [u, v] = uvOf(q);
