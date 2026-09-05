@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { meshBounds, type Anchor, type Part } from './types';
@@ -31,8 +32,8 @@ export interface JumpRingSpec {
  * links has been threaded through the gap.
  */
 export function jumpRing(spec: JumpRingSpec): Part {
-  const sections = spec.sections ?? 64;
-  const sides = spec.sides ?? 12;
+  const sections = scaledCount(spec.sections ?? 64);
+  const sides = scaledCount(spec.sides ?? 12);
   const gap = Math.max(spec.gap ?? 0, 0);
   const closed = gap < 1e-6;
 

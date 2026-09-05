@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import { revolve } from '../mesh/revolve';
 import { meshBounds, type Part } from './types';
 import type { Vec2 } from '../geom/types';
@@ -32,7 +33,7 @@ export function pearl(spec: PearlSpec): Part {
     const a = (i / rows) * Math.PI;
     points.push([r * Math.sin(a), -r * Math.cos(a) * squash]);
   }
-  const mesh = revolve({ points }, { segments: spec.segments ?? 48 });
+  const mesh = revolve({ points }, { segments: scaledCount(spec.segments ?? 48) });
   return {
     name: spec.name ?? 'pearl',
     mesh,

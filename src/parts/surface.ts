@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec3 } from '../geom/types';
 import { bezierPatch, helicoid, mobius, ripple, saddle, shell, surface, type SurfaceFn } from '../mesh/surface';
 import { meshBounds, type Anchor, type Part } from './types';
@@ -17,7 +18,7 @@ export interface SheetSpec {
 
 function sheetPart(name: string, f: SurfaceFn, spec: SheetSpec, closedU = false, closedV = false, aspect = 1): Part {
   const thickness = spec.thickness ?? 0.8;
-  const segments = spec.segments ?? 48;
+  const segments = scaledCount(spec.segments ?? 48);
   const mesh = surface(f, {
     thickness,
     segmentsU: segments,

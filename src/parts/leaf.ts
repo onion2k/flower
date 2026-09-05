@@ -1,3 +1,5 @@
+import { scaledCount } from '../mesh/detail';
+import { detail } from '../mesh/detail';
 import {
   clearsOthers, ensureWinding, fitsInside, leafOutline, leafPiercings, palmateOutline, palmateVeins,
   teardropOutline, transformLoop, veinPiercings, type LeafShape,
@@ -57,7 +59,7 @@ export interface LeafSpec {
  * a pierced outline is a 2D problem and only the caps need triangulating.
  */
 export function leaf(spec: LeafSpec): Part {
-  const segments = spec.segments ?? 64;
+  const segments = scaledCount(spec.segments ?? 64);
   const droop = spec.droop ?? 0.18;
   const bevel = spec.bevel ?? Math.min(spec.thickness * 0.28, 0.4);
 
@@ -136,7 +138,8 @@ export function leaf(spec: LeafSpec): Part {
   };
   // A flat cap can be a fan of long triangles; a bent one cannot, so the plate is
   // refined while it is still planar and cheap to cut.
-  const limit = chordLimit(fields, spec.length * 0.004);
+  // the chord a draft may take is longer by the detail's inverse: half the detail, twice the chord, a quarter of the cap
+  const limit = chordLimit(fields, spec.length * 0.004) / detail();
   const mesh = extrude({
     outline, holes: fitted, thickness: spec.thickness, bevel,
     maxCapEdge: Number.isFinite(limit) ? limit : undefined,

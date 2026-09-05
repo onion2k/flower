@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import { catmullRom, pathTangent, resample, type Curve } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
@@ -45,8 +46,8 @@ const GOLDEN = Math.PI * (3 - Math.sqrt(5));
  * it, rather than being positioned by eye and hoping.
  */
 export function stem(spec: StemSpec): Part {
-  const sections = spec.sections ?? 96;
-  const sides = spec.sides ?? 10;
+  const sections = scaledCount(spec.sections ?? 96);
+  const sides = scaledCount(spec.sides ?? 10);
   const tip = spec.tipScale ?? 0.35;
   const nodes = spec.nodes ?? 0;
   const swell = spec.nodeSwell ?? 0.28;
@@ -141,8 +142,8 @@ export interface BranchSpec extends StemSpec {
 export function branch(spec: BranchSpec): Part {
   const limbs = spec.limbs ?? 3;
   const trunk = stem({ ...spec, nodes: Math.max(spec.nodes ?? limbs, limbs) });
-  const sections = Math.max(Math.round((spec.sections ?? 96) / 3), 16);
-  const sides = spec.sides ?? 10;
+  const sections = Math.max(Math.round((scaledCount(spec.sections ?? 96)) / 3), 16);
+  const sides = scaledCount(spec.sides ?? 10);
   const angle = spec.limbAngle ?? 0.85;
   const sag = spec.limbSag ?? 0.18;
   const taper = spec.limbTaper ?? 0.55;

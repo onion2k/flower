@@ -1,3 +1,5 @@
+import { scaledCount } from '../mesh/detail';
+import { detail } from '../mesh/detail';
 import {
   clearsOthers, ensureWinding, fitsInside, petalOutline, transformLoop, veinPiercings,
   circleOutline, type PetalEdge, type PetalShape,
@@ -57,7 +59,7 @@ export interface PetalSpec {
  * problem and the bevel that draws the edge survives the bend.
  */
 export function petal(spec: PetalSpec): Part {
-  const segments = spec.segments ?? 72;
+  const segments = scaledCount(spec.segments ?? 72);
   const bevel = spec.bevel ?? Math.min(spec.thickness * 0.3, 0.35);
 
   const outline = petalOutline(spec.length, spec.width, {
@@ -113,7 +115,8 @@ export function petal(spec: PetalSpec): Part {
     relief: spec.relief ?? spec.thickness * 0.2,
     reliefVeins: spec.reliefVeins ?? 4,
   };
-  const limit = chordLimit(fields, spec.length * 0.004);
+  // the chord a draft may take is longer by the detail's inverse: half the detail, twice the chord, a quarter of the cap
+  const limit = chordLimit(fields, spec.length * 0.004) / detail();
   const mesh = extrude({
     outline, holes: fitted, thickness: spec.thickness, bevel,
     maxCapEdge: Number.isFinite(limit) ? limit : undefined,

@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { MeshBuilder, enamelWhole, mergeMeshes, recomputeNormals, type Mesh } from '../mesh/types';
@@ -90,7 +91,7 @@ export function axe(spec: AxeSpec): Part {
   const headReach = spec.headReach ?? spec.haftLength * 0.26;
   const headHeight = spec.headHeight ?? spec.haftLength * 0.3;
   const headThickness = spec.headThickness ?? haftRadius * 1.4;
-  const segments = spec.segments ?? 24;
+  const segments = scaledCount(spec.segments ?? 24);
   const sides = Math.max(8, Math.round(segments / 2));
 
   // haft: a plain taper, flared briefly at the butt so the grip doesn't

@@ -1,3 +1,4 @@
+import { detail } from './detail';
 import earcut from 'earcut';
 import type { Vec2 } from '../geom/types';
 import { ensureWinding } from '../geom/outline';
@@ -116,7 +117,8 @@ function cap(
   // triangles exist, and a fan of slivers from rim to rim smears an edge value
   // over the whole face. Twenty or so points across the span is enough, and
   // still reaches the bars of a pierced leaf.
-  const spacing = Math.min(maxCapEdge ?? Infinity, Math.max(span.width, span.height) * 0.05);
+  // a draft takes fewer: at half the detail, half as many across and a quarter of the cap
+  const spacing = Math.min(maxCapEdge ?? Infinity, (Math.max(span.width, span.height) * 0.05) / detail());
   if (Number.isFinite(spacing) && spacing > 0) {
     ({ points, tris: tri } = tessellateCap(points, tri, loops, spacing));
   }
@@ -514,7 +516,8 @@ function relaxInterior(points: number[], faces: number[], boundaryVertices: numb
  * A single 45° facet reads as machined: one flat glint, then nothing. A rounded
  * edge carries a highlight that slides as the piece turns, which is what a filed
  * and polished edge does, and the curvature-driven wear sees a smooth convex
- * band rather than two creases. Three steps are enough at these sizes.
+ * band rather than two creases. Three steps are enough at these sizes; a
+ * draft takes two.
  */
 function band(
   mb: MeshBuilder,
@@ -523,7 +526,7 @@ function band(
   outward: Vec2[],
   perimeter: number[],
   dir: number,
-  steps = 3,
+  steps = Math.max(1, Math.round(3 * detail())),
   zMid = 0,
 ) {
   const n = cap.length;

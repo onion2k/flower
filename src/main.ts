@@ -12,6 +12,7 @@ import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
 import { Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
+import { detail, setDetail } from './mesh/detail';
 import { meanRadiance, parseHdr } from './render/hdr';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
@@ -113,6 +114,19 @@ const state = {
 };
 
 let framed = '';
+
+/**
+ * Draft builds every part at half the detail: a quarter of the triangles on
+ * a petal, a third of the piece on the densest sketches, and the occlusion
+ * bake and the frame lighter with it. Returns whether the detail changed.
+ */
+function applyDetail(): boolean {
+  const d = state.quality === 'draft' ? 0.5 : 1;
+  if (d === detail()) return false;
+  setDetail(d);
+  return true;
+}
+applyDetail();
 
 function toggle(label: string, key: 'showAnchors' | 'showFocus', onChange: () => void) {
   const wrap = document.createElement('label');
@@ -549,6 +563,8 @@ viewSet.append(
     state.quality = v as Quality;
     viewer.setQuality(state.quality);
     traceNote.hidden = state.quality !== 'traced';
+    // draft tessellates lighter, so the piece is rebuilt when the detail changes
+    if (applyDetail()) build();
   }),
   traceNote,
   picker('debug', DEBUG_MODES, 'shaded', (v) => {

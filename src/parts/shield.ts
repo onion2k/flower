@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec2 } from '../geom/types';
 import * as profile from '../geom/profile';
 import { revolve } from '../mesh/revolve';
@@ -47,7 +48,7 @@ export function shield(spec: ShieldSpec): Part {
   const wall = spec.wall ?? spec.radius * 0.035;
   const gripWidth = spec.gripWidth ?? spec.radius * 0.7;
   const gripRadius = spec.gripRadius ?? wall * 1.1;
-  const segments = spec.segments ?? 48;
+  const segments = scaledCount(spec.segments ?? 48);
   const rows = 28;
 
   const centrelineZ = (r: number) => {

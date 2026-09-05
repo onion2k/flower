@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import { arc, resample } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
@@ -32,8 +33,8 @@ export interface ClaspSpec {
  * clasp is only ever the half of the closure that has to curl.
  */
 export function clasp(spec: ClaspSpec): Part {
-  const sections = spec.sections ?? 64;
-  const sides = spec.sides ?? 12;
+  const sections = scaledCount(spec.sections ?? 64);
+  const sides = scaledCount(spec.sides ?? 12);
   const sweepAngle = spec.sweep ?? Math.PI * 2 * 0.72;
   const tip = spec.tip ?? 0.55;
 

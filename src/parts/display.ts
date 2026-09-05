@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec2, Vec3 } from '../geom/types';
 import * as profile from '../geom/profile';
 import { tombstoneOutline } from '../geom/outline';
@@ -57,7 +58,7 @@ export function ringStand(spec: RingStandSpec): Part {
   const baseHeight = spec.baseHeight ?? spec.baseRadius * 0.18;
   const postRadius = spec.postRadius ?? spec.baseRadius * 0.32;
   const postHeight = spec.postHeight ?? spec.baseRadius * 1.6;
-  const segments = spec.segments ?? 48;
+  const segments = scaledCount(spec.segments ?? 48);
   const tipRows = 10;
 
   const waypoints: Vec2[] = [
@@ -116,7 +117,7 @@ export function earringStand(spec: EarringStandSpec): Part {
   const postHeight = spec.postHeight ?? spec.baseRadius * 2.2;
   const barLength = spec.barLength ?? spec.baseRadius * 2.6;
   const barRadius = spec.barRadius ?? postRadius * 0.85;
-  const segments = spec.segments ?? 48;
+  const segments = scaledCount(spec.segments ?? 48);
   const sides = Math.max(8, Math.round(segments / 3));
 
   const waypoints: Vec2[] = [
@@ -177,7 +178,7 @@ export function bust(spec: BustSpec): Part {
   const shoulderRadius = spec.shoulderRadius ?? height * 0.52;
   const shoulderSpan = Math.min(Math.max(spec.shoulderSpan ?? 0.34, 0.05), 0.9);
   const neckRadius = spec.neckRadius ?? height * 0.17;
-  const segments = spec.segments ?? 64;
+  const segments = scaledCount(spec.segments ?? 64);
 
   const shoulderHeight = height * shoulderSpan;
   // the neck itself is a short cylinder, not one long taper all the way to
@@ -248,7 +249,7 @@ export function easel(spec: EaselSpec): Part {
   const pegRadius = spec.pegRadius ?? thickness * 1.2;
   const pegLength = spec.pegLength ?? pegRadius * 3;
   const legDepth = spec.legDepth ?? spec.height * 0.55;
-  const segments = spec.segments ?? 10;
+  const segments = scaledCount(spec.segments ?? 10);
 
   const card = extrude({
     outline: tombstoneOutline(spec.width, spec.height, cornerRadius, segments),

@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { mergeMeshes } from '../mesh/types';
@@ -37,8 +38,8 @@ export interface LeverBackSpec {
 export function leverBack(spec: LeverBackSpec): Part {
   const wireRadius = spec.wireRadius ?? spec.radius * 0.12;
   const gap = Math.max(spec.gap ?? 0.8, 0.05);
-  const sections = spec.sections ?? 64;
-  const sides = spec.sides ?? 12;
+  const sections = scaledCount(spec.sections ?? 64);
+  const sides = scaledCount(spec.sides ?? 12);
   const leverWidth = spec.leverWidth ?? wireRadius * 3.2;
   const leverThickness = spec.leverThickness ?? wireRadius * 1.4;
 

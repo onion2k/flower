@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import { resample, type Curve } from '../geom/curve';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
@@ -40,8 +41,8 @@ export interface WireSpec {
  * rather than extruded.
  */
 export function wire(spec: WireSpec): Part {
-  const sections = spec.sections ?? 128;
-  const sides = spec.sides ?? 12;
+  const sections = scaledCount(spec.sections ?? 128);
+  const sides = scaledCount(spec.sides ?? 12);
   const closed = spec.closed ?? false;
   const tip = spec.tipScale ?? 0.2;
 
@@ -119,8 +120,8 @@ export interface BladeSpec {
 }
 
 export function blade(spec: BladeSpec): Part {
-  const sections = spec.sections ?? 96;
-  const sides = spec.sides ?? 16;
+  const sections = scaledCount(spec.sections ?? 96);
+  const sides = scaledCount(spec.sides ?? 16);
   const path = resample(spec.path, sections);
   const swell = spec.swell ?? ((t: number) => Math.pow(Math.sin(Math.PI * t), 0.7) * (1 - 0.25 * t) + 0.06);
 
@@ -166,7 +167,7 @@ export interface BandSpec {
  * instrument rather than as loops of wire.
  */
 export function band(spec: BandSpec): Part {
-  const segments = spec.segments ?? 128;
+  const segments = scaledCount(spec.segments ?? 128);
   const path: Vec3[] = [];
   for (let i = 0; i < segments; i++) {
     const a = (i / segments) * Math.PI * 2;

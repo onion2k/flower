@@ -1,3 +1,4 @@
+import { detail } from '../mesh/detail';
 import { Assembly, type Placement as Placed } from '../assembly/assembly';
 import { solderFillet, type FilletCache } from '../assembly/fillet';
 import { identity, multiply, rotationAbout, translation, uniformScale, type Mat4 } from '../geom/transform';
@@ -51,7 +52,8 @@ function partMemoKey(callee: string, args: CallArg[]): string | null {
     if (k === null) return null;
     parts.push(`${a.name ?? ''}=${k}`);
   }
-  return `${callee}(${parts.join(';')})`;
+  // a part built at one detail is not the part at another
+  return `${callee}@${detail()}(${parts.join(';')})`;
 }
 
 function rememberPart(key: string, part: Part) {

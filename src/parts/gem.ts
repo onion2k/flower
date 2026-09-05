@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec2, Vec3 } from '../geom/types';
 import { MeshBuilder, type Mesh } from '../mesh/types';
 import { revolve } from '../mesh/revolve';
@@ -59,7 +60,7 @@ export function gem(spec: GemSpec): Part {
 
   const planes: number[] = [];
   const mesh = cut === 'cabochon'
-    ? cabochon(halfW, crown, spec.segments ?? 40)
+    ? cabochon(halfW, crown, scaledCount(spec.segments ?? 40))
     : faceted(cut, p, halfL, halfW, crown, pavilion, girdleT, table, spec.facets, planes);
 
   const anchors: Anchor[] = [

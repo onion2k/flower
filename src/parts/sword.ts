@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec2, Vec3 } from '../geom/types';
 import { line } from '../geom/curve';
 import * as profile from '../geom/profile';
@@ -74,7 +75,7 @@ export function sword(spec: SwordSpec): Part {
   // a fist-sized knob reads as ornament; a sword's own pommel is barely
   // wider than the grip it caps, just enough to stop a hand sliding off
   const pommelRadius = spec.pommelRadius ?? gripRadius * 1.1;
-  const segments = spec.segments ?? 24;
+  const segments = scaledCount(spec.segments ?? 24);
   const sides = Math.max(8, Math.round(segments / 2));
 
   // pommel: a plain oblate knob, pole to pole, widest at half its own height

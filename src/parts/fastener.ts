@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import { revolve, type Silhouette } from '../mesh/revolve';
 import { enamelInside, enamelWhole } from '../mesh/types';
 import { meshBounds, type Part } from './types';
@@ -57,7 +58,7 @@ export function rivet(spec: RivetSpec): Part {
     at(Math.sqrt(Math.max(r * r - (z - zc) * (z - zc), 0)), z);
   }
 
-  const mesh = revolve({ points, sharp }, { segments: spec.segments ?? 24 });
+  const mesh = revolve({ points, sharp }, { segments: scaledCount(spec.segments ?? 24) });
   return {
     name: spec.name ?? 'rivet',
     mesh,
@@ -112,7 +113,7 @@ export function bead(spec: BeadSpec): Part {
     sil = { points: outer };
   }
 
-  const mesh = revolve(sil, { segments: spec.segments ?? 24 });
+  const mesh = revolve(sil, { segments: scaledCount(spec.segments ?? 24) });
   if (spec.enamel) enamelWhole(mesh);
   return {
     name: spec.name ?? 'bead',
@@ -161,7 +162,7 @@ export function egg(spec: EggSpec): Part {
     points.push([r * Math.sin(t) * (1 - taper * bias), -h * Math.cos(t)]);
   }
 
-  const mesh = revolve({ points }, { segments: spec.segments ?? 48 });
+  const mesh = revolve({ points }, { segments: scaledCount(spec.segments ?? 48) });
   if (spec.enamel) enamelWhole(mesh);
   return {
     name: spec.name ?? 'egg',
@@ -207,7 +208,7 @@ export function collar(spec: CollarSpec): Part {
   const points = [...inner, ...outer];
   const sharp = points.map((_, i) => i === inner.length - 1 || i === points.length - 1);
 
-  const mesh = revolve({ points, sharp, closed: true }, { segments: spec.segments ?? 24 });
+  const mesh = revolve({ points, sharp, closed: true }, { segments: scaledCount(spec.segments ?? 24) });
   return {
     name: spec.name ?? 'collar',
     mesh,
@@ -259,7 +260,7 @@ export function pod(spec: PodSpec): Part {
   const ribs = spec.ribs ?? 0;
   const ribDepth = (spec.ribDepth ?? 0.12) ;
   const mesh = revolve({ points }, {
-    segments: spec.segments ?? 32,
+    segments: scaledCount(spec.segments ?? 32),
     warp: ribs > 0
       // faded out at the ends so the ribs die into the points rather than
       // crossing them, which is what leaves a pole looking screwed on
@@ -329,7 +330,7 @@ export function bell(spec: BellSpec): Part {
   const lobes = spec.lobes ?? 0;
   const lobeDepth = spec.lobeDepth ?? 0.16;
   const mesh = revolve({ points, sharp, closed: true }, {
-    segments: spec.segments ?? 40,
+    segments: scaledCount(spec.segments ?? 40),
     // A plain circular rim is the tell that a corolla was turned on a lathe. The
     // lobes grow with height so the throat stays round where it joins the flower.
     warp: lobes > 0
@@ -395,7 +396,7 @@ export function bud(spec: BudSpec): Part {
   }
 
   const mesh = revolve({ points }, {
-    segments: spec.segments ?? 36,
+    segments: scaledCount(spec.segments ?? 36),
     warp: (angle, v) =>
       1 + depth * Math.cos(lobes * (angle + v * 0.55)) * Math.sin(Math.PI * v),
   });

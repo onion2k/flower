@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import * as profile from '../geom/profile';
 import { sweep } from '../mesh/sweep';
 import { meshBounds, type Anchor, type Part } from './types';
@@ -44,7 +45,7 @@ export interface ShankSpec {
  * spring of the metal actually does the gripping.
  */
 export function shank(spec: ShankSpec): Part {
-  const segments = spec.segments ?? 96;
+  const segments = scaledCount(spec.segments ?? 96);
   const shoulder = spec.shoulder ?? 0;
   const spread = Math.max(spec.shoulderSpread ?? 0.9, 1e-3);
   const gap = Math.max(spec.gap ?? 0, 0);

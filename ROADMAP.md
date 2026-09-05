@@ -488,11 +488,23 @@ and in what followed every light change. Three things were done:
   whole scene (20 to 30 ms); it now runs 150 ms after the last change,
   as the daylight sun already did, and ten ticks of a slider bake once.
 
+- **Draft tessellates lighter.** One detail setting (`mesh/detail.ts`)
+  scales every segment count and chord tolerance; draft sets it to a half.
+  A count is brought down whether the generator chose it or the sketch
+  wrote it — `segments: 72` asks for smoothness, not for seventy-two of
+  anything — but never below eight and never above what was written, so a
+  hand-set hexagon is a hexagon at any quality. A plate's cap refines by a
+  chord limit that doubles, its flat-cap grid halves, and its bevel bands
+  take two steps for three. The generators do the scaling, not the
+  language, so the catalogue's parts come down too; the evaluator keys its
+  part memo on the detail, and a change of quality rebuilds the piece. The
+  hydrangea goes from 1,016,000 triangles to 337,000, the boutique from
+  843,000 to 310,000, the bouquet from 1,968,000 to 730,000, and the
+  frame and the occlusion bake fall with them.
+
 Still open, in order of payoff: the occlusion bake at final quality
 restarts on every keystroke (0.5 to 1.5 s); contact occlusion could be a
-final-only feature; the densest examples (hydrangea, boutique) are a
-million triangles from default segment counts on parts repeated hundreds
-of times, and a draft-quality tessellation would cut both frame and bake.
+final-only feature.
 
 ## As a library
 

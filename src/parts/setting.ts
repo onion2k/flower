@@ -1,3 +1,4 @@
+import { scaledCount } from '../mesh/detail';
 import type { Vec2, Vec3 } from '../geom/types';
 import * as profile from '../geom/profile';
 import { mergeMeshes, type Mesh } from '../mesh/types';
@@ -48,7 +49,7 @@ export function setting(spec: SettingSpec): Part {
   const wall = spec.wall ?? Math.max(spec.width * (bezelStyle ? 0.06 : 0.09), bezelStyle ? 0.16 : 0.25);
   const height = spec.height ?? spec.width * 0.42;
   const grip = spec.grip ?? Math.max(spec.width * (bezelStyle ? 0.04 : 0.06), bezelStyle ? 0.11 : 0.2);
-  const segments = spec.segments ?? 32;
+  const segments = scaledCount(spec.segments ?? 32);
 
   const built = bezelStyle
     ? bezel(r, wall, height, grip, segments)

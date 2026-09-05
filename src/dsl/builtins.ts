@@ -591,7 +591,7 @@ const PARTS = {
       relief: optional(a.num('relief', -1, NaN)),
       reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
-      segments: a.num('segments', -1, 64),
+      segments: a.count('segments', -1, 64),
       enamel: enamelName(a),
       veinMetal: veinMetalName(a),
     })),
@@ -628,8 +628,8 @@ const PARTS = {
       twistTurns: a.num('twist', -1, 0) / (Math.PI * 2) || undefined,
       flatten: a.flag('flatten', -1, false),
       closed: a.flag('closed', -1, false),
-      sections: a.num('sections', -1, 128),
-      sides: a.num('sides', -1, 12),
+      sections: a.count('sections', -1, 128),
+      sides: a.count('sides', -1, 12),
     })),
 
   blade: define(['path', 'width', 'thickness', 'twist', 'sections', 'sides', 'enamel'], (a) =>
@@ -639,8 +639,8 @@ const PARTS = {
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 1),
       twistTurns: a.num('twist', -1, 0) / (Math.PI * 2) || undefined,
-      sections: a.num('sections', -1, 96),
-      sides: a.num('sides', -1, 16),
+      sections: a.count('sections', -1, 96),
+      sides: a.count('sides', -1, 16),
     })),
 
   rivet: define(['head', 'height', 'shank', 'grip', 'tail', 'segments'], (a) =>
@@ -683,7 +683,7 @@ const PARTS = {
       radius: a.num('radius', 0),
       width: a.num('width', 1),
       thickness: a.num('thickness', 2, 0.8),
-      segments: a.num('segments', -1, 128),
+      segments: a.count('segments', -1, 128),
     })),
 
   pod: define(['length', 'width', 'whorls', 'whorlDepth', 'ribs', 'ribDepth', 'segments'], (a) =>
@@ -736,7 +736,7 @@ const PARTS = {
       relief: optional(a.num('relief', -1, NaN)),
       reliefVeins: a.num('reliefVeins', -1, 0) || undefined,
       bossBore: a.num('boss', -1, 0) || undefined,
-      segments: a.num('segments', -1, 72),
+      segments: a.count('segments', -1, 72),
       enamel: enamelName(a),
       veinMetal: veinMetalName(a),
     })),
@@ -751,8 +751,8 @@ const PARTS = {
       nodeSwell: a.num('swell', -1, 0.28),
       from: a.num('from', -1, 0.12),
       to: a.num('to', -1, 0.92),
-      sections: a.num('sections', -1, 96),
-      sides: a.num('sides', -1, 10),
+      sections: a.count('sections', -1, 96),
+      sides: a.count('sides', -1, 10),
     })),
 
   branch: define(
@@ -770,8 +770,8 @@ const PARTS = {
       limbTaper: a.num('limbTaper', -1, 0.55),
       from: a.num('from', -1, 0.12),
       to: a.num('to', -1, 0.92),
-      sections: a.num('sections', -1, 96),
-      sides: a.num('sides', -1, 10),
+      sections: a.count('sections', -1, 96),
+      sides: a.count('sides', -1, 10),
     })),
 
   bud: define(['length', 'width', 'lobes', 'lobeDepth', 'point', 'swell', 'rows', 'segments'], (a) =>
