@@ -593,8 +593,10 @@ form sampler {
   coral: `# Grown by rule. tree() puts a twig at the tip of every twig: count of
 # them, tilted away by spread, rolled round the parent, shrunk by shrink,
 # depth levels deep. tips: yes keeps only the last level — one level more
-# than the twigs puts buds at their ends. A twist of a quarter turn per
-# level turns this flat fan into a tree.
+# than the twigs puts buds at their ends. rnd(a, b) gives each fork its own
+# lean and reach, drawn the same way every compile so the buds still find
+# the twigs; a small twist lets the fan breathe out of its plane. See bonsai
+# for a full tree.
 material rose gold satin
 
 part twig = wire(path: bow((0, 0, 0), (14, 0, 0), sag: 1.4), radius: 1, tip: 0.55, sections: 24)
@@ -602,8 +604,8 @@ part twig = wire(path: bow((0, 0, 0), (14, 0, 0), sag: 1.4), radius: 1, tip: 0.5
 part bud  = pearl(radius: 6) in white pearl
 
 unit fan {
-  repeat twig around tree(depth: 5, count: 2, length: 14, spread: 26deg, shrink: 0.74)
-  repeat bud around tree(depth: 6, count: 2, length: 14, spread: 26deg, shrink: 0.74, tips: yes)
+  repeat twig around tree(depth: 5, count: 2, length: 14, spread: rnd(26deg, 9deg), shrink: rnd(0.74, 0.07), twist: rnd(0, 12deg))
+  repeat bud around tree(depth: 6, count: 2, length: 14, spread: rnd(26deg, 9deg), shrink: rnd(0.74, 0.07), twist: rnd(0, 12deg), tips: yes)
 }
 
 form coral {
