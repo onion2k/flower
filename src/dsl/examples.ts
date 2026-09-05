@@ -1738,23 +1738,30 @@ material gold satin
 # The disc is the point: a phyllotaxis of seeds packed tight enough that the
 # spirals show both ways, with the outermost florets standing up round its
 # rim. The rays are a whorl and a half, the second slipped between the first.
+# The head is built flat, facing up, as a unit; then the stalk bends over
+# at the top and the head is pitched a quarter turn to face along it, the
+# way a sunflower in seed hangs its face rather than holding it to the sky.
 part ray    = petal(length: 30, width: 8, thickness: 0.4, shape: pointed, cup: 20deg, keel: 0.2, curl: 12deg, curlBias: 1.6, ruffle: 0.4, ruffleWaves: 2)
 part disc   = disc(radius: 17, thickness: 2.4, bevel: 0.6) in bronze antiqued
 part seed   = bead(radius: 0.9, point: 0.5, segments: 10) in bronze satin
 part floret = bud(length: 2.6, width: 1.4, lobes: 5, point: 0.3, segments: 10) in gold polished
 part bract  = leaf(length: 10, width: 4, thickness: 0.5, shape: lanceolate, cup: 30deg, curl: -20deg) in bronze satin
-part stalk  = stem(path: through((0,0,-1), (2,0,-22), (-1,0,-46), (1,0,-70)), radius: 2.4, tip: 0.7, nodes: 3, swell: 0.4) in bronze satin
+part stalk  = stem(path: through((0,0,-72), (1,0,-44), (-1,0,-18), (2,0,-7), (9,0,-2)), radius: 2.4, tip: 0.7, nodes: 3, swell: 0.4, sections: 120) in bronze satin
 part foliage = leaf(length: 30, width: 22, thickness: 0.7, shape: cordate, teeth: 30, veins: 4, cup: 18deg, curl: 28deg) in bronze satin
 
-form sunflower {
+unit head {
   place disc at (0, 0, -1.2)
   repeat seed around phyllotaxis(140, 1.25, rise: 0.4, taper: 0.9)
   repeat floret around ring(30, radius: 15.8, z: 0.4, tilt: -60deg)
   repeat ray around ring(17, radius: 16.5, z: -0.2, tilt: -8deg)
   repeat ray around ring(17, radius: 16.5, z: -1.6, phase: 10.6deg, tilt: 4deg, scale: 0.94)
   repeat bract around ring(14, radius: 15.5, z: -2.8, tilt: 34deg)
+}
+
+form sunflower {
   place stalk
-  repeat foliage around ring(2, radius: 1.2, z: -34, phase: 30deg, tilt: -24deg)
+  place head at (11.5, 0, -2) pitch 98deg
+  repeat foliage around ring(2, radius: 1.2, z: -36, phase: 30deg, tilt: -24deg)
 }
 `,
 
