@@ -24,6 +24,8 @@ import { bakeEnvironment, filterCube, type EnvImage, type Environment, type EnvP
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
+import { PathTracer } from './tracer';
+import { buildScene } from './bvh';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
@@ -46,7 +48,7 @@ const MAX_LOCAL_SHADOWS = 32;
 const LOCAL_SHADOW_SIZE = 160;
 const LIGHTS_SIZE = 16 + MAX_LIGHTS * 32;
 
-export type Quality = 'draft' | 'final';
+export type Quality = 'draft' | 'final' | 'traced';
 
 /** A light of the studio rig: a disc in the sky like the key, with its own shadow. */
 export interface RigLight {
@@ -418,7 +420,8 @@ export class Viewer {
     });
 
     // --- layouts shared by the scene pipelines ---
-    const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT;
+    // the path tracer binds the frame group from a compute stage
+    const both = GPUShaderStage.VERTEX | GPUShaderStage.FRAGMENT | GPUShaderStage.COMPUTE;
     this.frameLayout = device.createBindGroupLayout({
       label: 'frame',
       entries: [
@@ -858,7 +861,7 @@ export class Viewer {
     this.materialBuffer?.destroy();
     this.materialBuffer = device.createBuffer({
       label: 'materials', size: Math.max(1, this.groups.length) * MATERIAL_STRIDE,
-      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST,
+      usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.STORAGE | GPUBufferUsage.COPY_DST,
     });
     this.layoutLettering();
     this.packGemPlanes();
@@ -875,7 +878,68 @@ export class Viewer {
     if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
+    this.traceMaterialBind = null;
+    this.traceSceneStale = true;
     this.dirty = true;
+  }
+
+  // --- the path tracer: final quality, traced while the view is still ---
+  private tracer: PathTracer | null = null;
+  private wasMoving = false;
+  private traceMaterialBind: GPUBindGroup | null = null;
+  private traceSceneStale = true;
+  private traceFrame = new Float32Array(FRAME_SIZE / 4);
+  /** Samples the tracer has taken into the current view, for the panel to show. */
+  get traceSamples() { return this.tracer?.samples ?? 0; }
+  get traceLimit() { return this.tracer?.maxSamples ?? 0; }
+
+  private ensureTracer() {
+    if (!this.tracer) this.tracer = new PathTracer(this.ctx, this.frameLayout);
+    if (this.traceSceneStale && this.groups.length) {
+      const scene = buildScene(this.groups.map((g) => ({ mesh: g.source.mesh, matrices: g.source.matrices })));
+      this.tracer.setScene(scene, this.groundBuffer);
+      this.traceSceneStale = false;
+    }
+    if (!this.traceMaterialBind && this.materialBuffer && this.glyphBuffer && this.atlasTexture && this.gemPlaneBuffer) {
+      this.traceMaterialBind = this.ctx.device.createBindGroup({
+        label: 'trace materials', layout: this.tracer.materialLayout,
+        entries: [
+          { binding: 0, resource: { buffer: this.materialBuffer } },
+          { binding: 1, resource: { buffer: this.glyphBuffer } },
+          { binding: 2, resource: this.atlasTexture.createView() },
+        ],
+      });
+    }
+    return this.tracer;
+  }
+
+  /** One more sample of the still view, or nothing if the accumulation is complete. Returns whether a frame was drawn. */
+  private traceFrameStep(encoder: GPUCommandEncoder, frame: Float32Array): boolean {
+    const tracer = this.ensureTracer();
+    if (!this.traceMaterialBind || !this.frameBind || !this.post.sceneTexture) return false;
+    tracer.resize(this.post.renderWidth, this.post.renderHeight, this.post.sceneTexture);
+    // anything that moved — the camera, a light, the exposure — starts the accumulation over
+    let same = true;
+    for (let i = 0; i < frame.length; i++) { if (frame[i] !== this.traceFrame[i]) { same = false; break; } }
+    if (!same) { this.traceFrame.set(frame); tracer.reset(); }
+    if (tracer.done) return false;
+    const cam = this.camera;
+    const fwd = [cam.target[0] - cam.position[0], cam.target[1] - cam.position[1], cam.target[2] - cam.position[2]];
+    const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
+    const tanHalf = Math.tan((cam.fov * Math.PI) / 360);
+    const focus = this.controls.distance * this.focusScale;
+    const h = this.post.renderHeight;
+    const maxRadius = Math.max(6, Math.min(this.post.renderWidth, h) * 0.03);
+    // the lens that blurs a point twice the focus distance away by the raster pass's circle
+    const aperture = this.dof > 0 ? 2 * this.dof * maxRadius * 2 * focus * tanHalf / h : 0;
+    tracer.sample(encoder, this.frameBind, this.traceMaterialBind, {
+      origin: [cam.position[0], cam.position[1], cam.position[2]],
+      forward: [fwd[0] / len, fwd[1] / len, fwd[2] / len],
+      right: cam.right as [number, number, number],
+      up: cam.up as [number, number, number],
+      tanHalf, aspect: cam.aspect, aperture, focus,
+    }, !!this.occlusion);
+    return true;
   }
 
   /** Occlusion entries are laid out group by group, placement by placement. */
@@ -1037,7 +1101,7 @@ export class Viewer {
     // canvas the size of a laptop screen sits just inside it; a tall pane or a
     // large monitor comes down to the same cost rather than crawling.
     const cw = Math.max(1, this.host.clientWidth), ch = Math.max(1, this.host.clientHeight);
-    const budget = this.quality === 'final' ? Viewer.PIXEL_BUDGET : Viewer.DRAFT_PIXEL_BUDGET;
+    const budget = this.quality !== 'draft' ? Viewer.PIXEL_BUDGET : Viewer.DRAFT_PIXEL_BUDGET;
     // never below one pixel per CSS pixel at rest: under that, edges stair-step
     // however well they were multisampled, because each rendered pixel is
     // stretched over more than one on screen
@@ -1062,6 +1126,9 @@ export class Viewer {
     const sinceTick = tickNow - this.lastTickAt;
     this.lastTickAt = tickNow;
     const moving = this.controls.moving;
+    // the moment the view settles, the tracer has a still view to start on
+    if (this.wasMoving && !moving && this.quality === 'traced') this.dirty = true;
+    this.wasMoving = moving;
     this.controls.update();
     this.camera.update();
     if (!this.frameBind) return;
@@ -1210,6 +1277,26 @@ export class Viewer {
       this.probeReady = true;
       frame[60] = 1;
       device.queue.writeBuffer(this.frameBuffer, 0, frame);
+    }
+
+    // traced quality: while the view is still, a sample a frame into the
+    // accumulation and the mean through the film; while it moves, the raster path
+    if (this.quality === 'traced' && !moving && this.groups.length && this.occlusion) {
+      if (this.traceFrameStep(encoder, frame)) {
+        this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
+          bloom: this.bloom, raw: this.debugMode > 0, film: this.film,
+          focus: this.controls.distance * this.focusScale, dof: 0, subject: this.controls.distance,
+        });
+        device.queue.submit([encoder.finish()]);
+        this.dirty = !this.tracer!.done;
+        this.onFrame?.();
+        return;
+      }
+      if (this.tracer?.done) {
+        // nothing more to add: the last frame stands
+        device.queue.submit([encoder.finish()]);
+        return;
+      }
     }
 
     if (this.contact > 0 && this.groups.length && this.ao.depthView) {
@@ -1416,6 +1503,7 @@ export class Viewer {
   /** Per-group material and occlusion slice, 240 bytes at a 256-byte stride. */
   private writeMaterials() {
     if (!this.materialBuffer) return;
+    this.tracer?.reset();
     const data = new ArrayBuffer(Math.max(1, this.groups.length) * MATERIAL_STRIDE);
     const f32 = new Float32Array(data);
     const u32 = new Uint32Array(data);
@@ -1673,8 +1761,8 @@ export class Viewer {
         env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined,
         // a quarter of the directions at half the resolution is a tenth of the
         // work, and soft shadows on a working model do not need more
-        directions: this.quality === 'final' ? 256 : 64,
-        depthSize: this.quality === 'final' ? 2048 : 1024,
+        directions: this.quality !== 'draft' ? 256 : 64,
+        depthSize: this.quality !== 'draft' ? 2048 : 1024,
       },
     );
     this.occlusion = occ;

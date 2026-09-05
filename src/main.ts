@@ -479,11 +479,22 @@ const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brd
 
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
+// traced quality converges while the view is still: say how far it has got
+const traceNote = document.createElement('div');
+traceNote.className = 'note';
+traceNote.hidden = true;
+const showTraceProgress = () => {
+  if (state.quality !== 'traced') return;
+  const n = viewer.traceSamples;
+  traceNote.textContent = n >= viewer.traceLimit ? `${n} samples, converged` : n > 0 ? `${n} samples…` : 'tracing when the view is still';
+};
 viewSet.append(
-  picker('quality', ['draft', 'final'], state.quality, (v) => {
+  picker('quality', ['draft', 'final', 'traced'], state.quality, (v) => {
     state.quality = v as Quality;
     viewer.setQuality(state.quality);
+    traceNote.hidden = state.quality !== 'traced';
   }),
+  traceNote,
   slider('depth of field', 0, 1, 0.02, state.dof, (v) => (v === 0 ? 'off' : v.toFixed(2)), (v) => {
     state.dof = v;
     viewer.setDepthOfField(state.dof, state.focus);
@@ -726,7 +737,7 @@ function layoutLabels() {
     el.style.transform = `translate(${p[0].toFixed(0)}px, ${p[1].toFixed(0)}px)`;
   });
 }
-viewer.onFrame = () => { if (labelled.length) layoutLabels(); };
+viewer.onFrame = () => { if (labelled.length) layoutLabels(); showTraceProgress(); };
 
 function build() {
   const [kind] = select.value.split(':');

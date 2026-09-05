@@ -214,13 +214,18 @@ ${FULLSCREEN_VERT}
   return vec4f(c.rgb, select(0.0, 1.0, c.a != 0.0));
 }`;
 
-/** One mip level down: a linear sample at the centre of each texel averages the four beneath. */
+/**
+ * One mip level down: a linear sample at the centre of each texel averages
+ * the four beneath. Alpha comes along: for a probe it is the hit mask, and a
+ * level that reported a hit everywhere would blot out the sky behind every
+ * reflection softer than a mirror.
+ */
 const DOWNSAMPLE = `
 ${FULLSCREEN_VERT}
 @group(0) @binding(0) var src: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
-  return vec4f(textureSampleLevel(src, samp, uv, 0.0).rgb, 1.0);
+  return textureSampleLevel(src, samp, uv, 0.0);
 }`;
 
 const GGX_COMMON = `

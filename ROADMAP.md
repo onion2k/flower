@@ -285,6 +285,29 @@ bake sidesteps it.
   follow it when it moves. None is baked into the sky, so they need no
   rebake.
 
+- **9, path tracer (September 2026):** `render/bvh.ts` flattens every
+  placement into world-space triangles under a binned-SAH hierarchy;
+  `render/tracer.ts` walks it in a compute shader, one sample per pixel per
+  frame while the view is still, accumulating into a float texture and
+  writing the mean into the post chain's scene target so bloom and the film
+  follow. It shares the raster shader's material record and field functions
+  (`MATERIAL_STRUCT`, `MATERIAL_FIELDS`, `TABLE_SURFACES` are now separate
+  strings; the record is copied into a private `material` at each hit), so
+  relief, engraving, lettering, wires, planishing, patina and wear are the
+  same code. Materials: metal (GGX with VNDF sampling), enamel as a glass
+  coat over its colour, nacre, plastic and wood, lights as emitters, stones
+  as refractive dielectrics traced through their own mesh with absorption
+  and per-path dispersion. The key, the rig and the piece's lights are
+  sampled by next event; escaped rays read the prefiltered sky at the
+  lobe's centre, as the raster does, which is a little blur for a picture
+  that settles in a few dozen samples. A third quality, `traced`, in the
+  panel; the raster path draws while the view moves. The table is a plane
+  (a cushion's dome is not traced), and there are at most 256 groups.
+  Finding: comparing the two paths exposed a probe bug — the env filter's
+  mip downsample wrote alpha 1, so every probe read softer than a mirror
+  reported a hit and dropped the sky. Fixed; the raster path is brighter
+  from the environment than it had been since the probe landed.
+
 ### Caveats and order
 
 Items 1–8 each patch one symptom of not tracing rays. They stack, and they

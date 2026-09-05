@@ -149,7 +149,7 @@ fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
 @group(0) @binding(6) var shadowSampler: sampler_comparison;
 `;
 
-const COMMON = `
+export const COMMON = `
 // about Z, because that is the environment's up
 fn spinZ(a: f32) -> mat3x3f {
   let c = cos(a); let s = sin(a);
@@ -408,10 +408,13 @@ fn noise3(p: vec3f) -> f32 {
 }
 `;
 
-export const PBR_WGSL = `
-${FRAME_STRUCT}
-${COMMON}
-
+/**
+ * The material record, one per draw group, and the field functions that
+ * read it: relief, engraving, lettering, wires, planishing. They are pure
+ * functions of the record and a point, so the path tracer shares them,
+ * with the record copied into a private variable of the same name.
+ */
+export const MATERIAL_STRUCT = `
 struct Material {
   f0: vec3f,
   roughness: f32,
@@ -462,93 +465,11 @@ struct Material {
   gemSize: f32,        // the stone's width: the distance its colour is judged over
   _pad7: f32,
 };
-@group(1) @binding(0) var<uniform> material: Material;
-@group(1) @binding(3) var<storage, read> gemPlanes: array<vec4f>;
-
 /** One placed glyph: its box in surface mm before the inscription's turn, and its atlas rectangle. */
 struct Glyph { box: vec4f, rect: vec4f };
-@group(1) @binding(1) var<storage, read> glyphs: array<Glyph>;
-@group(1) @binding(2) var atlas: texture_2d<f32>;
+`;
 
-struct VsIn {
-  @location(0) position: vec3f,
-  @location(1) normal: vec3f,
-  @location(2) uv: vec2f,
-  @location(3) wear: f32,
-  @location(4) im0: vec4f,
-  @location(5) im1: vec4f,
-  @location(6) im2: vec4f,
-  @location(7) im3: vec4f,
-  @location(8) face: vec2f,     // enamel, cap
-  @location(9) selected: f32,
-  @location(10) engrave: vec2f,  // surface millimetres, for engraving
-  @builtin(vertex_index) vid: u32,
-  @builtin(instance_index) iid: u32,
-};
-
-struct VsOut {
-  // invariant, so the depth prepass and this pass agree to the bit
-  @builtin(position) @invariant clip: vec4f,
-  @location(0) normal: vec3f,
-  @location(1) world: vec3f,
-  @location(2) object: vec3f,
-  @location(3) uv: vec2f,
-  @location(4) ao: f32,
-  @location(5) wear: f32,
-  @location(6) enamel: f32,
-  // which cap, and the flat plate's coordinates there; linear in uv, so exact
-  @location(7) cap: f32,
-  @location(8) plate: vec2f,
-  // the part's own up and across, in world space: which way a stone is standing
-  @location(9) axis: vec3f,
-  @location(10) side: vec3f,
-  @location(11) @interpolate(flat) selected: f32,
-  @location(12) engrave: vec2f,
-};
-
-@vertex fn vsMain(in: VsIn) -> VsOut {
-  let inst = mat4x4f(in.im0, in.im1, in.im2, in.im3);
-  let world = inst * vec4f(in.position, 1.0);
-
-  // baked visibility, one pair of fixed-point sums per (placement, vertex)
-  let index = material.occlusionBase + in.iid * material.vertexCount + in.vid;
-  let r = f32(occlusion[2u * index]);
-  let g = f32(occlusion[2u * index + 1u]);
-  let ao = select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
-
-  var out: VsOut;
-  out.clip = frame.viewProj * world;
-  out.selected = in.selected;
-  // placements are rigid with uniform scale, so rotating the normal is exact
-  out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
-  out.world = world.xyz;
-  out.object = in.position;
-  out.uv = in.uv;
-  out.ao = mix(1.0, ao, frame.occlusionOn);
-  out.wear = in.wear;
-  out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
-  out.cap = in.face.y;
-  out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
-  out.engrave = in.engrave;
-  let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
-  out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
-  out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
-  return out;
-}
-
-// Tangent frame from screen-space derivatives: u runs along a sweep and around
-// a revolve, so dP/du is the brush direction of a finish.
-fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
-  let dp1 = dpdx(p); let dp2 = dpdy(p);
-  let duv1 = dpdx(uv); let duv2 = dpdy(uv);
-  let dp2perp = cross(dp2, n);
-  let dp1perp = cross(n, dp1);
-  let t = dp2perp * duv1.x + dp1perp * duv2.x;
-  let b = dp2perp * duv1.y + dp1perp * duv2.y;
-  let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
-  return mat3x3f(t * inv, b * inv, n);
-}
-
+export const MATERIAL_FIELDS = `
 /**
  * The chased vein relief, the same field deform.ts displaced the plate by:
  * a midrib ridge tapering to the tip, lateral ridges angled forward from it.
@@ -947,7 +868,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
   // nacre returns about half of what falls on it, not all of it
   return base * (scattered + irrBack * rim) * ao * 0.55;
 }
+`;
 
+const PBR_MAIN = `
 @fragment fn fsMain(in: VsOut, @builtin(front_facing) frontFacing: bool) -> @location(0) vec4f {
   var n = normalize(in.normal);
   let v = normalize(frame.cameraPos - in.world);
@@ -1357,10 +1280,99 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
 }
 `;
 
-export const GROUND_WGSL = `
+export const PBR_WGSL = `
 ${FRAME_STRUCT}
 ${COMMON}
+${MATERIAL_STRUCT}
+@group(1) @binding(0) var<uniform> material: Material;
+@group(1) @binding(3) var<storage, read> gemPlanes: array<vec4f>;
+@group(1) @binding(1) var<storage, read> glyphs: array<Glyph>;
+@group(1) @binding(2) var atlas: texture_2d<f32>;
 
+struct VsIn {
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+  @location(3) wear: f32,
+  @location(4) im0: vec4f,
+  @location(5) im1: vec4f,
+  @location(6) im2: vec4f,
+  @location(7) im3: vec4f,
+  @location(8) face: vec2f,     // enamel, cap
+  @location(9) selected: f32,
+  @location(10) engrave: vec2f,  // surface millimetres, for engraving
+  @builtin(vertex_index) vid: u32,
+  @builtin(instance_index) iid: u32,
+};
+
+struct VsOut {
+  // invariant, so the depth prepass and this pass agree to the bit
+  @builtin(position) @invariant clip: vec4f,
+  @location(0) normal: vec3f,
+  @location(1) world: vec3f,
+  @location(2) object: vec3f,
+  @location(3) uv: vec2f,
+  @location(4) ao: f32,
+  @location(5) wear: f32,
+  @location(6) enamel: f32,
+  // which cap, and the flat plate's coordinates there; linear in uv, so exact
+  @location(7) cap: f32,
+  @location(8) plate: vec2f,
+  // the part's own up and across, in world space: which way a stone is standing
+  @location(9) axis: vec3f,
+  @location(10) side: vec3f,
+  @location(11) @interpolate(flat) selected: f32,
+  @location(12) engrave: vec2f,
+};
+
+@vertex fn vsMain(in: VsIn) -> VsOut {
+  let inst = mat4x4f(in.im0, in.im1, in.im2, in.im3);
+  let world = inst * vec4f(in.position, 1.0);
+
+  // baked visibility, one pair of fixed-point sums per (placement, vertex)
+  let index = material.occlusionBase + in.iid * material.vertexCount + in.vid;
+  let r = f32(occlusion[2u * index]);
+  let g = f32(occlusion[2u * index + 1u]);
+  let ao = select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
+
+  var out: VsOut;
+  out.clip = frame.viewProj * world;
+  out.selected = in.selected;
+  // placements are rigid with uniform scale, so rotating the normal is exact
+  out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
+  out.world = world.xyz;
+  out.object = in.position;
+  out.uv = in.uv;
+  out.ao = mix(1.0, ao, frame.occlusionOn);
+  out.wear = in.wear;
+  out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
+  out.cap = in.face.y;
+  out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
+  out.engrave = in.engrave;
+  let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
+  out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
+  out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
+  return out;
+}
+
+// Tangent frame from screen-space derivatives: u runs along a sweep and around
+// a revolve, so dP/du is the brush direction of a finish.
+fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
+  let dp1 = dpdx(p); let dp2 = dpdy(p);
+  let duv1 = dpdx(uv); let duv2 = dpdy(uv);
+  let dp2perp = cross(dp2, n);
+  let dp1perp = cross(n, dp1);
+  let t = dp2perp * duv1.x + dp1perp * duv2.x;
+  let b = dp2perp * duv1.y + dp1perp * duv2.y;
+  let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+  return mat3x3f(t * inv, b * inv, n);
+}
+${MATERIAL_FIELDS}
+${PBR_MAIN}
+`;
+
+/** The table's record and its surfaces, shared with the path tracer; foot is the world footprint of a pixel, mm. */
+export const GROUND_STRUCT = `
 struct Ground {
   centre: vec3f,
   radius: f32,
@@ -1376,31 +1388,9 @@ struct Ground {
   slope: f32,
   _pad4: vec2f,
 };
-@group(1) @binding(0) var<uniform> ground: Ground;
-@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+`;
 
-/** The cushion's height at a point of the disc, bilinear over the baked map. */
-fn heightAt(uv: vec2f) -> f32 {
-  let s = f32(textureDimensions(cushionHeight).x);
-  let p = clamp(uv * s - 0.5, vec2f(0.0), vec2f(s - 1.001));
-  let i = vec2i(floor(p));
-  let f = fract(p);
-  let h00 = textureLoad(cushionHeight, i, 0).r;
-  let h10 = textureLoad(cushionHeight, i + vec2i(1, 0), 0).r;
-  let h01 = textureLoad(cushionHeight, i + vec2i(0, 1), 0).r;
-  let h11 = textureLoad(cushionHeight, i + vec2i(1, 1), 0).r;
-  return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
-}
-
-/** The cushion's own dome, without the piece pressed into it. */
-fn domeAt(local: vec2f) -> f32 {
-  let q = abs(local) / ground.cushionSize;
-  let e = pow(pow(q.x, 4.0) + pow(q.y, 4.0), 0.25);
-  let shoulder = 1.0 - smoothstep(0.45, 1.0, e);
-  let crown = 0.8 + 0.2 * max(0.0, 1.0 - e * e);
-  return ground.puff * shoulder * crown;
-}
-
+export const TABLE_SURFACES = `
 /**
  * What the table is at a point. sheen is a cloth's fuzz colour: velvet
  * throws light back at grazing angles in it, and 0 for anything that is not
@@ -1415,7 +1405,7 @@ fn hard(albedo: vec3f, roughness: f32, normal: vec3f) -> Surface {
 // Boards laid along X, each a little different in tone and in where its
 // rings fall, with a dark seam between them. Rings as in the parts' own wood:
 // a stack of warped planes, so a plank shows long stripes and cathedrals.
-fn plankSurface(p: vec2f, base: vec3f, seamWidth: f32, contrast: f32) -> Surface {
+fn plankSurface(p: vec2f, base: vec3f, seamWidth: f32, contrast: f32, foot: f32) -> Surface {
   let boardWidth = ground.scale;
   let board = floor(p.y / boardWidth);
   let inBoard = fract(p.y / boardWidth);
@@ -1431,8 +1421,8 @@ fn plankSurface(p: vec2f, base: vec3f, seamWidth: f32, contrast: f32) -> Surface
     + noise3(vec3f(along * 0.03, across * 0.12, seed * 3.0)) * 0.7;
   let ringCoord = across * (0.22 + slant * 0.3) + along * 0.004 * slant + wobble;
   let ph = fract(ringCoord);
-  let foot = clamp(fwidth(ringCoord) * 1.5, 0.02, 0.5);
-  let late = smoothstep(0.4 - foot, 0.6 + foot, ph) * (1.0 - smoothstep(0.78 - foot, 0.96 + foot, ph));
+  let ringFoot = clamp(foot * 0.5, 0.02, 0.5);
+  let late = smoothstep(0.4 - ringFoot, 0.6 + ringFoot, ph) * (1.0 - smoothstep(0.78 - ringFoot, 0.96 + ringFoot, ph));
   let fibre = noise3(vec3f(p.x * 0.6, p.y * 5.0, seed)) - 0.5;
   var albedo = base * tone
     * (1.0 + 0.35 * contrast * fibre)
@@ -1459,7 +1449,7 @@ fn slateSurface(p: vec2f) -> Surface {
   return hard(albedo, ground.roughness + (0.5 - flake) * 0.2, n);
 }
 
-fn linenSurface(p: vec2f) -> Surface {
+fn linenSurface(p: vec2f, foot: f32) -> Surface {
   let s = ground.scale;
   // a plain weave: warp and weft alternately on top, each thread a soft ridge
   let u = p.x / s; let v = p.y / s;
@@ -1467,8 +1457,8 @@ fn linenSurface(p: vec2f) -> Surface {
   let weft = 0.5 + 0.5 * cos(v * 6.2831853);
   let check = fract(floor(u) * 0.5 + floor(v) * 0.5) * 2.0;   // 0 or 1
   let ridge = mix(warp, weft, check);
-  let foot = clamp(fwidth(u) * 2.0, 0.0, 1.0);
-  let thread = mix(ridge, 0.5, foot);      // averaged away when finer than a pixel
+  let blur = clamp(foot / s * 2.0, 0.0, 1.0);
+  let thread = mix(ridge, 0.5, blur);      // averaged away when finer than a pixel
   let slub = noise3(vec3f(p.x * 0.15, p.y * 0.15, 9.0));
   let base = vec3f(0.62, 0.56, 0.46) * mix(0.9, 1.1, slub);
   let albedo = base * mix(0.82, 1.0, thread);
@@ -1495,36 +1485,66 @@ fn velvetSurface(p: vec2f) -> Surface {
 
 // Silk: a satin weave, the floats running along X so the highlight streaks
 // that way, on an ivory ground with the faint ribbing of the threads.
-fn silkSurface(p: vec2f) -> Surface {
+fn silkSurface(p: vec2f, foot: f32) -> Surface {
   let s = ground.scale;
   let thread = 0.5 + 0.5 * cos(p.y / s * 6.2831853);
-  let foot = clamp(fwidth(p.y / s) * 2.0, 0.0, 1.0);
-  let rib = mix(thread, 0.5, foot);
+  let blur = clamp(foot / s * 2.0, 0.0, 1.0);
+  let rib = mix(thread, 0.5, blur);
   let slub = noise3(vec3f(p.x * 0.05, p.y * 0.3, 5.0));
   let albedo = vec3f(0.48, 0.43, 0.33) * mix(0.94, 1.02, rib) * mix(0.96, 1.04, slub);
-  let n = normalize(vec3f(0.0, (rib - 0.5) * 0.1 * (1.0 - foot), 1.0));
+  let n = normalize(vec3f(0.0, (rib - 0.5) * 0.1 * (1.0 - blur), 1.0));
   return Surface(albedo, ground.roughness, n, vec3f(0.5, 0.48, 0.42), 0.75);
 }
 
-fn tableSurface(p: vec2f) -> Surface {
+fn tableSurface(p: vec2f, foot: f32) -> Surface {
   let t = ground.table;
   if (t < 0.5) {
     // a matte table in the page's colour, never darker than a dark cloth
     return hard(max(ground.background, ground.albedo), ground.roughness, vec3f(0.0, 0.0, 1.0));
   } else if (t < 1.5) {
-    return plankSurface(p, vec3f(0.42, 0.28, 0.15), 0.7, 0.4);
+    return plankSurface(p, vec3f(0.42, 0.28, 0.15), 0.7, 0.4, foot);
   } else if (t < 2.5) {
-    return plankSurface(p, vec3f(0.16, 0.09, 0.055), 0.9, 0.5);
+    return plankSurface(p, vec3f(0.16, 0.09, 0.055), 0.9, 0.5, foot);
   } else if (t < 3.5) {
     return slateSurface(p);
   } else if (t < 4.5) {
-    return linenSurface(p);
+    return linenSurface(p, foot);
   } else if (t < 5.5) {
     return velvetSurface(p);
   }
-  return silkSurface(p);
+  return silkSurface(p, foot);
+}
+`;
+
+export const GROUND_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+${GROUND_STRUCT}
+@group(1) @binding(0) var<uniform> ground: Ground;
+@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+/** The cushion's height at a point of the disc, bilinear over the baked map. */
+fn heightAt(uv: vec2f) -> f32 {
+  let s = f32(textureDimensions(cushionHeight).x);
+  let p = clamp(uv * s - 0.5, vec2f(0.0), vec2f(s - 1.001));
+  let i = vec2i(floor(p));
+  let f = fract(p);
+  let h00 = textureLoad(cushionHeight, i, 0).r;
+  let h10 = textureLoad(cushionHeight, i + vec2i(1, 0), 0).r;
+  let h01 = textureLoad(cushionHeight, i + vec2i(0, 1), 0).r;
+  let h11 = textureLoad(cushionHeight, i + vec2i(1, 1), 0).r;
+  return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
 }
 
+/** The cushion's own dome, without the piece pressed into it. */
+fn domeAt(local: vec2f) -> f32 {
+  let q = abs(local) / ground.cushionSize;
+  let e = pow(pow(q.x, 4.0) + pow(q.y, 4.0), 0.25);
+  let shoulder = 1.0 - smoothstep(0.45, 1.0, e);
+  let crown = 0.8 + 0.2 * max(0.0, 1.0 - e * e);
+  return ground.puff * shoulder * crown;
+}
+
+${TABLE_SURFACES}
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 
 struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
@@ -1547,7 +1567,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // matte table, and is lit by the sky and the key like anything else —
   // so on a black page there is still a pool of light with a shadow in
   // it, and on a pale one the table is that colour with a shadow in it
-  let surface = tableSurface(in.world.xy);
+  let surface = tableSurface(in.world.xy, length(fwidth(in.world.xy)));
   var n = surface.normal;
   var dipShade = 1.0;
   var cushion = 1.0;

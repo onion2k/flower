@@ -332,6 +332,8 @@ export class PostChain {
 
   /** The scene's targets, which stand `factor` times above the canvas each way. */
   get renderWidth() { return this.width * this.factor; }
+  /** The scene target itself, for anything that wants to write a frame into the chain. */
+  get sceneTexture() { return this.resolve; }
   get renderHeight() { return this.height * this.factor; }
 
   /**
@@ -360,8 +362,9 @@ export class PostChain {
     this.depth = device.createTexture({
       size: [width, height], format: this.depthFormat, sampleCount: SAMPLES, usage: GPUTextureUsage.RENDER_ATTACHMENT, label: 'scene depth',
     });
+    // storage too: the path tracer writes its mean straight into it
     this.resolve = device.createTexture({
-      size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'scene resolve',
+      size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING, label: 'scene resolve',
     });
     this.dof = device.createTexture({
       size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'depth of field',
