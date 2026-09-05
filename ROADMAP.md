@@ -150,8 +150,8 @@ in step. A sketch renders the same on every keystroke.
   there is room for the next few fields.
 - Frame group bindings: 0 frame, 1 environment, 2 BRDF, 3 sampler, 4
   occlusion, 5 key shadow, 6 comparison sampler, 7 lights, 8 local shadow
-  array, 9 reflection probe. Material group: 0 record, 1 glyph buffer, 2
-  glyph atlas, 3 gem planes. Ground group: 0 record (80 bytes), 1 occlusion,
+  array, 9 reflection probe, 10 contact occlusion. Material group: 0 record,
+  1 glyph buffer, 2 glyph atlas, 3 gem planes. Ground group: 0 record (80 bytes), 1 occlusion,
   2 cushion height.
 - Draw groups are keyed on mesh **and** surface (metal, finish, enamel, vein
   metal, engraving, inscription, glow): memoised parts share one mesh object
@@ -247,6 +247,25 @@ bake sidesteps it.
   512-byte stride for the plane range and size. Cabochons keep the folded
   approximation. A brilliant now shows real facet structure and fire, with
   its table's oak seen through the pavilion.
+
+- **5, contact occlusion (September 2026):** `render/ao.ts`. Each frame the
+  piece and the table are drawn depth-only at render resolution (the scene's
+  own depth is multisampled and discarded), a half-resolution pass samples
+  four directions by six steps within 2.5 mm with a per-pixel turn, and a
+  depth-aware 5×5 blur settles it. The shaders read it by pixel through
+  frame binding 10 and fold it into the per-vertex occlusion, so it shades
+  the sky's light and the specular occlusion the way the bake does; the key
+  and the piece's own lights are shadowed separately and untouched. A
+  `contact` slider in the light panel; 0 skips the passes. On bare metal it
+  is subtle by nature — metal has no diffuse — and shows most on cloth and
+  wood under the piece and inside a ring.
+- **6, micro-detail (September 2026):** behind a `detail` slider in the film
+  panel. Polished metal (roughness under 0.35) carries two families of fine
+  buffing swirls, turned by a slow noise so they wander, that haze the
+  highlight and bend the normal a hair along their grain, and slow blotches
+  of handling oil that lift the roughness. The cloths carry a sparse scatter
+  of pale dust flecks. All drawn from the part's own coordinates, so they
+  stay put as it turns.
 
 ### Caveats and order
 

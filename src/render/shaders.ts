@@ -37,9 +37,24 @@ struct Frame {
   probeRadius: f32,
   probeOn: f32,
   probeMaxLod: f32,
-  _pad6: vec2f,
+  // how much of the small stuff a real piece carries is drawn: polish
+  // swirls and smudges on metal, dust on cloth. 0 leaves everything pristine
+  detail: f32,
+  _pad6: f32,
+  // the frame's size in pixels, and whether the contact occlusion drawn at
+  // half that size is to be read by pixel
+  viewport: vec2f,
+  aoOn: f32,
+  _pad7: f32,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(10) var contactAo: texture_2d<f32>;
+
+/** The contact occlusion at this pixel: 1 in the open, less where something stands close over the surface. */
+fn contactAt(clip: vec4f) -> f32 {
+  if (frame.aoOn < 0.5) { return 1.0; }
+  return textureSampleLevel(contactAo, linearSampler, clip.xy / frame.viewport, 0.0).r;
+}
 @group(0) @binding(9) var probe: texture_cube<f32>;
 
 // Local lights: the glowing parts of the piece, each sampled as a few small
@@ -972,6 +987,32 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
     n = normalize(n - bump * material.hammer * 0.22);
   }
 
+  // --- the small stuff: polish swirls and the smear of handling ---
+  // A polished surface is never a plane. It carries the fine swirled
+  // scratches of its final polish, too fine to see as lines but not too fine
+  // to break a highlight into a soft haze, and where hands have been it
+  // carries their oils, which dull the highlight in slow blotches. Both are
+  // drawn from the part's own coordinates, so they stay put as it turns.
+  if (frame.detail > 0.0 && worked && material.roughness < 0.35) {
+    let q = in.object;
+    // swirls: two families of fine lines, each turned by a slow noise so the
+    // rings of a buffing wheel wander across the surface
+    let turn = noise3(q * 0.09) * 6.2831853;
+    let ca = cos(turn); let sa = sin(turn);
+    let s1 = q.x * ca + q.y * sa + q.z * 0.37;
+    let s2 = -q.x * sa + q.y * ca * 0.8 + q.z * 0.61;
+    let scratch = abs(sin(s1 * 38.0 + noise3(q * 3.1) * 4.0)) * 0.6 + abs(sin(s2 * 53.0 + noise3(q * 2.3) * 4.0)) * 0.4;
+    // a smudge: a slow blotch of oil that lifts the roughness
+    let smudge = smoothstep(0.55, 0.85, noise3(q * 0.23 + vec3f(7.0, 3.0, 1.0)) * 0.7 + noise3(q * 0.6) * 0.3);
+    let amount = frame.detail * smoothstep(0.35, 0.05, material.roughness);
+    // the scratches scatter the highlight a touch; the oil more, and softly
+    roughness += amount * (0.03 * (1.0 - scratch) + 0.11 * smudge);
+    // and the fine lines bend the normal a hair, along their own grain
+    let eps = 0.05;
+    let sx = abs(sin((s1 + eps) * 38.0 + noise3(q * 3.1) * 4.0)) - abs(sin((s1 - eps) * 38.0 + noise3(q * 3.1) * 4.0));
+    n = normalize(n + tbn[0] * sx * amount * 0.012);
+  }
+
   // --- patina: an oxide fraction that is not metal any more ---
   if (material.patina > 0.0 && worked) {
     let blotch = noise3(in.object * 0.32) * 0.65 + noise3(in.object * 0.9) * 0.35;
@@ -1044,8 +1085,9 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
 
   // Lagarde's specular occlusion: a mirror keeps more of its reflection than
   // its hemisphere visibility suggests
-  // the floor of a cut letter sits in its own shadow
-  let ao = in.ao * (1.0 - 0.45 * letterFloor);
+  // the floor of a cut letter sits in its own shadow; and whatever stands
+  // close over this pixel takes its share of the sky
+  let ao = in.ao * (1.0 - 0.45 * letterFloor) * contactAt(in.clip);
   let specOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * roughness - 1.0)) - 1.0 + ao, 0.0, 1.0);
   var reflected = prefiltered * specOcclusion;
 
@@ -1394,7 +1436,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
 
 @fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
   let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
-  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
+  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contactAt(in.clip);
   // the table takes the background's colour, but never darker than a dark
   // matte table, and is lit by the sky and the key like anything else —
   // so on a black page there is still a pool of light with a shadow in
@@ -1427,7 +1469,17 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // key's its shadow map — the key doesn't darken where the sky can't reach
   let keyLit = keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
   let key = keyDiffuse(n) * frame.keyColour * keyLit;
-  let diffuse = surface.albedo * (irradiance * ao + key) * dipShade;
+  // dust: a cloth on a bench gathers it, a sparse scatter of pale flecks that
+  // catch the light where the pile is dark
+  var dust = 0.0;
+  if (frame.detail > 0.0 && any(surface.sheen > vec3f(0.0))) {
+    let cell = floor(in.world.xy * 3.0);
+    let h = hash13(vec3f(cell, 4.0));
+    let inCell = fract(in.world.xy * 3.0) - vec2f(hash13(vec3f(cell, 5.0)), hash13(vec3f(cell, 6.0)));
+    let fleck = smoothstep(0.08, 0.03, length(inCell)) * step(0.82, h);
+    dust = fleck * frame.detail * (0.5 + 0.5 * hash13(vec3f(cell, 7.0)));
+  }
+  let diffuse = mix(surface.albedo, vec3f(0.55, 0.52, 0.48), dust) * (irradiance * ao + key) * dipShade;
   // the table's own sheen: a dielectric's low highlight, dulled by roughness
   // and by the piece standing over it, so a waxed board holds a soft
   // reflection of the sky and the key while a cloth holds none

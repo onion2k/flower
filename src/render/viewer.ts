@@ -18,6 +18,7 @@ import { computeWear } from '../mesh/wear';
 import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
 import { CushionBake, CUSHION_SIZE } from './cushion';
+import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey } from './glyphs';
 import { bakeEnvironment, filterCube, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
@@ -32,7 +33,7 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 512;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 272;
-const FRAME_SIZE = 256;
+const FRAME_SIZE = 272;
 /** The reflection probe: face size and prefilter levels. */
 const PROBE_SIZE = 256;
 const PROBE_MIPS = 6;
@@ -279,6 +280,7 @@ export class Viewer {
   private prepassProbePipeline: GPURenderPipeline;
   private pbrProbePipeline: GPURenderPipeline;
   private groundProbePipeline: GPURenderPipeline;
+  private groundDepthPipeline: GPURenderPipeline;
   /** The lights as last written: where each is, and which group it belongs to (not shadowed by itself). */
   private lightList: Array<{ position: [number, number, number]; group: number }> = [];
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
@@ -379,6 +381,10 @@ export class Viewer {
       element: ctx.canvas, ease: 0.18, inertia: 0.72, minDistance: 6, maxDistance: 1200,
     });
     this.post = new PostChain(ctx);
+    this.ao = new ContactOcclusion(ctx, this.post.depthFormat);
+    const white = device.createTexture({ label: 'no contact occlusion', size: [1, 1], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    device.queue.writeTexture({ texture: white }, new Uint8Array([255]), { bytesPerRow: 1 }, [1, 1]);
+    this.dummyAoView = white.createView();
     // the scene is linear HDR until the composite, so clear to what tonemaps to the page colour
     this.background = inverseTonemap(BACKGROUND, this.film.tonemap);
 
@@ -402,6 +408,7 @@ export class Viewer {
         { binding: 7, visibility: both, buffer: { type: 'uniform' } },
         { binding: 8, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
         { binding: 9, visibility: both, texture: { viewDimension: 'cube' } },
+        { binding: 10, visibility: both, texture: {} },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -556,6 +563,18 @@ export class Viewer {
     });
     this.groundPipeline = device.createRenderPipeline(groundPipelineDesc(multisample));
     this.groundProbePipeline = device.createRenderPipeline({ ...groundPipelineDesc({ count: 1 }), label: 'ground probe' });
+    // the table's depth alone, for the contact occlusion: its own vertex
+    // shader, since a cushion is not flat, and no fragment stage
+    this.groundDepthPipeline = device.createRenderPipeline({
+      label: 'ground depth',
+      layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.groundLayout] }),
+      vertex: {
+        module: ground, entryPoint: 'vsMain',
+        buffers: [{ arrayStride: 12, attributes: [{ shaderLocation: 0, offset: 0, format: 'float32x3' }] }],
+      },
+      primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
+      depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
+    });
 
     const anchor = shader(device, ANCHOR_WGSL, 'anchors');
     this.anchorPipeline = device.createRenderPipeline({
@@ -644,6 +663,10 @@ export class Viewer {
   }
 
   setBloom(v: number) { this.bloom = v; this.dirty = true; }
+
+  /** How much of the small stuff is drawn: polish swirls and smudges on metal, dust on cloth. */
+  private detail = 0.6;
+  setDetail(v: number) { this.detail = v; this.invalidateProbe(); }
 
   /** The film look: which tonemap, and how much vignette, grain and fringe. */
   film: Film = { tonemap: 1, vignette: 0.3, grain: 0.25, fringe: 0.3 };
@@ -971,6 +994,9 @@ export class Viewer {
     this.ctx.canvas.height = h;
     this.camera.aspect = w / h;
     this.post.resize(w, h);
+    this.ao.resize(w, h);
+    // the occlusion texture is new: the frame group must point at it
+    this.rebuildFrameBind();
     this.dirty = true;
   };
 
@@ -1028,6 +1054,10 @@ export class Viewer {
     frame[59] = this.sceneRadius * 2.2;
     frame[60] = this.probeReady && this.groups.length ? 1 : 0;
     frame[61] = PROBE_MIPS - 1;
+    frame[62] = this.detail;
+    frame[64] = this.ctx.canvas.width;
+    frame[65] = this.ctx.canvas.height;
+    frame[66] = this.contact > 0 && this.groups.length ? 1 : 0;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -1092,6 +1122,31 @@ export class Viewer {
       this.probeReady = true;
       frame[60] = 1;
       device.queue.writeBuffer(this.frameBuffer, 0, frame);
+    }
+
+    if (this.contact > 0 && this.groups.length && this.ao.depthView) {
+      // the piece's depth alone, for the contact occlusion
+      const dp = encoder.beginRenderPass({
+        label: 'contact depth', colorAttachments: [],
+        depthStencilAttachment: { view: this.ao.depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      });
+      dp.setPipeline(this.shadowPipeline);
+      dp.setBindGroup(0, this.frameBind!);
+      for (const g of this.groups) {
+        dp.setVertexBuffer(0, g.position);
+        dp.setVertexBuffer(1, g.instance);
+        dp.setIndexBuffer(g.index, 'uint32');
+        dp.drawIndexed(g.indexCount, g.instanceCount);
+      }
+      if (this.occlusion && this.groundBind) {
+        dp.setPipeline(this.groundDepthPipeline);
+        dp.setBindGroup(1, this.groundBind);
+        dp.setVertexBuffer(0, this.discPosition);
+        dp.setIndexBuffer(this.discIndex, 'uint32');
+        dp.drawIndexed(this.discCount);
+      }
+      dp.end();
+      this.ao.run(encoder, { fovY: (this.camera.fov * Math.PI) / 180, aspect: this.camera.aspect, near: this.camera.near, far: this.camera.far });
     }
 
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
@@ -1187,7 +1242,7 @@ export class Viewer {
   private rebuildFrameBind() {
     const env = this.environment;
     if (!env) return;
-    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView, probe = this.probeView): GPUBindGroupEntry[] => [
+    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView, probe = this.probeView, ao = this.ao.view ?? this.dummyAoView): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer } },
       { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
       { binding: 2, resource: env.brdf.createView() },
@@ -1198,13 +1253,14 @@ export class Viewer {
       { binding: 7, resource: { buffer: this.lightsBuffer } },
       { binding: 8, resource: local },
       { binding: 9, resource: probe },
+      { binding: 10, resource: ao },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
     this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
     this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
-    this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView) }));
+    this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.dummyAoView) }));
     // the probe's own faces see the key's shadow and the local shadows, but not the probe: it is what they are drawing
-    this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView) }));
+    this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView, this.dummyAoView) }));
   }
 
   /** All the stones' facet planes in one buffer, each group's run remembered for its material record. */
@@ -1391,6 +1447,7 @@ export class Viewer {
       pf.set(viewProj, 0);
       pf.set(eye, 16);
       pf[60] = 0;   // no probe within the probe
+      pf[66] = 0;   // nor the frame's contact occlusion, drawn for another view
       device.queue.writeBuffer(this.probeFrames[fi], 0, pf);
       const pass = encoder.beginRenderPass({
         label: `probe face ${fi}`,
@@ -1438,6 +1495,11 @@ export class Viewer {
   }
   /** The filter's own buffer, kept until its encoder has been submitted. */
   private probeFilter: { dispose(): void } | null = null;
+  /** Contact occlusion, per pixel, from the frame's own depth. */
+  private ao: ContactOcclusion;
+  private dummyAoView: GPUTextureView;
+  private contact = 1;
+  setContact(v: number) { this.contact = v; this.ao.strength = v; this.dirty = true; }
 
   /**
    * Where the probe stands: above the piece's top by a little, at its

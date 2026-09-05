@@ -54,6 +54,8 @@ const state = {
   exposure: 1,
   bloom: 0.018,
   glow: 1,
+  detail: 0.6,
+  contact: 1,
   tonemap: 'agx' as 'agx' | 'aces',
   vignette: 0.3,
   grain: 0.25,
@@ -407,6 +409,10 @@ lightSet.append(
     state.envSpin = v;
     viewer.setEnvSpin(v);
   }),
+  slider('contact', 0, 1, 0.02, state.contact, (v) => v.toFixed(2), (v) => {
+    state.contact = v;
+    viewer.setContact(v);
+  }),
   slider('ambient', 0, 2, 0.02, state.envStrength, (v) => `${v.toFixed(2)}×`, (v) => {
     state.envStrength = v;
     viewer.setEnvStrength(v);
@@ -474,6 +480,10 @@ filmSet.append(
   picker('tonemap', ['agx', 'aces'], state.tonemap, (v) => {
     state.tonemap = v as 'agx' | 'aces';
     viewer.setFilm({ tonemap: v === 'agx' ? 1 : 0 });
+  }),
+  slider('detail', 0, 1, 0.02, state.detail, (v) => v.toFixed(2), (v) => {
+    state.detail = v;
+    viewer.setDetail(v);
   }),
   slider('vignette', 0, 1, 0.02, state.vignette, (v) => v.toFixed(2), (v) => {
     state.vignette = v;
