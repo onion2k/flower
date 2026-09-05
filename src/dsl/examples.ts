@@ -288,7 +288,8 @@ part chip = pearl(radius: 2.2) in white pearl
 
 form display {
   place rest
-  place band at (0, 0, 22) pitch 90deg
+  # a shank's crown is on +X; pitched back a quarter it stands up, stone uppermost
+  place band at (0, 0, 22) pitch -90deg
   fasten mount to band.crown
   fasten stone to mount.seat
 
