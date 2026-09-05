@@ -256,7 +256,14 @@ plump rounded-square dome and written to a height map the ground's vertex
 shader displaces by and its fragment shader takes normals from. A piece
 sinks into the pillow by the cushion's puff. Outside the rim the ground
 shades as the matte table. Baked whenever the scene, occlusion or table
-changes; ~5 compute passes over 512², cheap.
+changes; eleven compute passes over 512², cheap.
+
+**Revised again:** one drape slope served a plate and a stem equally badly —
+a 2 mm trunk dug a broad faceted pit. The cushion now has two terms: a
+tight collar (steep min-plus cone over eight directions) wherever a part
+touches, and a broad sag from a tent-weighted blur of the footprint, so a
+plate presses the whole cushion down, a ring sits in a shallow hollow with
+its inside carried down too, and a stem only dimples.
 
 ## Infrastructure the list implies, in order
 

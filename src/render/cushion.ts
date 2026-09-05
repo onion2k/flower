@@ -9,10 +9,14 @@
  *    of the ground knows how high the underside of the piece is above it.
  * 2. A min-plus "cone" pass spreads that outward: the cloth may be no higher
  *    than the piece's underside at any point, nor higher than that plus a
- *    slope times the distance away — which is what a draped cloth does. It
- *    is run along four directions in turn, so the cone is an octagon rather
- *    than a diamond.
- * 3. The result is capped by the cushion's own dome: a rounded-square pad
+ *    slope times the distance away. The slope is steep: this is the collar
+ *    of cloth bunched against whatever touches it, a few millimetres wide.
+ *    It is run along eight directions in turn, so the collar is round enough.
+ * 3. A blur of the piece's footprint says how much of the cloth each part of
+ *    it is carrying: a plate presses the cushion down across its whole
+ *    extent, a ring a little, a stem hardly at all beyond its own collar.
+ *    That is the sag, and it is what keeps a thin trunk from digging a pit.
+ * 4. The result is capped by the cushion's own dome: a rounded-square pad
  *    that stands `puff` millimetres proud and falls to the table at its rim.
  *
  * The ground mesh reads the height in its vertex shader and its fragment
@@ -32,13 +36,14 @@ struct Params {
   clearance: f32,  // the cloth stays this far under a part's underside
   size: f32,       // the cushion's half-side as a fraction of the radius
   dir: vec2i,      // the direction this pass sweeps
-  stage: u32,      // 0 read the depth map; 1 read the height map; 2 finish
+  stage: u32,      // 0 sweep from the depth map; 1 sweep from the height map; 2 finish; 3 blur the footprint; 4 blur again
   _pad: u32,
 };
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var pieceDepth: texture_depth_2d;
 @group(0) @binding(2) var src: texture_2d<f32>;
 @group(0) @binding(3) var dst: texture_storage_2d<r32float, write>;
+@group(0) @binding(4) var aux: texture_2d<f32>;
 
 const FAR = 1e9;
 
@@ -77,15 +82,37 @@ fn dome(p: vec2i) -> f32 {
   let p = vec2i(id.xy);
   let s = i32(${CUSHION_SIZE});
   if (p.x >= s || p.y >= s) { return; }
+  let texel = params.radius * 2.0 / f32(s);
   if (params.stage == 2u) {
-    // the cushion's own shape, and no higher than the drape allows; a part
-    // set on the table itself may push the cloth a little below it
+    // the cushion's own shape, sagging under what it carries, and no higher
+    // than the collar allows; a part set on the table itself may push the
+    // cloth a little below it
     let cone = textureLoad(src, p, 0).r;
-    let h = min(dome(p), cone - params.centre.z);
+    let carried = textureLoad(aux, p, 0).r;
+    let sag = params.puff * smoothstep(0.05, 0.6, carried);
+    let h = min(dome(p) - sag, cone - params.centre.z);
     textureStore(dst, p, vec4f(max(h, -params.clearance), 0.0, 0.0, 0.0));
     return;
   }
-  let texel = params.radius * 2.0 / f32(s);
+  if (params.stage == 3u || params.stage == 4u) {
+    // how much of the cloth nearby is under the piece: a box blur of the
+    // footprint, sixteen millimetres or so wide, one axis per pass — wide
+    // enough that the inside of a ring is carried down with its band
+    let reach = max(1, i32(8.0 / texel));
+    // a tent rather than a box, so a ring's inside does not show the two axes
+    var sum = 0.0;
+    var n = 0.0;
+    for (var k = -reach; k <= reach; k++) {
+      let q = p + params.dir * k;
+      if (q.x < 0 || q.y < 0 || q.x >= s || q.y >= s) { continue; }
+      let w = 1.0 - abs(f32(k)) / f32(reach + 1);
+      if (params.stage == 3u) { sum += w * select(0.0, 1.0, undersideAt(q) < FAR); }
+      else { sum += w * textureLoad(src, q, 0).r; }
+      n += w;
+    }
+    textureStore(dst, p, vec4f(sum / max(n, 1.0), 0.0, 0.0, 0.0));
+    return;
+  }
   let stepLength = length(vec2f(params.dir)) * texel;
   var best = valueAt(p);
   for (var k = 1; k <= 40; k++) {
@@ -111,6 +138,7 @@ export interface CushionShape {
 export class CushionBake {
   readonly height: GPUTexture;
   private scratch: GPUTexture;
+  private pressure: GPUTexture;
   private pipeline: GPUComputePipeline;
   private layout: GPUBindGroupLayout;
   private params: GPUBuffer;
@@ -123,6 +151,7 @@ export class CushionBake {
     });
     this.height = make('cushion height');
     this.scratch = make('cushion scratch');
+    this.pressure = make('cushion pressure');
     this.layout = device.createBindGroupLayout({
       label: 'cushion',
       entries: [
@@ -130,6 +159,7 @@ export class CushionBake {
         { binding: 1, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'depth' } },
         { binding: 2, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
         { binding: 3, visibility: GPUShaderStage.COMPUTE, storageTexture: { format: 'r32float', access: 'write-only' } },
+        { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
     this.pipeline = device.createComputePipeline({
@@ -137,8 +167,8 @@ export class CushionBake {
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.layout] }),
       compute: { module: shader(device, CONE_WGSL, 'cushion'), entryPoint: 'main' },
     });
-    // five passes, each with its own slice of parameters
-    this.params = device.createBuffer({ label: 'cushion params', size: 256 * 5, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // eleven passes, each with its own slice of parameters
+    this.params = device.createBuffer({ label: 'cushion params', size: 256 * 11, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
   /**
@@ -148,12 +178,22 @@ export class CushionBake {
   bake(encoder: GPUCommandEncoder, pieceDepth: GPUTextureView, centre: number[], radius: number, shape: CushionShape) {
     const { device } = this.ctx;
     const clearance = 0.25;
-    const sweeps: Array<{ dir: [number, number]; stage: number; from: GPUTexture; to: GPUTexture }> = [
-      { dir: [1, 0], stage: 0, from: this.scratch, to: this.height },
-      { dir: [0, 1], stage: 1, from: this.height, to: this.scratch },
-      { dir: [1, 1], stage: 1, from: this.scratch, to: this.height },
-      { dir: [1, -1], stage: 1, from: this.height, to: this.scratch },
-      { dir: [0, 0], stage: 2, from: this.scratch, to: this.height },
+    const h = this.height, sc = this.scratch, pr = this.pressure;
+    const sweeps: Array<{ dir: [number, number]; stage: number; from: GPUTexture; to: GPUTexture; aux?: GPUTexture }> = [
+      // the collar: eight directions, alternating between the two scratch textures
+      { dir: [1, 0], stage: 0, from: sc, to: h },
+      { dir: [0, 1], stage: 1, from: h, to: sc },
+      { dir: [1, 1], stage: 1, from: sc, to: h },
+      { dir: [1, -1], stage: 1, from: h, to: sc },
+      { dir: [2, 1], stage: 1, from: sc, to: h },
+      { dir: [1, 2], stage: 1, from: h, to: sc },
+      { dir: [2, -1], stage: 1, from: sc, to: h },
+      { dir: [1, -2], stage: 1, from: h, to: sc },
+      // the sag: the footprint blurred, one axis then the other
+      { dir: [1, 0], stage: 3, from: sc, to: h },
+      { dir: [0, 1], stage: 4, from: h, to: pr },
+      // and the cushion from both
+      { dir: [0, 0], stage: 2, from: sc, to: h, aux: pr },
     ];
     const data = new ArrayBuffer(256 * sweeps.length);
     sweeps.forEach((s, i) => {
@@ -172,6 +212,7 @@ export class CushionBake {
           { binding: 1, resource: pieceDepth },
           { binding: 2, resource: s.from.createView() },
           { binding: 3, resource: s.to.createView() },
+          { binding: 4, resource: (s.aux ?? s.from).createView() },
         ],
       });
       const pass = encoder.beginComputePass({ label: `cushion ${i}` });

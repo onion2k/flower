@@ -194,8 +194,10 @@ const TABLES: Record<TableName, { kind: number; roughness: number; scale: number
   linen: { kind: 4, roughness: 0.95, scale: 1.8 },
   // the cloths are cushions: a plump pad the piece sinks into. Velvet is
   // thick and holds its shape; silk is thin over its stuffing and drapes wider
-  velvet: { kind: 5, roughness: 0.8, scale: 1.2, cushion: { puff: 6, slope: 0.5, size: 0.64 } },
-  silk: { kind: 6, roughness: 0.3, scale: 0.4, cushion: { puff: 5, slope: 0.35, size: 0.64 } },
+  // slope is the collar's: how steeply the cloth climbs back from whatever
+  // touches it. The broad sag comes from how much the piece covers
+  velvet: { kind: 5, roughness: 0.8, scale: 1.2, cushion: { puff: 6, slope: 1.8, size: 0.64 } },
+  silk: { kind: 6, roughness: 0.3, scale: 0.4, cushion: { puff: 5, slope: 1.3, size: 0.64 } },
 };
 
 export class Viewer {
