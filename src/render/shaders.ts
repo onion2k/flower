@@ -45,9 +45,23 @@ struct Frame {
   // half that size is to be read by pixel
   viewport: vec2f,
   aoOn: f32,
-  _pad7: f32,
+  // the studio rig: how many of the lights below are lit
+  rigCount: f32,
+  rig: array<RigLight, 3>,
+};
+/**
+ * A light of the rig: a disc like the key, with its own view of the scene
+ * for its shadow, kept in its own layer of the rig's shadow array.
+ */
+struct RigLight {
+  dir: vec3f,
+  strength: f32,
+  colour: vec3f,
+  size: f32,
+  viewProj: mat4x4f,
 };
 @group(0) @binding(0) var<uniform> frame: Frame;
+@group(0) @binding(11) var rigShadow: texture_depth_2d_array;
 @group(0) @binding(10) var contactAo: texture_2d<f32>;
 
 /** The contact occlusion at this pixel: 1 in the open, less where something stands close over the surface. */
@@ -185,9 +199,11 @@ fn irradianceAt(n: vec3f, p: vec3f) -> vec3f {
 // widened by the disc's own radius with the energy that widening spreads
 // divided back out (Karis's sphere-light approximation).
 fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
-  let l0 = normalize(frame.keyDir);
-  if (dot(n, l0) <= -sin(frame.keySize) || frame.keyStrength <= 0.0) { return vec3f(0.0); }
-  let size = frame.keySize;
+  return discSpecular(n, v, f0, roughness, frame.keyDir, frame.keySize, frame.keyColour, frame.keyStrength);
+}
+fn discSpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32, dir: vec3f, size: f32, colour: vec3f, strength: f32) -> vec3f {
+  let l0 = normalize(dir);
+  if (dot(n, l0) <= -sin(size) || strength <= 0.0) { return vec3f(0.0); }
   let r = reflect(-v, n);
   let rl = dot(r, l0);
   let cosCone = cos(size);
@@ -214,7 +230,7 @@ fn keySpecular(n: vec3f, v: vec3f, f0: vec3f, roughness: f32) -> vec3f {
   let k = (roughness + 1.0) * (roughness + 1.0) / 8.0;
   let g = (ndl / (ndl * (1.0 - k) + k)) * (ndv / (ndv * (1.0 - k) + k));
   let f = f0 + (1.0 - f0) * pow(1.0 - vdh, 5.0);
-  return d * g * f * norm / (4.0 * ndv) * frame.keyColour * frame.keyStrength * 3.0;
+  return d * g * f * norm / (4.0 * ndv) * colour * strength * 3.0;
 }
 
 // a point in a disc: Vogel's spiral, evenly spread at any count
@@ -235,16 +251,34 @@ fn vogel(i: i32, count: i32, phase: f32) -> vec2f {
 // shadowing itself where the map's texels are coarser than the mesh.
 fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
   if (frame.shadowOn < 0.5 || frame.keyStrength <= 0.0) { return 1.0; }
-  let p = world + n * frame.shadowOffset;
-  let clip = frame.lightViewProj * vec4f(p, 1.0);
+  return discShadow(world, n, frame.lightViewProj, frame.keySize, -1);
+}
+// the maps: the key's own, or a layer of the rig's
+fn shadowDims(layer: i32) -> vec2f {
+  if (layer < 0) { return vec2f(textureDimensions(keyShadow)); }
+  return vec2f(textureDimensions(rigShadow));
+}
+fn shadowLoad(layer: i32, at: vec2i) -> f32 {
+  if (layer < 0) { return textureLoad(keyShadow, at, 0); }
+  return textureLoad(rigShadow, at, layer, 0);
+}
+fn shadowCompare(layer: i32, uv: vec2f, depth: f32) -> f32 {
+  if (layer < 0) { return textureSampleCompareLevel(keyShadow, shadowSampler, uv, depth); }
+  return textureSampleCompareLevel(rigShadow, shadowSampler, uv, layer, depth);
+}
+fn discShadow(world: vec3f, n: vec3f, viewProj: mat4x4f, size: f32, layer: i32) -> f32 {
+  let dims = shadowDims(layer);
+  // the offsets were set for the key's map; a coarser map needs them scaled
+  let coarse = f32(textureDimensions(keyShadow).x) / dims.x;
+  let p = world + n * frame.shadowOffset * coarse;
+  let clip = viewProj * vec4f(p, 1.0);
   let uv = vec2f(clip.x, -clip.y) * 0.5 + 0.5;
   if (uv.x < 0.0 || uv.x > 1.0 || uv.y < 0.0 || uv.y > 1.0 || clip.z > 1.0) { return 1.0; }
-  let depth = clip.z - frame.shadowBias;
-  let dims = vec2f(textureDimensions(keyShadow));
+  let depth = clip.z - frame.shadowBias * coarse;
   let texel = 1.0 / dims;
   // a fixed rotation per point, so the taps' pattern is a grain, not a print
   let phase = hash13(floor(world * 23.0)) * 6.2831853;
-  let spread = 2.0 * tan(frame.keySize);
+  let spread = 2.0 * tan(size);
   var radius = texel * 1.5;
   if (spread > 0.0) {
     // blocker search: the mean depth of what is between here and the light,
@@ -254,7 +288,7 @@ fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
     var blockerDepth = 0.0;
     for (var i = 0; i < 12; i++) {
       let at = uv + vogel(i, 12, phase) * search;
-      let d = textureLoad(keyShadow, vec2i(clamp(at, vec2f(0.0), vec2f(1.0)) * (dims - 1.0)), 0);
+      let d = shadowLoad(layer, vec2i(clamp(at, vec2f(0.0), vec2f(1.0)) * (dims - 1.0)));
       if (d < depth) { blockers += 1.0; blockerDepth += d; }
     }
     if (blockers == 0.0) { return 1.0; }
@@ -263,7 +297,7 @@ fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
   }
   var lit = 0.0;
   for (var i = 0; i < 24; i++) {
-    lit += textureSampleCompareLevel(keyShadow, shadowSampler, uv + vogel(i, 24, phase) * radius, depth);
+    lit += shadowCompare(layer, uv + vogel(i, 24, phase) * radius, depth);
   }
   return lit / 24.0;
 }
@@ -271,9 +305,37 @@ fn keyShadowAt(world: vec3f, n: vec3f) -> f32 {
 // the key's diffuse: a disc lights a little past its own horizon, so the
 // terminator softens with its size instead of cutting off at n·l = 0
 fn keyDiffuse(n: vec3f) -> f32 {
-  let w = sin(frame.keySize);
-  let ndl = clamp((dot(n, normalize(frame.keyDir)) + w) / (1.0 + w), 0.0, 1.0);
-  return ndl * frame.keyStrength * 3.0 / 3.14159265;
+  return discDiffuse(n, frame.keyDir, frame.keySize, frame.keyStrength);
+}
+fn discDiffuse(n: vec3f, dir: vec3f, size: f32, strength: f32) -> f32 {
+  let w = sin(size);
+  let ndl = clamp((dot(n, normalize(dir)) + w) / (1.0 + w), 0.0, 1.0);
+  return ndl * strength * 3.0 / 3.14159265;
+}
+
+/**
+ * The studio rig: fill and rim beside the key, each a disc with its own
+ * shadow. What they add at a point, split so a caller can put the diffuse
+ * under its own body colour: the specular already has its Fresnel in.
+ * shadowN is the normal the shadow lookup steps along, which the table
+ * takes as straight up.
+ */
+struct RigLit { diffuse: vec3f, specular: vec3f };
+fn rigAt(n: vec3f, v: vec3f, world: vec3f, f0: vec3f, roughness: f32, shadowN: vec3f) -> RigLit {
+  var out: RigLit;
+  out.diffuse = vec3f(0.0);
+  out.specular = vec3f(0.0);
+  let count = i32(frame.rigCount);
+  for (var i = 0; i < count; i++) {
+    let l = frame.rig[i];
+    if (l.strength <= 0.0) { continue; }
+    var lit = 1.0;
+    if (frame.shadowOn > 0.5) { lit = discShadow(world, shadowN, l.viewProj, l.size, i); }
+    if (lit <= 0.0) { continue; }
+    out.diffuse += discDiffuse(n, l.dir, l.size, l.strength) * l.colour * lit;
+    out.specular += discSpecular(n, v, f0, roughness, l.dir, l.size, l.colour, l.strength) * lit;
+  }
+  return out;
 }
 
 /**
@@ -1265,6 +1327,11 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
   // the key light, over whatever the environment gave, where its shadow lets it
   let keyLit = keyShadowAt(in.world, n);
   colour += (keySpecular(n, v, keyF0, keyRough) + keyBody * keyDiffuse(n) * frame.keyColour) * keyLit * frame.exposure;
+  // and the rig's fill and rim, the same way
+  if (frame.rigCount > 0.0) {
+    let rig = rigAt(n, v, in.world, keyF0, keyRough, n);
+    colour += (rig.specular + keyBody * rig.diffuse) * frame.exposure;
+  }
   // and the piece's own lights, on everything but the lights themselves
   if (!light) { colour += localLights(n, v, in.world, keyF0, keyRough, keyBody) * frame.exposure; }
 
@@ -1507,7 +1574,14 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // each light carries its own shadow: the sky's the baked occlusion, the
   // key's its shadow map — the key doesn't darken where the sky can't reach
   let keyLit = keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
-  let key = keyDiffuse(n) * frame.keyColour * keyLit;
+  var key = keyDiffuse(n) * frame.keyColour * keyLit;
+  var rig: RigLit;
+  rig.diffuse = vec3f(0.0);
+  rig.specular = vec3f(0.0);
+  if (frame.rigCount > 0.0) {
+    rig = rigAt(n, v, in.world, vec3f(0.04), clamp(surface.roughness, 0.05, 1.0), vec3f(0.0, 0.0, 1.0));
+    key += rig.diffuse;
+  }
   // dust: a cloth on a bench gathers it, a sparse scatter of pale flecks that
   // catch the light where the pile is dark
   var dust = 0.0;
@@ -1534,7 +1608,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
     reflectN = normalize(mix(n, cross(anisoT, weave), surface.aniso * (1.0 - rough * 0.4)));
   }
   let reflected = reflectionAt(reflect(-v, reflectN), rough * frame.maxLod, in.world) * mix(ao, 1.0, 0.3);
-  var specular = reflected * fresnel + keySpecular(reflectN, v, vec3f(0.04), rough) * keyLit;
+  var specular = reflected * fresnel + keySpecular(reflectN, v, vec3f(0.04), rough) * keyLit + rig.specular;
   // a cloth's sheen: light coming back off the fibre tips, most at grazing
   // angles, in the fuzz's own colour — the velvet glow at the edge of a fold
   if (any(surface.sheen > vec3f(0.0))) {
@@ -1554,7 +1628,9 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   if (cushion < 1.0) {
     // the table the cushion sits on: a dark matte, lit as the matte table is
     let matte = max(ground.background, vec3f(0.04, 0.04, 0.043));
-    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), in.world) * ao + keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyLit) * frame.exposure;
+    var flatKey = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyLit;
+    if (frame.rigCount > 0.0) { flatKey += rigAt(vec3f(0.0, 0.0, 1.0), v, in.world, vec3f(0.04), 1.0, vec3f(0.0, 0.0, 1.0)).diffuse; }
+    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), in.world) * ao + flatKey) * frame.exposure;
     lit = mix(flat, lit, cushion);
   }
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));

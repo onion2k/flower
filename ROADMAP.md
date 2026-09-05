@@ -275,6 +275,16 @@ bake sidesteps it.
   this samples the shading too, so engraving, wire and sparkle stop
   shimmering. Dropped where the frame would pass twice the pixel budget.
 
+- **8, studio rig (September 2026):** the frame uniform carries up to three
+  more disc lights (`RigLight`: direction, strength, colour, size, and its
+  own view of the scene), each with a layer of a 1024² shadow array at
+  binding 11, baked with the key's. The key's disc-light functions were
+  made generic (`discSpecular`, `discDiffuse`, `discShadow` over either
+  map) and `rigAt` sums the rig for the piece and the table. Presets in the
+  panel set the rig round the key — fill, rim, three point, clamshell — and
+  follow it when it moves. None is baked into the sky, so they need no
+  rebake.
+
 ### Caveats and order
 
 Items 1–8 each patch one symptom of not tracing rays. They stack, and they

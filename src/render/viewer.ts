@@ -33,7 +33,10 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 512;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 272;
-const FRAME_SIZE = 272;
+/** The frame uniform: 272 bytes of scene, then the rig's three lights at 96 each. */
+const FRAME_SIZE = 272 + 3 * 96;
+const RIG_SHADOW_SIZE = 1024;
+export const MAX_RIG_LIGHTS = 3;
 /** The reflection probe: face size and prefilter levels. */
 const PROBE_SIZE = 256;
 const PROBE_MIPS = 6;
@@ -44,6 +47,17 @@ const LOCAL_SHADOW_SIZE = 160;
 const LIGHTS_SIZE = 16 + MAX_LIGHTS * 32;
 
 export type Quality = 'draft' | 'final';
+
+/** A light of the studio rig: a disc in the sky like the key, with its own shadow. */
+export interface RigLight {
+  elevation: number;
+  azimuth: number;
+  strength: number;
+  /** -1 cool to 1 warm, as the key's. */
+  warmth: number;
+  /** Angular radius in radians. */
+  size: number;
+}
 
 export interface InstanceGroup {
   mesh: PartMesh;
@@ -245,6 +259,9 @@ export class Viewer {
   private keyStrength = 0;
   private keySize = 0;
   private keyColour: Vec3 = [1, 1, 1];
+  /** The rig beside the key, at most MAX_RIG_LIGHTS of them. */
+  private rig: RigLight[] = [];
+  private rigViewProj = Array.from({ length: MAX_RIG_LIGHTS }, () => new Float32Array(16));
   private envStrength = 1;
   /** Depth of field: strength (0 off) and focus as a multiple of the orbit distance, so the target is what's sharp. */
   private dof = 0;
@@ -347,6 +364,13 @@ export class Viewer {
   private shadowPipeline: GPURenderPipeline;
   /** The frame uniform as the key sees it: only viewProj differs. */
   private shadowFrameBuffer: GPUBuffer;
+  /** The rig's shadows: one layer per light, and the frame as each sees it. */
+  private rigShadowMap: GPUTexture;
+  private rigShadowView: GPUTextureView;
+  private rigLayerViews: GPUTextureView[] = [];
+  private dummyRigShadowView: GPUTextureView;
+  private rigFrameBuffers: GPUBuffer[] = [];
+  private rigFrameBinds: GPUBindGroup[] = [];
   private cushion: CushionBake;
   private cushionDepth: GPUTexture;
   private cushionDepthView: GPUTextureView;
@@ -409,6 +433,7 @@ export class Viewer {
         { binding: 8, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
         { binding: 9, visibility: both, texture: { viewDimension: 'cube' } },
         { binding: 10, visibility: both, texture: {} },
+        { binding: 11, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -482,6 +507,20 @@ export class Viewer {
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
     });
     this.shadowFrameBuffer = device.createBuffer({ label: 'shadow frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // the rig's shadows, coarser than the key's: fill and rim are soft and
+    // off to the side, and their shadows are read at a quarter the density
+    this.rigShadowMap = device.createTexture({
+      label: 'rig shadows', size: [RIG_SHADOW_SIZE, RIG_SHADOW_SIZE, MAX_RIG_LIGHTS], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.rigShadowView = this.rigShadowMap.createView({ dimension: '2d-array' });
+    this.dummyRigShadowView = device.createTexture({
+      size: [1, 1, 1], format: 'depth24plus', usage: GPUTextureUsage.TEXTURE_BINDING, label: 'no rig shadows',
+    }).createView({ dimension: '2d-array' });
+    for (let i = 0; i < MAX_RIG_LIGHTS; i++) {
+      this.rigLayerViews.push(this.rigShadowMap.createView({ dimension: '2d', baseArrayLayer: i, arrayLayerCount: 1 }));
+      this.rigFrameBuffers.push(device.createBuffer({ label: `rig frame ${i}`, size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+    }
     // the piece seen straight down, for the cushion to take its shape from
     this.cushionDepth = device.createTexture({
       size: [CUSHION_SIZE, CUSHION_SIZE], format: 'depth24plus',
@@ -690,16 +729,25 @@ export class Viewer {
    * so the occlusion bake does not follow it: its shadowing is the ambient
    * occlusion's, soft, not a cast shadow.
    */
+  /**
+   * The studio rig: fill and rim lights beside the key. Each is a disc like
+   * the key and casts its own shadow; none is baked into the sky, so they
+   * come and go without a rebake.
+   */
+  setRig(lights: RigLight[]) {
+    this.rig = lights.slice(0, MAX_RIG_LIGHTS);
+    this.invalidateProbe();
+    this.shadowDirty = true;
+    this.dirty = true;
+  }
+
   setKeyLight(opts: { elevation: number; azimuth: number; strength: number; warmth: number; size?: number }) {
     this.invalidateProbe();
     const ce = Math.cos(opts.elevation);
     this.keyDir = [Math.cos(opts.azimuth) * ce, Math.sin(opts.azimuth) * ce, Math.sin(opts.elevation)];
     this.keyStrength = opts.strength;
     this.keySize = Math.max(0, opts.size ?? 0);
-    const w = Math.max(-1, Math.min(1, opts.warmth));
-    this.keyColour = w >= 0
-      ? [1, 1 - 0.28 * w, 1 - 0.62 * w]
-      : [1 + 0.45 * w, 1 + 0.2 * w, 1];
+    this.keyColour = warmthColour(opts.warmth);
     this.shadowDirty = true;
     this.dirty = true;
     // in daylight the key *is* the sun: the sky is re-baked round it once
@@ -1066,6 +1114,18 @@ export class Viewer {
     frame[64] = this.post.renderWidth;
     frame[65] = this.post.renderHeight;
     frame[66] = this.contact > 0 && this.groups.length ? 1 : 0;
+    frame[67] = this.rig.length;
+    this.rig.forEach((l, i) => {
+      const o = 68 + i * 24;
+      const ce = Math.cos(l.elevation);
+      const d: [number, number, number] = [Math.cos(l.azimuth) * ce, Math.sin(l.azimuth) * ce, Math.sin(l.elevation)];
+      frame.set(d, o);
+      frame[o + 3] = l.strength;
+      frame.set(warmthColour(l.warmth), o + 4);
+      frame[o + 7] = Math.max(0, l.size);
+      orthoFromDirection(this.rigViewProj[i], d, this.sceneCentre, this.sceneRadius);
+      frame.set(this.rigViewProj[i], o + 8);
+    });
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -1090,6 +1150,26 @@ export class Viewer {
         shadowPass.drawIndexed(g.indexCount, g.instanceCount);
       }
       shadowPass.end();
+      // and the rig's, one layer each, the same way
+      this.rig.forEach((_, i) => {
+        const rf = new Float32Array(frame);
+        rf.set(this.rigViewProj[i], 0);
+        device.queue.writeBuffer(this.rigFrameBuffers[i], 0, rf);
+        const pass = encoder.beginRenderPass({
+          label: `rig shadow ${i}`,
+          colorAttachments: [],
+          depthStencilAttachment: { view: this.rigLayerViews[i], depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+        });
+        pass.setPipeline(this.shadowPipeline);
+        pass.setBindGroup(0, this.rigFrameBinds[i]);
+        for (const g of this.groups) {
+          pass.setVertexBuffer(0, g.position);
+          pass.setVertexBuffer(1, g.instance);
+          pass.setIndexBuffer(g.index, 'uint32');
+          pass.drawIndexed(g.indexCount, g.instanceCount);
+        }
+        pass.end();
+      });
     }
     if (this.localShadowDirty && this.lightList.length && this.faceBinds.length) {
       this.localShadowDirty = false;
@@ -1250,7 +1330,7 @@ export class Viewer {
   private rebuildFrameBind() {
     const env = this.environment;
     if (!env) return;
-    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView, probe = this.probeView, ao = this.ao.view ?? this.dummyAoView): GPUBindGroupEntry[] => [
+    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView, probe = this.probeView, ao = this.ao.view ?? this.dummyAoView, rig = this.rigShadowView): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer } },
       { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
       { binding: 2, resource: env.brdf.createView() },
@@ -1262,11 +1342,14 @@ export class Viewer {
       { binding: 8, resource: local },
       { binding: 9, resource: probe },
       { binding: 10, resource: ao },
+      { binding: 11, resource: rig },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
-    this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
-    this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
-    this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.dummyAoView) }));
+    const none = this.dummyRigShadowView;
+    this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.ao.view ?? this.dummyAoView, none) });
+    this.rigFrameBinds = this.rigFrameBuffers.map((b, i) => this.ctx.device.createBindGroup({ label: `rig frame ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.ao.view ?? this.dummyAoView, none) }));
+    this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.ao.view ?? this.dummyAoView, none) });
+    this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.dummyAoView, none) }));
     // the probe's own faces see the key's shadow and the local shadows, but not the probe: it is what they are drawing
     this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView, this.dummyAoView) }));
   }
@@ -1725,3 +1808,9 @@ function unitGrid(n: number) {
   return { positions, indices };
 }
 
+
+/** The key's and the rig's colour from a warmth: -1 a cool blue, 0 white, 1 a warm amber. */
+function warmthColour(warmth: number): Vec3 {
+  const w = Math.max(-1, Math.min(1, warmth));
+  return w >= 0 ? [1, 1 - 0.28 * w, 1 - 0.62 * w] : [1 + 0.45 * w, 1 + 0.2 * w, 1];
+}
