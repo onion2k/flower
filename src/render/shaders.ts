@@ -898,6 +898,8 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
   // with the directions those coordinates run in on the surface
   let engraveFootprint = max(0.75 * length(vec2f(dpdx(in.engrave.x), dpdy(in.engrave.x))), 0.005);
   let engraveFrame = tangentFrame(n, in.world, in.engrave);
+  // and how much of the part's own coordinates a pixel spans, for the finest detail
+  let objectFootprint = length(fwidth(in.object));
 
   // --- chased relief: bend the normal by the height field's gradient, per pixel ---
   // The relief was applied as a shear along the flat plate's normal; the cup and
@@ -993,7 +995,12 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
   // to break a highlight into a soft haze, and where hands have been it
   // carries their oils, which dull the highlight in slow blotches. Both are
   // drawn from the part's own coordinates, so they stay put as it turns.
-  if (frame.detail > 0.0 && worked && material.roughness < 0.35) {
+  // Enamel hides the metal under it, so the glass carries none of this; and
+  // the swirls are a sixth of a millimetre apart, so where a pixel spans
+  // more than a fraction of that they are let go before they can alias —
+  // a moiré on a petal seen from across the room is worse than no swirls.
+  let swirlFade = 1.0 - smoothstep(0.025, 0.08, objectFootprint);
+  if (frame.detail > 0.0 && worked && material.roughness < 0.35 && in.enamel < 0.5) {
     let q = in.object;
     // swirls: two families of fine lines, each turned by a slow noise so the
     // rings of a buffing wheel wander across the surface
@@ -1005,12 +1012,13 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
     // a smudge: a slow blotch of oil that lifts the roughness
     let smudge = smoothstep(0.55, 0.85, noise3(q * 0.23 + vec3f(7.0, 3.0, 1.0)) * 0.7 + noise3(q * 0.6) * 0.3);
     let amount = frame.detail * smoothstep(0.35, 0.05, material.roughness);
-    // the scratches scatter the highlight a touch; the oil more, and softly
-    roughness += amount * (0.03 * (1.0 - scratch) + 0.11 * smudge);
+    // the scratches scatter the highlight a touch (as a steady haze once
+    // they are too fine to see); the oil more, and softly
+    roughness += amount * (0.03 * mix(0.5, 1.0 - scratch, swirlFade) + 0.11 * smudge);
     // and the fine lines bend the normal a hair, along their own grain
     let eps = 0.05;
     let sx = abs(sin((s1 + eps) * 38.0 + noise3(q * 3.1) * 4.0)) - abs(sin((s1 - eps) * 38.0 + noise3(q * 3.1) * 4.0));
-    n = normalize(n + tbn[0] * sx * amount * 0.012);
+    n = normalize(n + tbn[0] * sx * amount * 0.012 * swirlFade);
   }
 
   // --- patina: an oxide fraction that is not metal any more ---
