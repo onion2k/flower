@@ -15,7 +15,9 @@
  * 3. A blur of the piece's footprint says how much of the cloth each part of
  *    it is carrying: a plate presses the cushion down across its whole
  *    extent, a ring a little, a stem hardly at all beyond its own collar.
- *    That is the sag, and it is what keeps a thin trunk from digging a pit.
+ *    Only what comes down to the cloth counts — a canopy high above it
+ *    carries nothing. That is the sag, and it is what keeps a thin trunk
+ *    from digging a pit.
  * 4. The result is capped by the cushion's own dome: a rounded-square pad
  *    that stands `puff` millimetres proud and falls to the table at its rim.
  *
@@ -106,7 +108,13 @@ fn dome(p: vec2i) -> f32 {
       let q = p + params.dir * k;
       if (q.x < 0 || q.y < 0 || q.x >= s || q.y >= s) { continue; }
       let w = 1.0 - abs(f32(k)) / f32(reach + 1);
-      if (params.stage == 3u) { sum += w * select(0.0, 1.0, undersideAt(q) < FAR); }
+      if (params.stage == 3u) {
+        // only what reaches the cloth presses it: a canopy high over the
+        // cushion carries no weight on it, its trunk does
+        let underside = undersideAt(q);
+        let top = params.centre.z + params.puff;
+        sum += w * (1.0 - smoothstep(top, top + 3.0, underside));
+      }
       else { sum += w * textureLoad(src, q, 0).r; }
       n += w;
     }
