@@ -1732,6 +1732,234 @@ form mantel {
 }
 `,
 
+  sunflower: `# Helianthus — a ring of rays round a spiral of seeds
+material gold satin
+
+# The disc is the point: a phyllotaxis of seeds packed tight enough that the
+# spirals show both ways, with the outermost florets standing up round its
+# rim. The rays are a whorl and a half, the second slipped between the first.
+part ray    = petal(length: 30, width: 8, thickness: 0.4, shape: pointed, cup: 20deg, keel: 0.2, curl: 12deg, curlBias: 1.6, ruffle: 0.4, ruffleWaves: 2)
+part disc   = disc(radius: 17, thickness: 2.4, bevel: 0.6) in bronze antiqued
+part seed   = bead(radius: 0.9, point: 0.5, segments: 10) in bronze satin
+part floret = bud(length: 2.6, width: 1.4, lobes: 5, point: 0.3, segments: 10) in gold polished
+part bract  = leaf(length: 10, width: 4, thickness: 0.5, shape: lanceolate, cup: 30deg, curl: -20deg) in bronze satin
+part stalk  = stem(path: through((0,0,-1), (2,0,-22), (-1,0,-46), (1,0,-70)), radius: 2.4, tip: 0.7, nodes: 3, swell: 0.4) in bronze satin
+part foliage = leaf(length: 30, width: 22, thickness: 0.7, shape: cordate, teeth: 30, veins: 4, cup: 18deg, curl: 28deg) in bronze satin
+
+form sunflower {
+  place disc at (0, 0, -1.2)
+  repeat seed around phyllotaxis(140, 1.25, rise: 0.4, taper: 0.9)
+  repeat floret around ring(30, radius: 15.8, z: 0.4, tilt: -60deg)
+  repeat ray around ring(17, radius: 16.5, z: -0.2, tilt: -8deg)
+  repeat ray around ring(17, radius: 16.5, z: -1.6, phase: 10.6deg, tilt: 4deg, scale: 0.94)
+  repeat bract around ring(14, radius: 15.5, z: -2.8, tilt: 34deg)
+  place stalk
+  repeat foliage around ring(2, radius: 1.2, z: -34, phase: 30deg, tilt: -24deg)
+}
+`,
+
+  magnolia: `# Magnolia — nine thick tepals in three whorls, on a bare branch
+material silver satin
+
+# A magnolia opens before its leaves, so the branch is bare and the flower is
+# all of it. The tepals are thick and spoon-cupped, and the innermost whorl
+# stays nearly closed round the column of carpels.
+part outer  = petal(length: 34, width: 20, thickness: 0.9, shape: spoon, cup: 58deg, curl: -18deg, curlBias: 2.2)
+part middle = petal(length: 32, width: 18, thickness: 0.9, shape: spoon, cup: 66deg, curl: -6deg, curlBias: 2)
+part inner  = petal(length: 27, width: 15, thickness: 0.9, shape: spoon, cup: 76deg, curl: 8deg, curlBias: 1.8)
+part column = pod(length: 12, width: 4.5, whorls: 9, whorlDepth: 0.35) in gold satin
+part cup    = bell(length: 7, mouth: 9, throat: 4, wall: 0.8, flare: 1.4, lobes: 3, lobeDepth: 0.12) in bronze antiqued
+part floor  = disc(radius: 4, thickness: 2, bevel: 0.4) in bronze antiqued
+part twig   = stem(path: through((0,0,-6), (-6,0,-20), (-16,0,-34), (-30,0,-44)), radius: 1.7, tip: 0.7, nodes: 3, swell: 0.4) in bronze antiqued
+part side   = stem(path: through((-16,0,-34), (-14,6,-24), (-10,10,-14)), radius: 1.0, tip: 0.6, nodes: 1) in bronze antiqued
+part bud    = bud(length: 11, width: 5, lobes: 3, lobeDepth: 0.1, point: 0.6) in silver satin
+
+form magnolia {
+  place cup at (0, 0, -7)
+  place floor
+  place column at (0, 0, 1) pitch 90deg
+  repeat outer  around ring(3, radius: 3.6, tilt: -50deg)
+  repeat middle around ring(3, radius: 3.2, phase: 60deg, z: 0.4, tilt: -64deg)
+  repeat inner  around ring(3, radius: 2.6, z: 0.8, tilt: -78deg)
+  place twig
+  place side
+  place bud at (-10, 10, -14) pitch -70deg turn 40deg
+}
+`,
+
+  dahlia: `# Dahlia — a pompon: quilled petals by the hundred, each course tighter
+material copper polished
+
+# The quill is the whole trick: a petal rolled into a tube along its length,
+# so a pompon dahlia is not petals but hundreds of small horns, packed on a
+# phyllotaxis and standing more upright toward the middle.
+# (the part is not called quill: a part name shadows the word, and the shape wants the word)
+part horn  = petal(length: 13, width: 8, thickness: 0.4, shape: quill, cup: 70deg, curl: -10deg, curlBias: 1.8)
+part heart = petal(length: 8, width: 5, thickness: 0.4, shape: quill, cup: 84deg, curl: 8deg)
+part floor = disc(radius: 6, thickness: 2.4, bevel: 0.5) in bronze satin
+part calyx = bell(length: 8, mouth: 13, throat: 6, wall: 0.8, flare: 1.4, lobes: 6, lobeDepth: 0.15) in bronze satin
+part stalk = stem(path: through((0,0,0), (1,0,-22), (-1.5,0,-44), (0.5,0,-64)), radius: 2, tip: 0.6, nodes: 3) in bronze satin
+part foliage = leaf(length: 26, width: 13, thickness: 0.6, teeth: 24, veins: 3, cup: 20deg, curl: 26deg) in bronze satin
+
+form dahlia {
+  place calyx at (0, 0, -8)
+  place floor
+  place stalk
+  repeat heart around phyllotaxis(24, 0.95, tilt: -78deg, fade: 0.4, rise: 1.4)
+  repeat horn around phyllotaxis(90, 0.95, start: 24, tilt: -62deg, fade: 1.6, taper: 0.85)
+  repeat foliage around ring(2, radius: 0.9, z: -30, phase: 20deg, tilt: -20deg)
+}
+`,
+
+  hydrangea: `# Hydrangea — a mophead: dozens of four-petalled florets on a dome
+material silver polished
+
+# One floret is nothing; the head is the flower. shell() lays them over a
+# dome of the head's radius, each facing out, and the florets are enamelled
+# so the head reads as a mass of colour rather than as metal.
+part petal   = petal(length: 6, width: 5.5, thickness: 0.35, shape: round, edge: notched, cup: 16deg, curl: -8deg, enamel: cobalt)
+part eye     = bead(radius: 0.7, point: 0.4, segments: 10) in gold polished
+part pedicel = wire(path: through((0,0,0), (0,0,3), (0,0,6)), radius: 0.35, tip: 1, sections: 8, sides: 6) in bronze satin
+part core    = pod(length: 22, width: 22, segments: 24) in bronze satin
+part stalk   = stem(path: through((0,0,-6), (1,0,-24), (-1,0,-44), (0.5,0,-62)), radius: 2, tip: 0.7, nodes: 2) in bronze satin
+part foliage = leaf(length: 30, width: 18, thickness: 0.7, shape: ovate, teeth: 28, veins: 4, cup: 16deg, curl: 22deg) in bronze satin
+
+unit floret {
+  place pedicel
+  repeat petal around ring(4, radius: 1.0, z: 6, tilt: -12deg)
+  place eye at (0, 0, 6.4)
+}
+
+form hydrangea {
+  place core
+  repeat floret around shell(64, 12, orient: outward, lean: 0)
+  place stalk
+  repeat foliage around ring(2, radius: 1.2, z: -30, phase: 45deg, tilt: -22deg)
+}
+`,
+
+  bluebell: `# Hyacinthoides — a raceme of nodding bells down one side of an arching stem
+material silver satin
+
+let spike = bezier((0,0,0), (2,0,26), (10,0,44), (26,0,52))
+
+# The bells hang from short pedicels and all face the same way, which is why
+# a bluebell nods: the stem bows under them. A bell is built mouth up, so
+# turned over in its own unit it hangs, and the pedicel's own droop is all
+# the swing it needs — the raceme places it without a tilt of its own.
+part rachis  = stem(path: spike, radius: 1.5, tip: 0.3, nodes: 0, sections: 96) in bronze satin
+part bell    = bell(length: 9, mouth: 6, throat: 3.2, wall: 0.45, flare: 1.6, lobes: 6, lobeDepth: 0.3, rows: 14, enamel: cobalt)
+part pedicel = wire(path: through((0,0,0), (4,0,-1.5), (7.5,0,-4.5)), radius: 0.4, tip: 0.8, sections: 12, sides: 6) in bronze satin
+part knot    = bud(length: 5, width: 2.6, lobes: 6, lobeDepth: 0.1, point: 0.3) in silver satin
+part blade   = leaf(length: 42, width: 5, thickness: 0.6, shape: linear, cup: 40deg, keel: 0.45, curl: -36deg, curlBias: 2) in bronze satin
+
+unit flower {
+  place pedicel
+  place bell at (7.5, 0, -4.5) pitch 180deg
+}
+unit tip { place knot pitch 90deg }
+
+form bluebell {
+  place rachis
+  repeat flower around along(spike, 8, from: 0.28, to: 0.88, taper: 0.7)
+  repeat tip around along(spike, 3, from: 0.9, to: 1, taper: 0.5, tilt: -20deg)
+  repeat blade around ring(4, radius: 1.2, z: 1, phase: 30deg, tilt: -66deg)
+}
+`,
+
+  crocus: `# Crocus — a goblet of six tepals, three stamens and a branched style
+material gold satin
+
+# The goblet: tepals cupped hard and barely curled, so the flower closes
+# round its stamens the way a crocus does on a dull day. Both whorls the
+# same size, the inner turned a sixth. The grassy leaves have a pale
+# midrib in life; here it is a keel.
+part tepal  = petal(length: 26, width: 12, thickness: 0.6, shape: spoon, cup: 68deg, keel: 0.15, curl: 4deg, curlBias: 2, enamel: lilac)
+part stamen = wire(path: through((0,0,0), (0.4,0,7), (1.2,0,13)), radius: 0.45, tip: 0.6, sections: 20, sides: 8) in gold polished
+part anther = pod(length: 5, width: 1.3, segments: 12) in amber neon glow 0
+part style  = wire(path: through((0,0,0), (0.6,0,8), (2.2,0,15)), radius: 0.4, tip: 0.5, sections: 20, sides: 6) in copper polished
+part frill  = bud(length: 3, width: 2.2, lobes: 5, lobeDepth: 0.25, point: 0.1) in copper polished
+part floor  = disc(radius: 3.6, thickness: 2, bevel: 0.4) in bronze satin
+part tube   = stem(path: through((0,0,-1), (0.4,0,-14), (0,0,-26)), radius: 1.4, tip: 0.8, nodes: 0, sections: 40) in bronze satin
+part blade  = leaf(length: 34, width: 3, thickness: 0.5, shape: linear, cup: 30deg, keel: 0.6, curl: -30deg, curlBias: 2) in bronze satin
+
+unit filament {
+  place stamen
+  fasten anther to stamen.tip
+}
+unit pistil {
+  place style
+  fasten frill to style.tip
+}
+
+form crocus {
+  place floor
+  place tube
+  repeat tepal around ring(3, radius: 2.6, tilt: -80deg)
+  repeat tepal around ring(3, radius: 2.4, phase: 60deg, z: 0.4, tilt: -84deg)
+  repeat filament around ring(3, radius: 1.4, z: 0.8, tilt: -4deg)
+  repeat pistil around ring(3, radius: 0.5, z: 0.8, phase: 60deg)
+  repeat blade around ring(6, radius: 1.2, z: -20, tilt: -74deg)
+}
+`,
+
+  calla: `# Zantedeschia — one spathe wrapped round a spadix
+material platinum polished
+
+# The one flower here that is a single petal. The spathe is a petal cupped
+# almost into a tube and twisted a little, so its lip rolls back on one
+# side and stays wrapped on the other; the spadix is a pod standing in it.
+part spathe = petal(length: 44, width: 44, thickness: 0.8, shape: round, cup: 64deg, curl: -52deg, curlBias: 3, twist: 22deg)
+part spadix = pod(length: 22, width: 4, whorls: 12, whorlDepth: 0.12) in gold satin
+part floor  = disc(radius: 3.6, thickness: 2.4, bevel: 0.5) in bronze satin
+part stalk  = stem(path: through((0,0,0), (1,0,-24), (-1,0,-50), (0.5,0,-76)), radius: 2.2, tip: 0.6, nodes: 0, sections: 80) in bronze satin
+part blade  = leaf(length: 40, width: 20, thickness: 0.7, shape: deltoid, veins: 4, cup: 24deg, curl: 20deg) in bronze satin
+
+form calla {
+  place floor
+  place stalk
+  place spadix at (0, 0, 2) pitch 90deg
+  repeat spathe around ring(1, radius: 1.5, tilt: -70deg)
+  repeat blade around ring(2, radius: 1.2, z: -30, phase: 60deg, tilt: -44deg)
+}
+`,
+
+  cherry: `# Prunus — a spray of blossom on a bare twig, five notched petals each
+material rose gold polished
+
+# A branch drawn once and forked by tree(), the blossoms at its tips and a
+# few buds among them. Each flower is a unit: five notched petals in
+# white enamel, a boss of stamens, on a short pedicel, so the tree can
+# place the whole thing at every twig end.
+part twig   = wire(path: bow((0, 0, 0), (18, 0, 0), sag: 1.2), radius: 1.1, tip: 0.6, sections: 24) in bronze antiqued
+part petal  = petal(length: 8, width: 7, thickness: 0.35, shape: round, edge: notched, edgeDepth: 0.14, cup: 30deg, curl: -10deg, enamel: white)
+part thread = wire(path: through((0,0,0), (0.4,0,2.5), (1.2,0,4.5)), radius: 0.22, tip: 0.6, sections: 12, sides: 6) in gold polished
+part anther = bead(radius: 0.4, segments: 8) in bronze satin
+part calyx  = bud(length: 3, width: 2.4, lobes: 5, lobeDepth: 0.2, point: 0.2) in bronze antiqued
+part pedicel = wire(path: through((0,0,0), (1,0,3), (3,0,6)), radius: 0.35, tip: 0.8, sections: 12, sides: 6) in bronze antiqued
+part budCase = bud(length: 5, width: 3.2, lobes: 5, lobeDepth: 0.14, point: 0.5) in copper satin
+
+unit stamen {
+  place thread
+  fasten anther to thread.tip
+}
+unit blossom {
+  place pedicel
+  place calyx at (3, 0, 6) pitch 90deg
+  repeat petal around ring(5, radius: 1.6, z: 8, tilt: -20deg)
+  repeat stamen around ring(9, radius: 0.9, z: 8.2, tilt: -18deg)
+}
+unit branch {
+  repeat twig around tree(depth: 3, count: 2, length: 18, spread: rnd(34deg, 10deg), shrink: rnd(0.78, 0.06), twist: rnd(40deg, 30deg))
+  repeat blossom around tree(depth: 4, count: 2, length: 18, spread: rnd(34deg, 10deg), shrink: rnd(0.78, 0.06), twist: rnd(40deg, 30deg), tips: yes)
+  repeat budCase around tree(depth: 2, count: 2, length: 18, spread: rnd(34deg, 10deg), shrink: rnd(0.78, 0.06), twist: rnd(40deg, 30deg), tips: yes)
+}
+
+form cherry {
+  place branch pitch -60deg
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
@@ -1744,7 +1972,7 @@ export const exampleNames = Object.keys(examples);
 export const exampleGroups: Array<[string, string[]]> = [
   ['Jewellery', ['ring', 'tension', 'cluster', 'signet', 'cocktail', 'bangle', 'tiara', 'necklace', 'earrings', 'studs', 'girandole', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
   ['Art deco', ['deco', 'skyscraper', 'mantel', 'trefoil']],
-  ['Flowers', ['rose', 'peony', 'tulip', 'lily', 'lotus', 'orchid', 'carnation', 'freesia', 'daisy', 'poppy', 'iris', 'fuchsia', 'snowdrop', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
+  ['Flowers', ['rose', 'peony', 'dahlia', 'tulip', 'lily', 'lotus', 'magnolia', 'calla', 'orchid', 'carnation', 'sunflower', 'freesia', 'daisy', 'poppy', 'iris', 'crocus', 'fuchsia', 'snowdrop', 'bluebell', 'cherry', 'hydrangea', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
   ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
   ['Weapons', ['dagger', 'battleaxe']],
   ['Structures', ['frame', 'tower', 'armillary']],
