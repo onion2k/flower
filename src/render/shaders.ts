@@ -1218,16 +1218,47 @@ fn nacreBody(n: vec3f, v: vec3f, ndv: f32, base: vec3f, ao: f32, p: vec3f) -> ve
       // Cloisonné: wires of a second metal set along the veins. The same field
       // that raises the relief says where a vein runs; its core is the wire.
       // The wire is polished, and reflects what the glass beside it reflects.
-      if (material.veinOn > 0.0) {
-        let wire = 1.0 - smoothstep(-plateFootprint, plateFootprint, veinWire(in.plate.x, in.plate.y));
-        let wireColour = eReflected * (material.veinF0 * eAb.x + eAb.y) * frame.exposure;
-        enamel = mix(enamel, wireColour, wire);
-      }
-      colour = mix(colour, enamel, in.enamel);
-      // the key sees the glass, not the metal under it
+      // The wire is polished, and stands proud of the glass as a half-round
+      // bead, so it catches the sky along its crown and the sun along one
+      // flank: the distance field's gradient says which way the bead falls.
       keyF0 = mix(keyF0, vec3f(0.04), in.enamel);
       keyRough = mix(keyRough, eRough, in.enamel);
       keyBody = mix(keyBody, material.enamelColour * material.enamelOpacity * mix(1.0, ao, 0.5), in.enamel);
+      if (material.veinOn > 0.0) {
+        let sdf = veinWire(in.plate.x, in.plate.y);
+        let wire = (1.0 - smoothstep(-plateFootprint, plateFootprint, sdf)) * in.enamel;
+        if (wire > 0.0) {
+          let eps = 0.02;
+          let gx = (veinWire(in.plate.x + eps, in.plate.y) - veinWire(in.plate.x - eps, in.plate.y)) / (2.0 * eps);
+          let gy = (veinWire(in.plate.x, in.plate.y + eps) - veinWire(in.plate.x, in.plate.y - eps)) / (2.0 * eps);
+          let t = normalize(tbn[0] - n * dot(tbn[0], n));
+          let b = normalize(tbn[1] - n * dot(tbn[1], n));
+          let across = gx * t + gy * b;
+          let bead = 0.14;
+          // a bead of that radius: level on the crown, falling to the edge,
+          // but never quite on its side, and flattening as the wire nears a
+          // pixel wide, where only the crown's reflection should be left
+          let flat = 1.0 - smoothstep(0.012, 0.05, plateFootprint);
+          let tilt = clamp(1.0 + sdf / bead, 0.0, 1.0) * 0.7 * flat;
+          let wireN = normalize(n * sqrt(1.0 - tilt * tilt) + normalize(across + n * 1e-4) * tilt * select(1.0, -1.0, !frontFacing));
+          // the bead's spread of normals does not go away when the bead is
+          // too small to draw: it becomes roughness, and the wire seen from
+          // afar is a rough polished metal, catching the key from any angle
+          let wireRough = mix(0.55, 0.12, flat);
+          let wireNdv = max(dot(wireN, v), 1e-4);
+          let wireLod = max(wireRough * frame.maxLod, footLod);
+          let wireAb = textureSampleLevel(envBrdf, linearSampler, vec2f(wireNdv, wireRough), 0.0).rg;
+          let wireReflected = reflectionAt(reflect(-v, wireN), wireLod, in.world) * mix(ao, 1.0, 0.5);
+          let wireColour = wireReflected * (material.veinF0 * wireAb.x + wireAb.y) * frame.exposure;
+          enamel = mix(enamel, wireColour, wire);
+          // and the key and the piece's lights see the bead, in its own metal
+          n = normalize(mix(n, wireN, wire));
+          keyF0 = mix(keyF0, material.veinF0, wire);
+          keyRough = mix(keyRough, wireRough, wire);
+          keyBody = mix(keyBody, vec3f(0.0), wire);
+        }
+      }
+      colour = mix(colour, enamel, in.enamel);
     }
   }
 
