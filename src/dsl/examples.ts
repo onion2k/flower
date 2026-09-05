@@ -1967,6 +1967,147 @@ form cherry {
 }
 `,
 
+  compact: `# Art deco: a powder compact. A stadium case, a field of peacock enamel
+# fired over guilloché — the engraving and the enamel on the same plate,
+# which is what guilloché enamel is — a black chevron across it, a sunray
+# thumb-piece and a keystone catch.
+material silver polished
+
+part body   = plate(stadium(length: 52, width: 36), thickness: 3, bevel: 0.6) in silver satin
+part lid    = plate(stadium(length: 52, width: 36), thickness: 2.2, bevel: 0.6) engraved hatch(scale: 0.5, depth: 0.03, angle: 90deg)
+part field  = plate(stadium(length: 44, width: 28), thickness: 1, enamel: peacock) engraved guilloche(scale: 0.7, depth: 0.05)
+part stripe = plate(chevron(width: 24, rise: 7, bar: 2.6), thickness: 0.5, enamel: black)
+part thumb  = plate(fan(radius: 6, spread: 180deg, blades: 7, inner: 1.5), thickness: 1.6) in gold satin engraved rays(scale: 0.4, depth: 0.03)
+part catch  = plate(keystone(width: 4, height: 5, flare: 0.4, corner: 0.5), thickness: 1.2) in gold satin
+
+form compact {
+  place body
+  place lid at (0, 0, 2.6)
+  place field at (0, 0, 4.2)
+  place stripe at (0, -3, 4.9)
+  place stripe at (0, 3, 4.9) turn 180deg
+  # a fan opens along +X; turned a quarter back it opens toward -Y, off the rim
+  place thumb at (0, -16, 3.7) turn -90deg
+  place catch at (0, 15, 3.7) turn 180deg
+}
+`,
+
+  lamp: `# Art deco: a table lamp. A stepped octagonal foot, a fluted column, and
+# a fan of frosted glass — a white plastic plate, the nearest thing the
+# catalogue has — stood up on edge with a diode behind it to light it.
+material brass satin
+
+part foot   = plate(polygon(sides: 8, radius: 22), thickness: 4, tiers: 3, shrink: 0.16) in blackened steel satin
+part column = collar(inner: 3.5, wall: 3, length: 44, belly: 0.15) engraved hatch(scale: 1.6, depth: 0.2, angle: 90deg)
+part ring   = collar(inner: 6.6, wall: 1.6, length: 2.4) in brass polished
+part shade  = plate(fan(radius: 30, spread: 150deg, blades: 9, inner: 6, bladeDepth: 0.06), thickness: 2.2) in white plastic matte
+part bulb   = bead(radius: 4, point: 3) in white diode glow 14
+part finial = bead(radius: 4.5, point: 6) in brass polished
+
+# a fan opens along +X; pitched back a quarter it opens upward, its face to -X,
+# and the half turn brings the face round to +X
+form lamp {
+  place foot at (0, 0, 6)
+  place column at (0, 0, 34)
+  place ring at (0, 0, 13)
+  place ring at (0, 0, 55)
+  place shade at (0, 0, 58) pitch -90deg turn 180deg
+  place bulb at (5, 0, 66)
+  place finial at (0, 0, 92)
+}
+`,
+
+  scent: `# Art deco: a scent bottle. The body is a step-cut stone — glass is a
+# stone with nothing in it, and moonstone is frosted glass — stood on a black plinth, with a silver collar
+# and a sunray stopper. A gem's table is +Z, so the bottle is the stone
+# turned onto its side and pitched up to stand.
+material silver polished
+
+part flask   = gem(cut: step, width: 26, length: 36, depth: 0.45) in moonstone
+part plinth  = plate(card(width: 36, height: 16, corner: 1.5), thickness: 3, tiers: 2, shrink: 0.12) in blackened steel satin
+part neck    = collar(inner: 3.2, wall: 2.2, length: 5) in silver satin
+part stopper = plate(fan(radius: 11, spread: 170deg, blades: 7, inner: 2.4), thickness: 3, bevel: 0.6) engraved rays(scale: 0.5, depth: 0.05)
+part stud    = gem(cut: brilliant, width: 2.6) in diamond
+part collet  = setting(width: 2.6, style: bezel, height: 1.2)
+
+unit knop {
+  place collet
+  fasten stud to collet.seat
+}
+
+form scent {
+  place plinth
+  place flask at (0, 0, 21) pitch 90deg
+  place neck at (0, 0, 41.5)
+  place stopper at (0, 0, 44) pitch -90deg turn 180deg
+  place knop at (0, -1.5, 47.5) pitch 90deg
+  place knop at (0, 1.5, 47.5) pitch -90deg
+}
+`,
+
+  cuff: `# Art deco: a cuff. A wide band cut with rays, a keystone of black enamel
+# on its crown with a row of brilliants across it, and a pair of chevrons
+# either side. Everything on the band is placed on a one-copy ring tilted
+# a quarter turn, which is how a flat motif is put on a hoop's outer face.
+material platinum polished
+
+part hoop    = band(radius: 30, width: 22, thickness: 2.2) engraved rays(scale: 1.4, depth: 0.05)
+part rim     = wire(path: circle(radius: 31.2, z: 10.6), radius: 0.8, closed: yes, sections: 180) in gold satin
+part rimB    = wire(path: circle(radius: 31.2, z: -10.6), radius: 0.8, closed: yes, sections: 180) in gold satin
+part shield  = plate(keystone(width: 12, height: 16, flare: 0.5, corner: 1), thickness: 1.2, enamel: black)
+part wing    = plate(chevron(width: 10, rise: 4, bar: 1.8), thickness: 1) in gold satin
+part collet  = setting(width: 2.4, style: bezel, height: 1.2) in gold polished
+part stone   = gem(cut: brilliant, width: 2.4) in diamond
+
+unit set {
+  place collet
+  fasten stone to collet.seat
+}
+unit crown {
+  place shield at (0, -8, 0)
+  place set at (0, -4, 1)
+  place set at (0, 0, 1)
+  place set at (0, 4, 1)
+  place set at (0, 8, 1)
+  place wing at (0, 12, 0)
+  place wing at (0, -12, 0) turn 180deg
+}
+
+form cuff {
+  place hoop
+  place rim
+  place rimB
+  repeat crown around ring(1, radius: 31.4, tilt: 90deg)
+  repeat crown around ring(1, radius: 31.4, phase: 180deg, tilt: 90deg)
+}
+`,
+
+  mirror: `# Art deco: a vanity mirror. A stadium of polished silver stood on
+# edge in a stepped foot, framed by a rim wire, a fan at each shoulder,
+# and a chevron drop at the bottom. Polished silver is the mirror: the
+# environment and the table show in it, which is what a mirror is for.
+material silver polished
+
+part glass   = plate(stadium(length: 60, width: 44), thickness: 2)
+part frame   = wire(path: ellipse(rx: 23, ry: 31), radius: 1.6, closed: yes, sections: 200) in gold satin
+part foot    = plate(card(width: 40, height: 14, corner: 1.5), thickness: 3, tiers: 3, shrink: 0.14) in blackened steel satin
+part post    = bar(length: 12, width: 6, thickness: 3, bore: 1.5) in gold satin
+part fan     = plate(fan(radius: 9, spread: 120deg, blades: 5, inner: 2), thickness: 1.6) in gold satin engraved rays(scale: 0.5, depth: 0.04)
+part drop    = plate(chevron(width: 12, rise: 5, bar: 2), thickness: 1.6, enamel: black) in gold satin
+
+# the glass and its frame are drawn flat and stood up with roll, the
+# quarter turn after it facing them along +X
+form mirror {
+  place foot
+  place post at (0, 0, 8) roll 90deg turn 90deg
+  place glass at (0, 0, 46) roll 90deg turn 90deg
+  place frame at (1.2, 0, 46) roll 90deg turn 90deg
+  place fan at (1.4, 14, 68) roll 90deg turn 90deg
+  place fan at (1.4, -14, 68) roll 90deg turn 90deg
+  place drop at (1.4, 0, 12) roll 90deg turn 90deg
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
@@ -1978,7 +2119,7 @@ export const exampleNames = Object.keys(examples);
  */
 export const exampleGroups: Array<[string, string[]]> = [
   ['Jewellery', ['ring', 'tension', 'cluster', 'signet', 'cocktail', 'bangle', 'tiara', 'necklace', 'earrings', 'studs', 'girandole', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
-  ['Art deco', ['deco', 'skyscraper', 'mantel', 'trefoil']],
+  ['Art deco', ['deco', 'skyscraper', 'compact', 'cuff', 'mantel', 'lamp', 'scent', 'mirror', 'trefoil']],
   ['Flowers', ['rose', 'peony', 'dahlia', 'tulip', 'lily', 'lotus', 'magnolia', 'calla', 'orchid', 'carnation', 'sunflower', 'freesia', 'daisy', 'poppy', 'iris', 'crocus', 'fuchsia', 'snowdrop', 'bluebell', 'cherry', 'hydrangea', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
   ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
   ['Weapons', ['dagger', 'battleaxe']],
