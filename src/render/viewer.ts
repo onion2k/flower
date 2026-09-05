@@ -976,6 +976,13 @@ export class Viewer {
   static readonly PIXEL_BUDGET = 12_000_000;
   /** Draft keeps to a laptop screen's worth of pixels, and never less than 1x. */
   static readonly DRAFT_PIXEL_BUDGET = 1_800_000;
+  /**
+   * Final draws the scene this many times larger each way than the canvas and
+   * averages it down: the multisampler settles edges, but everything shaded —
+   * engraving, wire, sparkle, the pattern under a pixel — is sampled once per
+   * pixel without this. It is dropped where the frame would pass the budget.
+   */
+  static readonly SUPERSAMPLE = 2;
 
   private resize = () => {
     // Render at device resolution up to a budget, then scale down. A retina
@@ -993,8 +1000,9 @@ export class Viewer {
     this.ctx.canvas.width = w;
     this.ctx.canvas.height = h;
     this.camera.aspect = w / h;
-    this.post.resize(w, h);
-    this.ao.resize(w, h);
+    const ss = this.quality === 'final' && w * h * Viewer.SUPERSAMPLE ** 2 <= Viewer.PIXEL_BUDGET * 2 ? Viewer.SUPERSAMPLE : 1;
+    this.post.resize(w, h, ss);
+    this.ao.resize(this.post.renderWidth, this.post.renderHeight);
     // the occlusion texture is new: the frame group must point at it
     this.rebuildFrameBind();
     this.dirty = true;
@@ -1055,8 +1063,8 @@ export class Viewer {
     frame[60] = this.probeReady && this.groups.length ? 1 : 0;
     frame[61] = PROBE_MIPS - 1;
     frame[62] = this.detail;
-    frame[64] = this.ctx.canvas.width;
-    frame[65] = this.ctx.canvas.height;
+    frame[64] = this.post.renderWidth;
+    frame[65] = this.post.renderHeight;
     frame[66] = this.contact > 0 && this.groups.length ? 1 : 0;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 

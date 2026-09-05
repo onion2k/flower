@@ -142,6 +142,28 @@ fn coc(a: f32) -> f32 {
   return vec4f(sum / weight, centre.a);
 }`;
 
+/**
+ * Supersampling's other half: the scene was drawn at a whole multiple of the
+ * canvas, and each canvas pixel is the plain mean of its block. A box is the
+ * right filter here — the block's samples all belong to this pixel and to no
+ * other — and it is what a camera's sensor does over each of its wells.
+ */
+const DOWNSAMPLE = `
+${FULLSCREEN_VERT}
+struct Params { factor: u32, _p: u32, _q: vec2u };
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var<uniform> params: Params;
+@fragment fn fsMain(@builtin(position) pos: vec4f) -> @location(0) vec4f {
+  let base = vec2u(pos.xy) * params.factor;
+  var sum = vec4f(0.0);
+  for (var y = 0u; y < params.factor; y++) {
+    for (var x = 0u; x < params.factor; x++) {
+      sum += textureLoad(src, base + vec2u(x, y), 0);
+    }
+  }
+  return sum / f32(params.factor * params.factor);
+}`;
+
 const COMPOSITE = `
 ${FULLSCREEN_VERT}
 struct Params { bloom: f32, raw: f32, tonemap: f32, vignette: f32, grain: f32, fringe: f32, _p: vec2f };
@@ -234,6 +256,10 @@ export class PostChain {
   private resolve: GPUTexture | null = null;
   private dof: GPUTexture | null = null;
   private bloom: GPUTexture[] = [];
+  /** The scene brought down to the canvas's size, when it was drawn above it. */
+  private framed: GPUTexture | null = null;
+  /** Rendered pixels per canvas pixel along each side. */
+  private factor = 1;
 
   private sampler: GPUSampler;
   private brightPipe: GPURenderPipeline;
@@ -241,6 +267,8 @@ export class PostChain {
   private upPipe: GPURenderPipeline;
   private compositePipe: GPURenderPipeline;
   private dofPipe: GPURenderPipeline;
+  private downsamplePipe: GPURenderPipeline;
+  private downsampleParams: GPUBuffer;
   private brightParams: GPUBuffer;
   private compositeParams: GPUBuffer;
   private dofParams: GPUBuffer;
@@ -263,6 +291,9 @@ export class PostChain {
   private compositeDofBind: GPUBindGroup | null = null;
   private dofBind: GPUBindGroup | null = null;
   private dofView: GPUTextureView | null = null;
+  private framedView: GPUTextureView | null = null;
+  private downsampleBind: GPUBindGroup | null = null;
+  private downsampleDofBind: GPUBindGroup | null = null;
 
   readonly depthFormat: GPUTextureFormat = 'depth24plus';
   readonly colourFormat = HDR;
@@ -290,6 +321,8 @@ export class PostChain {
     this.upPipe = pipe(UP, 'bloom up', additive);
     this.compositePipe = pipe(COMPOSITE, 'composite', undefined, ctx.format);
     this.dofPipe = pipe(DOF, 'depth of field');
+    this.downsamplePipe = pipe(DOWNSAMPLE, 'supersample down');
+    this.downsampleParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     this.brightParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.brightParams, 0, new Float32Array([1.2, 0.5, 0, 0]));
@@ -297,14 +330,29 @@ export class PostChain {
     this.dofParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  resize(width: number, height: number) {
-    width = Math.max(1, Math.floor(width));
-    height = Math.max(1, Math.floor(height));
-    if (width === this.width && height === this.height) return;
-    this.width = width;
-    this.height = height;
+  /** The scene's targets, which stand `factor` times above the canvas each way. */
+  get renderWidth() { return this.width * this.factor; }
+  get renderHeight() { return this.height * this.factor; }
+
+  /**
+   * Size the targets to a canvas of `width` by `height`, with the scene drawn
+   * `factor` times larger each way and brought down to fit. Supersampling on
+   * top of the multisampling: the multisampler only sees edges, and a final
+   * frame wants its shading — engraving, wire, sparkle, grain — sampled more
+   * than once per pixel too.
+   */
+  resize(canvasWidth: number, canvasHeight: number, factor = 1) {
+    canvasWidth = Math.max(1, Math.floor(canvasWidth));
+    canvasHeight = Math.max(1, Math.floor(canvasHeight));
+    factor = Math.max(1, Math.floor(factor));
+    if (canvasWidth === this.width && canvasHeight === this.height && factor === this.factor) return;
+    this.width = canvasWidth;
+    this.height = canvasHeight;
+    this.factor = factor;
+    const width = canvasWidth * factor, height = canvasHeight * factor;
     this.release();
     const { device } = this.ctx;
+    device.queue.writeBuffer(this.downsampleParams, 0, new Uint32Array([factor, 0, 0, 0]));
 
     this.msaa = device.createTexture({
       size: [width, height], format: HDR, sampleCount: SAMPLES, usage: GPUTextureUsage.RENDER_ATTACHMENT, label: 'scene msaa',
@@ -318,6 +366,12 @@ export class PostChain {
     this.dof = device.createTexture({
       size: [width, height], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'depth of field',
     });
+    if (factor > 1) {
+      this.framed = device.createTexture({
+        size: [canvasWidth, canvasHeight], format: HDR, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'framed',
+      });
+      this.framedView = this.framed.createView();
+    }
 
     this.bloom = [];
     let w = width, h = height;
@@ -367,8 +421,19 @@ export class PostChain {
         { binding: 3, resource: view(this.bloom[0]) },
       ],
     });
-    this.compositeBind = compositeFrom(this.resolve);
-    this.compositeDofBind = compositeFrom(this.dof);
+    if (this.framed) {
+      // the film sees the frame at the canvas's size, from either source
+      const downFrom = (t: GPUTexture) => device.createBindGroup({
+        layout: this.downsamplePipe.getBindGroupLayout(0),
+        entries: [{ binding: 0, resource: view(t) }, { binding: 1, resource: { buffer: this.downsampleParams } }],
+      });
+      this.downsampleBind = downFrom(this.resolve);
+      this.downsampleDofBind = downFrom(this.dof);
+      this.compositeBind = this.compositeDofBind = compositeFrom(this.framed);
+    } else {
+      this.compositeBind = compositeFrom(this.resolve);
+      this.compositeDofBind = compositeFrom(this.dof);
+    }
     this.dofBind = device.createBindGroup({
       layout: this.dofPipe.getBindGroupLayout(0),
       entries: [
@@ -432,9 +497,12 @@ export class PostChain {
     }
     const blur = !opts.raw && opts.dof > 0;
     if (blur) {
-      this.dofData.set([opts.focus, opts.dof, Math.max(6, Math.min(this.width, this.height) * 0.03), opts.subject]);
+      this.dofData.set([opts.focus, opts.dof, Math.max(6, Math.min(this.renderWidth, this.renderHeight) * 0.03), opts.subject]);
       device.queue.writeBuffer(this.dofParams, 0, this.dofData);
       draw(this.dofPipe, this.dofBind!, this.dofView!, 'clear');
+    }
+    if (this.framed) {
+      draw(this.downsamplePipe, blur ? this.downsampleDofBind! : this.downsampleBind!, this.framedView!, 'clear');
     }
     draw(this.compositePipe, blur ? this.compositeDofBind! : this.compositeBind!, canvasView, 'clear');
   }
@@ -443,6 +511,9 @@ export class PostChain {
     this.msaa?.destroy();
     this.depth?.destroy();
     this.resolve?.destroy();
+    this.framed?.destroy();
+    this.framed = null;
+    this.framedView = null;
     this.dof?.destroy();
     for (const t of this.bloom) t.destroy();
     this.msaa = this.depth = this.resolve = this.dof = null;

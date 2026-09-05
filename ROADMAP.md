@@ -267,6 +267,14 @@ bake sidesteps it.
   of pale dust flecks. All drawn from the part's own coordinates, so they
   stay put as it turns.
 
+- **7, supersampled final (September 2026):** `PostChain.resize` takes a
+  factor; in final quality the scene, its depth, bloom, depth of field and
+  contact occlusion are all drawn at twice the canvas each way, and one box
+  pass averages each block down before the film. The film — grain, vignette,
+  fringe — stays per canvas pixel. The multisampler only ever settled edges;
+  this samples the shading too, so engraving, wire and sparkle stop
+  shimmering. Dropped where the frame would pass twice the pixel budget.
+
 ### Caveats and order
 
 Items 1–8 each patch one symptom of not tracing rays. They stack, and they
