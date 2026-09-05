@@ -563,6 +563,33 @@ form sign {
 }
 `,
 
+  solids: `# Mathematical solids: a sheet shaped by a function and thickened into a
+# shell. saddle, ripple, helicoid, mobius and seashell take their own
+# measures; patch takes sixteen points, a four by four net row by row.
+# Each has a face anchor at the middle of its top and a back opposite,
+# and takes thickness, enamel and engraving like a plate.
+material gold satin
+
+part seat  = saddle(width: 22, depth: 16, rise: 5, thickness: 1) engraved guilloche(0.7, 0.04)
+part sea   = ripple(width: 20, depth: 20, amplitude: 1.6, waves: 2, thickness: 0.8, enamel: cobalt) in platinum polished
+part screw = helicoid(radius: 6, height: 24, turns: 1.5, thickness: 0.9) in rose gold polished
+part band  = mobius(radius: 10, width: 4, thickness: 0.8) in silver polished engraved text("ONE SIDE ONE EDGE", size: 2, depth: 0.08)
+part nautilus = seashell(radius: 9, tube: 4, turns: 3, growth: 2.2, thickness: 0.6) in white pearl
+part hood  = patch((-10, -10, 0), (-3, -10, 3), (3, -10, 3), (10, -10, 0),
+                   (-10, -3, 3), (-3, -3, 8), (3, -3, 8), (10, -3, 3),
+                   (-10, 3, 3), (-3, 3, 8), (3, 3, 8), (10, 3, 3),
+                   (-10, 10, 0), (-3, 10, 3), (3, 10, 3), (10, 10, 0), thickness: 1) in copper polished
+
+form sampler {
+  place seat at (-30, 16, 0)
+  place sea at (0, 18, 0)
+  place screw at (30, 16, 0)
+  place band at (-30, -14, 0)
+  place nautilus at (0, -14, 0) pitch 90deg
+  place hood at (30, -14, 0)
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 

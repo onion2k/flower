@@ -519,3 +519,26 @@ describe('stepped plate', () => {
     expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(3);
   });
 });
+
+describe('surfaces', () => {
+  it('each surface builtin makes a part with face and back anchors', () => {
+    for (const call of ['saddle(20, 12, rise: 4)', 'ripple(20, 20, 2, 2)', 'helicoid(6, 20, turns: 1.5)', 'mobius(10, 3)', 'seashell(8, 3, turns: 3)']) {
+      const s = build(`part p = ${call}\nform f { place p }`);
+      const part = s.assembly.placements[0].part;
+      expect(part.mesh.indices.length, call).toBeGreaterThan(0);
+      expect(part.anchors.map((a) => a.name)).toEqual(['face', 'back']);
+    }
+  });
+
+  it('patch takes sixteen points and refuses fewer', () => {
+    const pts = Array.from({ length: 16 }, (_, i) => `(${(i % 4) * 5}, ${Math.floor(i / 4) * 5}, ${i === 5 ? 3 : 0})`).join(', ');
+    const s = build(`part p = patch(${pts}, thickness: 1)\nform f { place p }`);
+    expect(s.assembly.placements[0].part.mesh.indices.length).toBeGreaterThan(0);
+    expect(buildErr('part p = patch((0,0,0), (1,0,0))\nform f { place p }').message).toMatch(/16 points/);
+  });
+
+  it('seashell is the surface; shell stays the symmetry', () => {
+    const s = build('part b = bead(radius: 2, point: 1)\nform f { repeat b around shell(12, radius: 10) }');
+    expect(s.assembly.placements.length).toBe(12);
+  });
+});

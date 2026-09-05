@@ -74,8 +74,13 @@ across the treads.
 
 **Status, September 2026:** the curves are in — `lissajous`, `rhodonea` (the
 rose curve; `rose` is a gem cut and so a bare word), `sine`, `knot` (torus
-knot) and `superellipse` — see the `trefoil` example. The parametric surface
-generator and the control-net literal are not done.
+knot) and `superellipse` — see the `trefoil` example. The surfaces followed:
+`mesh/surface.ts` thickens any f(u, v) into a shell with rims on its open
+edges and none on closed ones (a Möbius band closes on itself with a flip
+and needs nothing more), and `saddle`, `ripple`, `helicoid`, `mobius`,
+`seashell` (`shell` is the symmetry) and `patch` are parts with face and
+back anchors. No control-net literal was needed: `patch` takes its sixteen
+points as plain arguments. See the `solids` example.
 
 ### 3. Engraved patterns
 
@@ -250,7 +255,7 @@ changes; ~5 compute passes over 512², cheap.
 1. **Generic outline and `plate` builtin** in the DSL. Unblocks 1, and makes
    every later geometric part data instead of code. Done.
 2. **Parametric surface generator** beside extrude, sweep, and revolve.
-   Unblocks 2, helps 4. Curves done; surfaces not.
+   Unblocks 2, helps 4. Done.
 3. **Generalised engraving field** in the shader, keyed by an enum, with a
    flat surface coordinate on every part type. Unblocks 3 and 5. Done.
 4. **Texture binding in the material bind group** plus an SDF atlas builder.
@@ -272,7 +277,8 @@ the next field means growing `MATERIAL_STRIDE` past 256.
 
 Collected here because they are easy to forget:
 
-- Nested list or matrix literal (bezier control nets, item 2).
+- Nested list or matrix literal (bezier control nets, item 2). Avoided:
+  sixteen plain points serve.
 - String literal (engraved text, item 5). The lexer had one already.
 - Recursive symmetry builtin returning a matrix list (branching, item 4).
 

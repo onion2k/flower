@@ -26,6 +26,7 @@ import { shield } from '../parts/shield';
 import { branch, stem } from '../parts/stem';
 import { band, blade, wire, type Section } from '../parts/wire';
 import { bar, disc, gusset, plate } from '../parts/panel';
+import { helicoidPart, mobiusPart, patchPart, ripplePart, saddlePart, shellPart } from '../parts/surface';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription, type Part } from '../parts/types';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
@@ -728,6 +729,51 @@ const PARTS = {
       tiers: a.count('tiers', -1, 1),
       shrink: a.num('shrink', -1, 0.2),
     })),
+
+  // mathematical solids: sheets shaped by a function, thickened into shells
+  saddle: define(['width', 'depth', 'rise', 'thickness', 'segments', 'enamel'], (a) =>
+    saddlePart({
+      width: a.num('width', 0), depth: a.num('depth', 1), rise: a.num('rise', 2, 4),
+      thickness: a.num('thickness', -1, 0.8), segments: a.count('segments', -1, 48), enamel: enamelName(a),
+    })),
+
+  ripple: define(['width', 'depth', 'amplitude', 'waves', 'thickness', 'segments', 'enamel'], (a) =>
+    ripplePart({
+      width: a.num('width', 0), depth: a.num('depth', 1), amplitude: a.num('amplitude', 2, 1.5), waves: a.num('waves', 3, 2),
+      thickness: a.num('thickness', -1, 0.8), segments: a.count('segments', -1, 64), enamel: enamelName(a),
+    })),
+
+  helicoid: define(['radius', 'height', 'turns', 'thickness', 'segments', 'enamel'], (a) =>
+    helicoidPart({
+      radius: a.num('radius', 0), height: a.num('height', 1), turns: a.num('turns', 2, 1),
+      thickness: a.num('thickness', -1, 0.8), segments: a.count('segments', -1, 96), enamel: enamelName(a),
+    })),
+
+  mobius: define(['radius', 'width', 'twists', 'thickness', 'segments', 'enamel'], (a) =>
+    mobiusPart({
+      radius: a.num('radius', 0), width: a.num('width', 1), twists: a.count('twists', -1, 1),
+      thickness: a.num('thickness', -1, 0.8), segments: a.count('segments', -1, 120), enamel: enamelName(a),
+    })),
+
+  // not "shell": that is the sphere-shell symmetry
+  seashell: define(['radius', 'tube', 'turns', 'growth', 'height', 'thickness', 'segments', 'enamel'], (a) =>
+    shellPart({
+      radius: a.num('radius', 0), tube: a.num('tube', 1), turns: a.num('turns', -1, 3),
+      growth: a.num('growth', -1, 2.2), height: a.num('height', -1, NaN) || undefined,
+      thickness: a.num('thickness', -1, 0.6), segments: a.num('segments', -1, NaN) || undefined, enamel: enamelName(a),
+    })),
+
+  patch: define(['points', 'thickness', 'segments', 'enamel'], (a) => {
+    const thickness = a.num('thickness', -1, 0.8);
+    const segments = a.count('segments', -1, 32);
+    const enamel = enamelName(a);
+    const points = a.rest();
+    if (a.recorder) return patchPart({ net: Array.from({ length: 16 }, (_, i) => [i % 4, Math.floor(i / 4), 0] as Vec3), thickness, segments, enamel });
+    if (points.length !== 16 || !points.every(isVec)) {
+      throw new DslError('patch() takes 16 points, a 4 by 4 net row by row, like (0, 0, 0), (10, 0, 2), …', a.span);
+    }
+    return patchPart({ net: points as Vec3[], thickness, segments, enamel });
+  }),
 
   gusset: define(['radius', 'thickness', 'bore', 'fillet', 'lighten', 'bevel'], (a) =>
     gusset({

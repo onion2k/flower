@@ -53,6 +53,9 @@ export const PARTS: PartEntry[] = [
   { name: 'disc', call: 'disc(radius: 9, thickness: 1.2, bore: 2)' },
   { name: 'gusset', call: 'gusset(radius: 9, thickness: 1.4)' },
   { name: 'plate', call: 'plate(fan(radius: 12, blades: 5), thickness: 1.2)' },
+  { name: 'saddle', call: 'saddle(width: 20, depth: 14, rise: 4)' },
+  { name: 'mobius', call: 'mobius(radius: 9, width: 3.5)' },
+  { name: 'seashell', call: 'seashell(radius: 8, tube: 3.5, turns: 3)', material: 'white pearl' },
 ];
 
 export const SYMMETRIES: Array<{ name: string; call: string }> = [
