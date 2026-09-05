@@ -543,7 +543,9 @@ form sampler {
 # The glow slider in the panel scales them all.
 material blackened steel brushed
 
-part back = plate(sunburst(radius: 26, rays: 12, inner: 0.72, tip: 0.3), thickness: 1.5) engraved rays(scale: 1.2, depth: 0.04)
+# a black enamel face: bare metal has no diffuse and would only mirror the
+# tubes as streaks, where a glassy dark face takes their glow
+part back = plate(sunburst(radius: 26, rays: 12, inner: 0.72, tip: 0.3), thickness: 1.5, enamel: black) engraved rays(scale: 1.2, depth: 0.04)
 part tube = wire(path: lissajous(width: 14, height: 9, a: 3, b: 2), radius: 1.1, closed: yes, sections: 300) in pink neon glow 3
 part halo = wire(path: circle(radius: 20), radius: 0.9, closed: yes, sections: 160) in cyan neon glow 1.6
 part lamp = bead(radius: 1.2, point: 0.5) in amber diode glow 10
