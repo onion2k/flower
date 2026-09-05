@@ -502,9 +502,15 @@ and in what followed every light change. Three things were done:
   843,000 to 310,000, the bouquet from 1,968,000 to 730,000, and the
   frame and the occlusion bake fall with them.
 
-Still open, in order of payoff: the occlusion bake at final quality
-restarts on every keystroke (0.5 to 1.5 s); contact occlusion could be a
-final-only feature.
+- **The full occlusion bake waits for the edits to stop.** At final
+  quality a change to the piece used to restart a bake of 256 directions
+  at 2048² on every keystroke, half a second to a second and a half that
+  never finished while typing. Now every change bakes at draft density at
+  once, so shadows are on screen within a frame, and the full bake goes
+  350 ms after the last change; a further change moves the due time on.
+  The same due-time pattern as the probe and the daylight sun.
+
+Still open: contact occlusion could be a final-only feature.
 
 ## As a library
 

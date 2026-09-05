@@ -321,6 +321,14 @@ export class Renderer {
 
   /** An occlusion bake asked for since the last frame; coalesced so a dragged slider bakes once a frame, not once an event. */
   private bakeQueued = false;
+  /**
+   * When the full-density bake is due, at final quality; 0 when none is. A
+   * change to the piece bakes at draft density at once, so shadows are on
+   * screen within a frame, and the full bake waits until the changes have
+   * stopped: an edit a keystroke used to restart a bake of half a second to
+   * a second and a half on every key, and none ever finished.
+   */
+  private fullBakeDue = 0;
 
   /** A frame is drawn only when something has changed: the scene, a setting, or the camera. */
   private dirty = true;
@@ -329,7 +337,7 @@ export class Renderer {
   /** Ask for a frame on the next render. */
   requestRender() { this.dirty = true; }
   /** Whether the next `render` would draw: something has changed, or the view is moving. */
-  get pending() { return this.dirty || this.moving; }
+  get pending() { return this.dirty || this.moving || this.fullBakeDue > 0; }
   /** The target's size in pixels, as last told. */
   private width = 1;
   private height = 1;
@@ -1172,6 +1180,10 @@ export class Renderer {
       this.bakeQueued = false;
       this.bakeOcclusion();
     }
+    if (this.fullBakeDue && performance.now() >= this.fullBakeDue) {
+      this.fullBakeDue = 0;
+      if (this.groups.length && this.envSamples && this.quality !== 'draft') this.bakeOcclusion(true);
+    }
     // nothing to draw when nothing has changed: the GPU idles
     if (!this.dirty && !moving) return false;
     this.dirty = false;
@@ -1761,10 +1773,15 @@ export class Renderer {
 
   /**
    * Visibility for every placed vertex, and a shadow for the table under them.
-   * Runs on the GPU in a few tens of milliseconds, so it simply happens whenever
-   * the scene or the light does.
+   * At draft density it runs on the GPU in a few tens of milliseconds, so it
+   * simply happens whenever the scene or the light does. The full density is
+   * four times the directions at twice the resolution, and goes only once the
+   * changes have stopped for a moment; until then the draft bake stands.
    */
-  private bakeOcclusion() {
+  private bakeOcclusion(full = false) {
+    // at final, a draft bake now and the full one once things settle; any
+    // further change moves the due time on
+    this.fullBakeDue = !full && this.quality !== 'draft' ? performance.now() + 350 : 0;
     const previous = this.occlusion;
     const occ = bakeOcclusion(
       this.ctx,
@@ -1776,8 +1793,8 @@ export class Renderer {
         env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined,
         // a quarter of the directions at half the resolution is a tenth of the
         // work, and soft shadows on a working model do not need more
-        directions: this.quality !== 'draft' ? 256 : 64,
-        depthSize: this.quality !== 'draft' ? 2048 : 1024,
+        directions: full ? 256 : 64,
+        depthSize: full ? 2048 : 1024,
       },
     );
     this.occlusion = occ;
@@ -1809,6 +1826,7 @@ export class Renderer {
   }
 
   private clearOcclusion() {
+    this.fullBakeDue = 0;
     this.occlusion?.dispose();
     this.occlusion = null;
     this.groundBind = null;
