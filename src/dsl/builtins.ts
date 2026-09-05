@@ -29,7 +29,7 @@ import { bar, disc, gusset, plate } from '../parts/panel';
 import { helicoidPart, mobiusPart, patchPart, ripplePart, saddlePart, shellPart } from '../parts/surface';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription, type Part } from '../parts/types';
 import {
-  along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
+  along, branching, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring, spray,
   sphereShell, type Symmetry,
 } from '../pattern/symmetry';
 import { DslError, type Span } from './lexer';
@@ -1017,6 +1017,14 @@ const SYMMETRIES = {
       rise: a.num('rise', -1, 0),
       taper: a.num('taper', -1, 1),
       spin: a.num('spin', -1, 0),
+    })),
+
+  // not "branch": that is a part. A tree of placements: a twig at each twig's tip.
+  tree: define(['depth', 'count', 'length', 'spread', 'shrink', 'twist', 'tips', 'phase'], (a) =>
+    branching(a.count('depth', 0, 3), a.count('count', 1, 2), a.num('length', 2), a.num('spread', 3, 0.5), a.num('shrink', 4, 0.7), {
+      twist: a.num('twist', -1, 0),
+      tipsOnly: a.flag('tips', -1, false),
+      phase: a.num('phase', -1, 0),
     })),
 
   nested: define(['count', 'factor', 'spin'], (a) =>

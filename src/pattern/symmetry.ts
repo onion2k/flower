@@ -304,3 +304,59 @@ export function spray(count: number, radius: number, opts: SprayOptions = {}): S
   }
   return out;
 }
+
+export interface BranchingOptions {
+  /** Roll about the parent's axis added each level, so successive forks turn; a quarter turn makes a flat fork three-dimensional. */
+  twist?: number;
+  /** Only the last level: where the buds and leaves go. */
+  tipsOnly?: boolean;
+  /** Roll of the first fork at the root. */
+  phase?: number;
+}
+
+/**
+ * Branching: a twig at the tip of each twig.
+ *
+ * The root is the identity. Each level places `count` children at the tip of
+ * every twig of the level before — `length` along the parent's +X, in the
+ * parent's own frame, so a shrunk twig's children sit at its shorter tip —
+ * tilted away from the parent by `spread`, rolled round it evenly, and scaled
+ * by `shrink`. A fork of two with no twist is a flat spray, a fern or a coral
+ * fan; a twist of a quarter turn per level fills space, a tree.
+ *
+ * Total placements are 1 + count + count² + … so depth is small by nature.
+ */
+export function branching(
+  depth: number,
+  count: number,
+  length: number,
+  spread: number,
+  shrink: number,
+  opts: BranchingOptions = {},
+): Symmetry {
+  const { twist = 0, tipsOnly = false, phase = 0 } = opts;
+  const levels = Math.max(0, Math.floor(depth));
+  const n = Math.max(1, Math.floor(count));
+  let current: Symmetry = [identity()];
+  const out: Symmetry = tipsOnly && levels > 0 ? [] : [...current];
+  for (let level = 1; level <= levels; level++) {
+    const next: Symmetry = [];
+    for (const parent of current) {
+      for (let k = 0; k < n; k++) {
+        const roll = phase + twist * (level - 1) + (k / n) * Math.PI * 2;
+        // tilt away from the parent's axis, then roll round it, then step to the tip
+        const child = multiply(
+          parent,
+          multiply(
+            translation([length, 0, 0]),
+            multiply(rotationAbout([1, 0, 0], roll), multiply(rotationAbout([0, 0, 1], spread), uniformScale(shrink))),
+          ),
+        );
+        next.push(child);
+      }
+    }
+    if (!tipsOnly || level === levels) out.push(...next);
+    current = next;
+  }
+  return out;
+}

@@ -590,6 +590,27 @@ form sampler {
 }
 `,
 
+  coral: `# Grown by rule. tree() puts a twig at the tip of every twig: count of
+# them, tilted away by spread, rolled round the parent, shrunk by shrink,
+# depth levels deep. tips: yes keeps only the last level — one level more
+# than the twigs puts buds at their ends. A twist of a quarter turn per
+# level turns this flat fan into a tree.
+material rose gold satin
+
+part twig = wire(path: bow((0, 0, 0), (14, 0, 0), sag: 1.4), radius: 1, tip: 0.55, sections: 24)
+# a bud at the tips is shrunk six times over, so it is authored large
+part bud  = pearl(radius: 6) in white pearl
+
+unit fan {
+  repeat twig around tree(depth: 5, count: 2, length: 14, spread: 26deg, shrink: 0.74)
+  repeat bud around tree(depth: 6, count: 2, length: 14, spread: 26deg, shrink: 0.74, tips: yes)
+}
+
+form coral {
+  place fan pitch -90deg
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 

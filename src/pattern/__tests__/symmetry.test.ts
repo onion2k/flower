@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 import {
   along, compose, dihedral, helical, mirror, nested, phyllotaxis, radial, ring,
-  spray, sphereShell,
+  spray, sphereShell, branching,
 } from '../symmetry';
-import { determinant3, transformDirection, transformPoint } from '../../geom/transform';
+import { determinant3, identity, transformDirection, transformPoint } from '../../geom/transform';
 import { arc } from '../../geom/curve';
 import { len } from '../../geom/vec';
 import { expectVec } from '../../geom/__tests__/helpers';
@@ -218,5 +218,46 @@ describe('spray', () => {
     const last = sym[sym.length - 1];
     const faceUp = transformDirection(last, [0, 0, 1]);
     expect(Math.abs(faceUp[2])).toBeLessThan(1);
+  });
+});
+
+describe('branching', () => {
+  it('counts 1 + n + n² + … placements, or only the last level with tipsOnly', () => {
+    expect(branching(3, 2, 10, 0.5, 0.7).length).toBe(1 + 2 + 4 + 8);
+    expect(branching(3, 2, 10, 0.5, 0.7, { tipsOnly: true }).length).toBe(8);
+    expect(branching(0, 2, 10, 0.5, 0.7).length).toBe(1);
+  });
+
+  it('puts each child at its parent\'s tip, tilted by the spread and shrunk', () => {
+    const sym = branching(1, 2, 10, 0.4, 0.7);
+    const [root, a, b] = sym;
+    expect(Array.from(root)).toEqual(Array.from(identity()));
+    // both children start at the root's tip
+    expectVec(transformPoint(a, [0, 0, 0]), [10, 0, 0]);
+    expectVec(transformPoint(b, [0, 0, 0]), [10, 0, 0]);
+    // and lean away from +X by the spread, on opposite sides, at the shrunk scale
+    const da = transformDirection(a, [1, 0, 0]);
+    const db = transformDirection(b, [1, 0, 0]);
+    expect(Math.hypot(...da)).toBeCloseTo(0.7);
+    expect(Math.acos(da[0] / 0.7)).toBeCloseTo(0.4);
+    expect(Math.acos(db[0] / 0.7)).toBeCloseTo(0.4);
+    expect(da[1]).toBeCloseTo(-db[1]);
+    expect(Math.abs(da[2])).toBeLessThan(1e-9);   // a fork of two with no twist lies flat
+  });
+
+  it('a grandchild sits at the shrunk tip of its parent, in the parent\'s frame', () => {
+    const sym = branching(2, 1, 10, 0.3, 0.5);
+    const [, child, grandchild] = sym;
+    const childTip = transformPoint(child, [10, 0, 0]);
+    expectVec(transformPoint(grandchild, [0, 0, 0]), childTip);
+  });
+
+  it('a twist rolls each level round its parent', () => {
+    const flat = branching(2, 2, 10, 0.4, 0.7);
+    const twisted = branching(2, 2, 10, 0.4, 0.7, { twist: Math.PI / 2 });
+    // the first fork is the same either way; the second is turned out of the plane
+    expectVec(transformPoint(twisted[1], [1, 0, 0]), transformPoint(flat[1], [1, 0, 0]));
+    const g = transformDirection(twisted[3], [1, 0, 0]);
+    expect(Math.abs(g[2])).toBeGreaterThan(0.05);
   });
 });

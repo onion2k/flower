@@ -89,7 +89,7 @@ export function callAt(state: EditorState, pos: number): Call | null {
 }
 
 /** Angles are stored in radians but written in degrees; these read better that way. */
-const ANGLES = new Set(['tilt', 'phase', 'cup', 'curl', 'twist', 'lean', 'spin', 'limbAngle']);
+const ANGLES = new Set(['tilt', 'phase', 'cup', 'curl', 'twist', 'lean', 'spin', 'limbAngle', 'spread']);
 const isAngle = (callee: string, p: ParamInfo) =>
   ANGLES.has(p.name) || (callee === 'arc' && (p.name === 'from' || p.name === 'to'));
 

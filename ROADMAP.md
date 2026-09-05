@@ -131,6 +131,14 @@ Leaves, petals, stems, and bouquets exist. The gaps:
   `branch(depth, count, spread, shrink)` builtin that produces a matrix list,
   the way `phyllotaxis` does. Twig geometry is a tapered `wire`.
 
+**Status, September 2026:** done. Shells came with the surfaces
+(`seashell`). Branching is `tree(depth, count, length, spread, shrink,
+twist, tips, phase)` — `branch` is already a part — a symmetry of
+1 + n + n² + … placements, each child at its parent's tip in the parent's
+own frame, so shrink compounds and a bud placed with `tips: yes` one level
+deeper than the twigs sits at their ends (author it large: it is shrunk as
+many times). See the `coral` example.
+
 ### 5. Runes, kanji, and glyphs
 
 **Cost: moderate to high. The first mechanism we do not have: an image on the
