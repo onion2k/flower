@@ -1,10 +1,11 @@
 # Roadmap
 
 Written in September 2026 as a plan for eight long-term directions, and
-rewritten at the end of that month when all eight were in. It now records
-what each became, the decisions worth knowing before touching them, and
-what is still open. The original plan's reasoning is kept where it still
-explains the shape of the code.
+rewritten at the end of that month when all eight were in. A second phase,
+realism, was planned and built in the same month, all nine items of it.
+This records what each became, the decisions worth knowing before touching
+them, and what is still open. The original plans' reasoning is kept where
+it still explains the shape of the code.
 
 ## What the pipeline gives us now
 
@@ -150,9 +151,22 @@ in step. A sketch renders the same on every keystroke.
   there is room for the next few fields.
 - Frame group bindings: 0 frame, 1 environment, 2 BRDF, 3 sampler, 4
   occlusion, 5 key shadow, 6 comparison sampler, 7 lights, 8 local shadow
-  array, 9 reflection probe, 10 contact occlusion. Material group: 0 record,
-  1 glyph buffer, 2 glyph atlas, 3 gem planes. Ground group: 0 record (80 bytes), 1 occlusion,
-  2 cushion height.
+  array, 9 reflection probe, 10 contact occlusion, 11 rig shadow array. The
+  frame uniform is 272 bytes of scene then three rig lights at 96 each. The
+  group is visible to compute too, for the tracer. Material group: 0 record,
+  1 glyph buffer, 2 glyph atlas, 3 gem planes. Ground group: 0 record (80
+  bytes), 1 occlusion, 2 cushion height. The tracer's own groups: 1 the
+  material records as one storage array of 512-byte slots plus glyphs and
+  atlas, 2 the scene (params, nodes, triangles, positions, attributes, a
+  uniform group table, inverses, the ground record, two accumulations, the
+  output).
+- The shader text is in pieces so the tracer can share it: `FRAME_STRUCT`,
+  `COMMON`, `MATERIAL_STRUCT`, `MATERIAL_FIELDS`, `GROUND_STRUCT`,
+  `TABLE_SURFACES`. Anything with a derivative (`dpdx`, `fwidth`) stays in
+  the fragment shaders; the surfaces take a footprint as an argument
+  instead.
+- Storage buffers are limited to 8 per stage on the machines this runs on,
+  and the tracer uses all of them. Anything more goes in a uniform.
 - Draw groups are keyed on mesh **and** surface (metal, finish, enamel, vein
   metal, engraving, inscription, glow): memoised parts share one mesh object
   across materials, and grouping by mesh alone once gave the second part the
@@ -162,14 +176,14 @@ in step. A sketch renders the same on every keystroke.
 - The language gained: outline, engraving, inscription and random value
   kinds; `engraved` and `glow` clauses; a `seed` statement. No new literals.
 
-## Next phase: realism
+## Second phase: realism
 
-Assessed late September 2026, with the first phase complete. What the
-renderer does today: a procedural analytic sky at 512², split-sum image
-lighting, one area key with a soft shadow, the piece's own lights with shadow
-cubes, per-vertex baked sky occlusion, faked gem interiors, an ACES-fit
-tonemap with a 2.2 gamma, bloom, depth of field and 4x MSAA. It is nice; it
-is not real.
+Assessed late September 2026, with the first phase complete, and built over
+the days that followed. What the renderer did at the time: a procedural
+analytic sky at 512², split-sum image lighting, one area key with a soft
+shadow, the piece's own lights with shadow cubes, per-vertex baked sky
+occlusion, faked gem interiors, an ACES-fit tonemap with a 2.2 gamma,
+bloom, depth of field and 4x MSAA. It was nice; it was not real.
 
 ### Why it reads as CG
 
@@ -203,7 +217,7 @@ bake sidesteps it.
 | 8 | **A studio rig.** Fill and rim lights beside the key, as presets; the key machinery exists. | Medium | Low to moderate |
 | 9 | **A progressive path tracer for final quality.** A BVH built on the CPU, a compute shader accumulating samples while the view is still, the raster path kept for editing. Interreflection, soft shadows, refraction and bounce become exact. | The real answer | High, but bounded |
 
-### Done so far
+### What each became
 
 - **2, HDRI (September 2026):** `render/hdr.ts` parses Radiance files
   (run-length and flat); `bakeEnvironment` takes an `image` and draws the
@@ -308,13 +322,48 @@ bake sidesteps it.
   reported a hit and dropped the sky. Fixed; the raster path is brighter
   from the environment than it had been since the probe landed.
 
-### Caveats and order
+### How it went
 
-Items 1–8 each patch one symptom of not tracing rays. They stack, and they
-plateau below what 9 gives. Item 9 pays only if a few seconds of convergence
-on a still view is acceptable, which a tool with a draft mode can afford.
-Suggested order: 2 and 4 first (cheap, change the look at once), then 1 and
-3, then decide on 9 having seen where that lands.
+The plan said items 1–8 would each patch one symptom of not tracing rays,
+stack, and plateau below what 9 gives, and that was so. The suggested order
+(2 and 4, then 1 and 3, then 5 and 6, 7, 8, 9) was the order built. Two
+things the plan did not foresee:
+
+- The tracer was worth building for the comparison alone. Its first
+  pixel-by-pixel check against the raster path found the probe had been
+  dropping the sky since it landed (the filter's mip downsample wrote alpha
+  1), which none of the intervening captures had made obvious because the
+  key carried the scene. Every raster render is brighter from the
+  environment now than in the captures made between items 1 and 9;
+  exposure and environment strength on the examples may want a second look.
+- Sharing the material code between the two paths, rather than writing a
+  second material model for the tracer, cost one afternoon of splitting the
+  shader text and repaid it at once: relief, engraving, lettering and wires
+  came through the tracer unchanged. Keep it that way — a material feature
+  added to `MATERIAL_FIELDS` reaches both; one added inside `fsMain` reaches
+  only the raster.
+
+Also from this phase, though not on the list: the cloisonné wire is now a
+half-round bead of its own metal that flattens into roughness as it nears a
+pixel wide, after the archvis lighting had left it a flat pale line.
+
+### Open, from the second phase
+
+- The tracer's table is a plane: a velvet or silk cushion's dome is not
+  traced, so the traced and raster views of a cushioned piece differ.
+- The tracer reads the sky prefiltered at the lobe's centre, and blurred
+  further after a matte bounce, for speed. Importance-sampling the
+  environment (a CDF over its brightest texels) would let it read the sky
+  where a path actually went, at the cost of a slower settle.
+- Caustics — a polished ring throwing light on the table — arrive as
+  speckle and take hundreds of samples to smooth.
+- The raster and traced paths still differ in places: the enamel's body
+  reads brighter in the raster, and the probe's one bounce is not the
+  tracer's six. Where they disagree, the tracer is the reference.
+- Traced quality re-samples from nothing on any change to the frame, the
+  exposure slider included, though the exposure is applied at the write.
+- The tracer takes at most 256 draw groups, and the storage-buffer limit
+  leaves no binding to spare.
 
 ## Open, from the first phase
 
