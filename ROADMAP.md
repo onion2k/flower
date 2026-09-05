@@ -161,7 +161,56 @@ in step. A sketch renders the same on every keystroke.
 - The language gained: outline, engraving, inscription and random value
   kinds; `engraved` and `glow` clauses; a `seed` statement. No new literals.
 
-## Open
+## Next phase: realism
+
+Assessed late September 2026, with the first phase complete. What the
+renderer does today: a procedural analytic sky at 512², split-sum image
+lighting, one area key with a soft shadow, the piece's own lights with shadow
+cubes, per-vertex baked sky occlusion, faked gem interiors, an ACES-fit
+tonemap with a 2.2 gamma, bloom, depth of field and 4x MSAA. It is nice; it
+is not real.
+
+### Why it reads as CG
+
+1. **Nothing reflects anything but the sky.** A gold ring never shows its
+   own stone, the table never appears in its lower half, the cushion is in
+   no polished surface. On close-up metal this is where realism lives.
+2. **The sky is synthetic.** Analytic softboxes make clean, structureless
+   reflections. Real studios have edges, windows and a room.
+3. **Contact is soft.** Occlusion is per vertex, so a rivet meeting a plate
+   or a stone in its seat has no crisp contact shadow, and no light bounces
+   colour between parts.
+
+### The theme
+
+The scene is static and small, so nearly everything expensive can be baked
+once per edit rather than paid per frame — the way the light shadows and the
+cushion already are. WebGPU is not the limit; per-frame budget is, and the
+bake sidesteps it.
+
+### Changes, in order
+
+| # | Change | Gain | Cost |
+|---|---|---|---|
+| 1 | **Local reflection probe.** Bake a cube map at the scene's centre whenever the piece changes, prefilter it with the existing environment pipeline, sample it with parallax correction blended with the sky. Metal reflects the piece and the table; its irradiance gives one bounce of colour bleed for free. | Largest single jump | Moderate, mostly reuse |
+| 2 | **Load a real HDRI.** Parse a Radiance file into the existing prefilter, with rotation. Structured reflections in polished metal. | Large | Low |
+| 3 | **Ray-traced gems.** The cuts are generated, so each stone's facet planes are known: intersect the ray with them in the shader for two or three bounces — true refraction, total internal reflection, dispersion — replacing the fake interior. | Large for stones | Moderate |
+| 4 | **Camera and film.** AgX or a true ACES transform instead of the fit, an sRGB curve instead of 2.2, a gentle vignette, film grain, a trace of chromatic aberration at the edges. | Medium, cheap | Low |
+| 5 | **Per-pixel contact occlusion.** GTAO from the depth and normal buffers over the baked per-vertex term. | Medium | Moderate |
+| 6 | **Micro-detail on metal.** Fine polish swirls, smudges, dust on the cushion; procedural like the existing micro-variation. | Medium on close-ups | Low |
+| 7 | **Supersampled final.** Render final quality above native resolution and downsample. | Small but visible | Trivial |
+| 8 | **A studio rig.** Fill and rim lights beside the key, as presets; the key machinery exists. | Medium | Low to moderate |
+| 9 | **A progressive path tracer for final quality.** A BVH built on the CPU, a compute shader accumulating samples while the view is still, the raster path kept for editing. Interreflection, soft shadows, refraction and bounce become exact. | The real answer | High, but bounded |
+
+### Caveats and order
+
+Items 1–8 each patch one symptom of not tracing rays. They stack, and they
+plateau below what 9 gives. Item 9 pays only if a few seconds of convergence
+on a still view is acceptable, which a tool with a draft mode can afford.
+Suggested order: 2 and 4 first (cheap, change the look at once), then 1 and
+3, then decide on 9 having seen where that lands.
+
+## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
   and more sweep directions for its facets.
