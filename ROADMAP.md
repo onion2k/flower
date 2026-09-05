@@ -411,11 +411,16 @@ contact occlusion's depth reconstruction both take the shift; roll comes
 through the view matrix, so everything downstream has it for free. Camera
 rays that miss now return the page colour in the tracer too, so the two
 paths frame and backdrop alike. A **focal plane helper** (a toggle in the
-same panel) draws a gridded square at the focus distance, sized to the
-piece and cut wherever the piece passes through it, with a fainter square
-at each edge of the sharp band; the line shader now writes distance in
-alpha, so the depth of field treats helpers and anchors as things at a
-distance rather than smearing them.
+same panel) draws the plane of focus where it cuts the scene: its trace
+across the table, and a gate of level contours through the piece's
+heights, clipped to a round wider than the piece and cut wherever the
+piece stands in front; the near and far edges of the sharp band get
+fainter traces on the table. The first version was a gridded card square
+to the line of sight, which from the camera is a flat overlay and says
+nothing about depth — a helper has to be drawn in the scene's own frame
+to help. The line shader now writes distance in alpha, so the depth of
+field treats helpers and anchors as things at a distance rather than
+smearing them.
 
 ### Open, from the second phase
 
