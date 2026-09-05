@@ -2108,6 +2108,177 @@ form mirror {
 }
 `,
 
+  eternity: `# An eternity ring: stones the whole way round, each in its own bezel
+# The band has no crown to speak of — a shank with no shoulder is a plain
+# hoop — and the settings sit on its outer face on a ring tilted a quarter
+# turn, the way a bangle's do, at the band's outer radius.
+material platinum polished
+
+part band   = shank(size: 17, width: 3.2, thickness: 1.8, shoulder: 0)
+part collet = setting(width: 2.6, style: bezel, height: 1.3)
+part stone  = gem(cut: brilliant, width: 2.6) in diamond
+
+unit set {
+  place collet
+  fasten stone to collet.seat
+}
+
+form eternity {
+  place band
+  repeat set around ring(20, radius: 10.3, tilt: 90deg)
+}
+`,
+
+  halo: `# A halo ring: a sapphire ringed by brilliants, on a shank pavé to the shoulders
+# The head is built flat — the centre stone in its claws, the halo of
+# small stones on a ring round it at the same height — and pitched onto the
+# crown as a unit. The shoulder stones are set on the band itself, on rings
+# tilted a quarter turn and turned to either side of the crown.
+material platinum polished
+
+part band   = shank(size: 17, width: 2.4, thickness: 1.8, shoulder: 0.4)
+part mount  = setting(width: 6.5, style: claw, claws: 4, height: 3)
+part centre = gem(cut: oval, width: 6.5, length: 8) in sapphire
+part collet = setting(width: 1.8, style: bezel, height: 1)
+part chip   = gem(cut: brilliant, width: 1.8) in diamond
+part gallery = collar(inner: 4.6, wall: 1.2, length: 1.6) in platinum satin
+
+unit spark {
+  place collet
+  fasten chip to collet.seat
+}
+unit head {
+  place gallery at (0, 0, 0.8)
+  place mount at (0, 0, 1.6)
+  fasten centre to mount.seat
+  repeat spark around ring(14, radius: 5.6, z: 1.8)
+}
+
+form halo {
+  place band
+  place head at (10.3, 0, 0) pitch 90deg
+  repeat spark around ring(1, radius: 10.3, phase: 18deg, tilt: 90deg)
+  repeat spark around ring(1, radius: 10.3, phase: 30deg, tilt: 90deg)
+  repeat spark around ring(1, radius: 10.3, phase: 42deg, tilt: 90deg)
+  repeat spark around ring(1, radius: 10.3, phase: -18deg, tilt: 90deg)
+  repeat spark around ring(1, radius: 10.3, phase: -30deg, tilt: 90deg)
+  repeat spark around ring(1, radius: 10.3, phase: -42deg, tilt: 90deg)
+}
+`,
+
+  hoops: `# Hoop earrings: a pair of gold hoops, each strung with three beads and
+# hung from a hook. mirror() makes the pair. The hoop is a wire on a
+# circle standing on edge, so it is drawn in the plane the earring hangs
+# in, and the beads sit on its lowest reach.
+material gold polished
+
+part hoop = wire(path: circle(radius: 11), radius: 0.8, closed: yes, sections: 160)
+part hook = wire(path: through((0, 0, 14), (2.5, 0, 12), (5, 0, 6), (4, 0, -1), (1.5, 0, -6)), radius: 0.45, tip: 0.7, sections: 60)
+part bead = bead(radius: 3, bore: 1.7) in rose gold satin
+part pip  = bead(radius: 2, bore: 1.7) in gold satin
+
+unit ear {
+  place hook at (0, 20, 26)
+  # the hoop stands in the XZ plane at the ear's y, hanging from the hook's tip
+  place hoop at (1.5, 20, 9) roll 90deg
+  place bead at (1.5, 20, -2) pitch 90deg
+  place pip at (-5.6, 20, 1.5) pitch 50deg
+  place pip at (8.6, 20, 1.5) pitch -50deg
+}
+
+form hoops {
+  repeat ear around mirror()
+}
+`,
+
+  riviere: `# A rivière: a river of graduated stones on a chain, largest at the front
+# The stones are spaced by arc length on an arc, each in a bezel, shrinking
+# toward the ends with "taper"; the chain is jump rings on the rest of the
+# circle, laid flat on the table as a necklace is shown.
+material platinum polished
+
+let front = arc(radius: 46, from: 200deg, to: 340deg)
+let back  = arc(radius: 46, from: -20deg, to: 200deg)
+
+part collet = setting(width: 6, style: bezel, height: 2.2)
+part stone  = gem(cut: brilliant, width: 6) in diamond
+part link   = jumpRing(radius: 1.6, wireRadius: 0.4)
+part clasp  = clasp(radius: 0.6, hookRadius: 3.5)
+
+unit set {
+  place collet
+  fasten stone to collet.seat
+}
+# a chain lies with every other link turned a quarter: two links to a step.
+# along() runs its path down a unit's local Y, so the second link steps
+# along Y and turns about it
+unit pair {
+  place link
+  place link at (0, 3.1, 0) pitch 90deg
+}
+
+form riviere {
+  repeat set around along(front, 15, from: 0.02, to: 0.98, taper: 0.5)
+  repeat pair around along(back, 28, from: 0.01, to: 0.97)
+  place clasp at (46, 0, 0) turn 90deg
+}
+`,
+
+  locket: `# A locket on its chain: a stadium of engine-turned gold with a monogram,
+# a bail, and a chain of jump rings that runs up and off the table's edge.
+# The chain is placed by along() on a curve that rises, so the necklace
+# reads as lying on a neck rather than on a bench.
+material gold satin
+
+let strand = through((0, 6, 0), (-6, 20, 0), (-16, 40, 4), (-22, 62, 14), (-20, 84, 30))
+
+part case  = plate(stadium(length: 30, width: 22), thickness: 3, bevel: 0.8) engraved guilloche(scale: 0.6, depth: 0.04) engraved text("AB", size: 8, depth: 0.12)
+part rim   = wire(path: ellipse(rx: 11.4, ry: 15.4), radius: 0.7, closed: yes, sections: 160) in gold polished
+part bail  = jumpRing(radius: 2.2, wireRadius: 0.6) in gold polished
+part link  = jumpRing(radius: 1.3, wireRadius: 0.35) in gold polished
+
+unit pair {
+  place link
+  place link at (0, 2.5, 0) pitch 90deg
+}
+unit chain {
+  repeat pair around along(strand, 22, from: 0, to: 0.98)
+}
+
+form locket {
+  # turned so the monogram reads from where the piece is first looked at
+  place case turn 180deg
+  place rim at (0, 0, 1.5)
+  place bail at (0, 17.5, 0) roll 90deg
+  place chain
+  place chain turn 180deg
+}
+`,
+
+  cufflinks: `# A pair of cufflinks: an engine-turned disc with an onyx cabochon, a
+# bar back on a post. mirror() makes the pair; each is placed a little
+# apart on the table, face up, as they are shown in a box.
+material gold polished
+
+part face  = disc(radius: 7, thickness: 1.8, bevel: 0.5) engraved guilloche(scale: 0.5, depth: 0.04)
+part collet = setting(width: 4.4, style: bezel, height: 1.4)
+part stone = gem(cut: cabochon, width: 4.4) in onyx
+part post  = wire(path: through((0, 0, 0), (0, 0, -4), (0, 0, -8)), radius: 0.7, tip: 1, sections: 12)
+part bar   = bar(length: 12, width: 3, thickness: 1.4, bore: 1.2) in gold satin
+
+unit link {
+  place face at (0, 12, 8)
+  place collet at (0, 12, 8.9)
+  fasten stone to collet.seat
+  place post at (0, 12, 7.1)
+  place bar at (0, 12, 0) roll 90deg turn 90deg
+}
+
+form cufflinks {
+  repeat link around mirror()
+}
+`,
+
 };
 
 export const exampleNames = Object.keys(examples);
@@ -2118,7 +2289,7 @@ export const exampleNames = Object.keys(examples);
  * group is still shown, under "Other", rather than lost.
  */
 export const exampleGroups: Array<[string, string[]]> = [
-  ['Jewellery', ['ring', 'tension', 'cluster', 'signet', 'cocktail', 'bangle', 'tiara', 'necklace', 'earrings', 'studs', 'girandole', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
+  ['Jewellery', ['ring', 'halo', 'eternity', 'tension', 'cluster', 'signet', 'cocktail', 'bangle', 'cuff', 'tiara', 'necklace', 'riviere', 'locket', 'earrings', 'hoops', 'studs', 'girandole', 'cufflinks', 'brooch', 'rosette', 'cloisonne', 'faberge', 'display']],
   ['Art deco', ['deco', 'skyscraper', 'compact', 'cuff', 'mantel', 'lamp', 'scent', 'mirror', 'trefoil']],
   ['Flowers', ['rose', 'peony', 'dahlia', 'tulip', 'lily', 'lotus', 'magnolia', 'calla', 'orchid', 'carnation', 'sunflower', 'freesia', 'daisy', 'poppy', 'iris', 'crocus', 'fuchsia', 'snowdrop', 'bluebell', 'cherry', 'hydrangea', 'allium', 'narcissus', 'digitalis', 'bouquet', 'boutique']],
   ['Foliage & seed', ['fern', 'acer', 'thistle', 'bloom', 'seedhead', 'seedcase', 'teasel']],
