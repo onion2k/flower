@@ -333,9 +333,10 @@ things the plan did not foresee:
   pixel-by-pixel check against the raster path found the probe had been
   dropping the sky since it landed (the filter's mip downsample wrote alpha
   1), which none of the intervening captures had made obvious because the
-  key carried the scene. Every raster render is brighter from the
-  environment now than in the captures made between items 1 and 9;
-  exposure and environment strength on the examples may want a second look.
+  key carried the scene. With the sky back, the presets lit the piece like
+  an overcast day — their irradiance is about three times the key's at its
+  default — so the ambient default came down from 1 to 0.3, which keeps the
+  key dominant and the table dark in all four presets; exposure stays at 1.
 - Sharing the material code between the two paths, rather than writing a
   second material model for the tracer, cost one afternoon of splitting the
   shader text and repaid it at once: relief, engraving, lettering and wires

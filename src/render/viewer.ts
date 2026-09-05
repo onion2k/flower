@@ -264,7 +264,7 @@ export class Viewer {
   /** The rig beside the key, at most MAX_RIG_LIGHTS of them. */
   private rig: RigLight[] = [];
   private rigViewProj = Array.from({ length: MAX_RIG_LIGHTS }, () => new Float32Array(16));
-  private envStrength = 1;
+  private envStrength = 0.3;
   /** Depth of field: strength (0 off) and focus as a multiple of the orbit distance, so the target is what's sharp. */
   private dof = 0;
   private focusScale = 1;

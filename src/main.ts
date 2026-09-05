@@ -95,7 +95,10 @@ const state = {
   keyWarmth: 0.3,
   keySize: 0.08,
   rig: 'none' as RigName,
-  envStrength: 1,
+  // the sky as baked is brighter than the key at its default, and lights the
+  // piece like an overcast day: turned down, the key gives it a side and the
+  // table stays dark, which is the studio look the examples were drawn for
+  envStrength: 0.3,
   dof: 0,
   focus: 1,
   debug: 0,
