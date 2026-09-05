@@ -9,7 +9,7 @@
  */
 
 import { createContext, bufferFrom, emptyBuffer, shader, type GpuContext } from '../gpu/context';
-import { Camera, Orbit } from '../gpu/camera';
+import { Camera, Orbit, lookAt, multiply as multiplyMat, perspective } from '../gpu/camera';
 import type { Mesh as PartMesh } from '../mesh/types';
 import type { Anchor, PlateRelief } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
@@ -32,6 +32,9 @@ const MATERIAL_STRIDE = 256;
 const MATERIAL_SIZE = 256;
 const FRAME_SIZE = 224;
 const MAX_LIGHTS = 48;
+/** Lights beyond this many cast no shadow; the first ones get a cube each. */
+const MAX_LOCAL_SHADOWS = 32;
+const LOCAL_SHADOW_SIZE = 160;
 const LIGHTS_SIZE = 16 + MAX_LIGHTS * 32;
 
 export type Quality = 'draft' | 'final';
@@ -245,6 +248,15 @@ export class Viewer {
   /** The piece's own lights: the glowing parts, sampled as spheres. */
   private lightsBuffer: GPUBuffer;
   private glowScale = 1;
+  /** Each light's shadow: a cube of depth per light, one layer of six faces each. */
+  private localShadowMap: GPUTexture;
+  private localShadowView: GPUTextureView;
+  private dummyLocalShadowView: GPUTextureView;
+  private faceFrames: GPUBuffer[] = [];
+  private faceBinds: GPUBindGroup[] = [];
+  private localShadowDirty = false;
+  /** The lights as last written: where each is, and which group it belongs to (not shadowed by itself). */
+  private lightList: Array<{ position: [number, number, number]; group: number }> = [];
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
   private atlas: GlyphAtlas | null = null;
   private atlasTexture: GPUTexture | null = null;
@@ -364,6 +376,7 @@ export class Viewer {
         { binding: 5, visibility: both, texture: { sampleType: 'depth' } },
         { binding: 6, visibility: both, sampler: { type: 'comparison' } },
         { binding: 7, visibility: both, buffer: { type: 'uniform' } },
+        { binding: 8, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -441,6 +454,19 @@ export class Viewer {
     this.cushionDepthView = this.cushionDepth.createView();
     this.cushionFrameBuffer = device.createBuffer({ label: 'cushion frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.cushion = new CushionBake(ctx);
+    this.localShadowMap = device.createTexture({
+      label: 'local shadows', size: [LOCAL_SHADOW_SIZE, LOCAL_SHADOW_SIZE, 6 * MAX_LOCAL_SHADOWS], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.localShadowView = this.localShadowMap.createView({ dimension: '2d-array' });
+    // the depth-only passes bind the frame group too, and may not see the
+    // array they are drawing into: they get an empty stand-in
+    this.dummyLocalShadowView = device.createTexture({
+      size: [1, 1, 6], format: 'depth24plus', usage: GPUTextureUsage.TEXTURE_BINDING, label: 'no local shadows',
+    }).createView({ dimension: '2d-array' });
+    for (let i = 0; i < 6 * MAX_LOCAL_SHADOWS; i++) {
+      this.faceFrames.push(device.createBuffer({ label: `light face ${i}`, size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+    }
 
     const pbr = shader(device, PBR_WGSL, 'pbr');
     this.pbrPipeline = device.createRenderPipeline({
@@ -936,6 +962,11 @@ export class Viewer {
       }
       shadowPass.end();
     }
+    if (this.localShadowDirty && this.lightList.length && this.faceBinds.length) {
+      this.localShadowDirty = false;
+      this.bakeLocalShadows(encoder, frame);
+    }
+
     const cushionShape = TABLES[this.table].cushion;
     if (this.cushionDirty && cushionShape && this.groups.length && this.occlusion && this.cushionFrameBind) {
       this.cushionDirty = false;
@@ -1055,7 +1086,7 @@ export class Viewer {
   private rebuildFrameBind() {
     const env = this.environment;
     if (!env) return;
-    const entries = (buffer: GPUBuffer, shadow: GPUTextureView): GPUBindGroupEntry[] => [
+    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer } },
       { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
       { binding: 2, resource: env.brdf.createView() },
@@ -1064,10 +1095,12 @@ export class Viewer {
       { binding: 5, resource: shadow },
       { binding: 6, resource: this.shadowSampler },
       { binding: 7, resource: { buffer: this.lightsBuffer } },
+      { binding: 8, resource: local },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
-    this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView) });
-    this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView) });
+    this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
+    this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
+    this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView) }));
   }
 
   /**
@@ -1171,11 +1204,12 @@ export class Viewer {
     const out = new Float32Array(LIGHTS_SIZE / 4);
     const u32 = new Uint32Array(out.buffer);
     let count = 0;
-    for (const g of this.groups) {
+    const list: Array<{ position: [number, number, number]; group: number }> = [];
+    this.groups.forEach((g, groupIndex) => {
       const m = metals[g.source.metal ?? ''] ?? this.metal;
-      if (m.model !== 'light' || count >= MAX_LIGHTS) continue;
+      if (m.model !== 'light' || count >= MAX_LIGHTS) return;
       const glow = (g.source.glow ?? m.glow ?? 1) * this.glowScale;
-      if (glow <= 0) continue;
+      if (glow <= 0) return;
       const samples = emitterSamples(g.source.mesh);
       const c = m.colour ?? [1, 1, 1];
       const matrices = g.source.matrices;
@@ -1189,13 +1223,71 @@ export class Viewer {
           out.set([p[0], p[1], p[2], sm.radius * scale], o);
           const area = sm.area * scale * scale;
           const intensity = (glow * area) / Math.PI;
-          out.set([c[0] * intensity, c[1] * intensity, c[2] * intensity, 0], o + 4);
+          out.set([c[0] * intensity, c[1] * intensity, c[2] * intensity, count < MAX_LOCAL_SHADOWS ? count : -1], o + 4);
+          list.push({ position: [p[0], p[1], p[2]], group: groupIndex });
           count++;
         }
       }
-    }
+    });
     u32[0] = count;
+    out[1] = 0.4;
+    out[2] = Math.max(this.sceneRadius * 4, 10);
     this.ctx.device.queue.writeBuffer(this.lightsBuffer, 0, out);
+    // a light that moved, or a piece that changed, needs its shadows again;
+    // a change of brightness alone does not
+    const moved = list.length !== this.lightList.length
+      || list.some((l, i) => l.group !== this.lightList[i].group || l.position.some((v, k) => v !== this.lightList[i].position[k]));
+    if (moved) { this.lightList = list; this.localShadowDirty = true; this.dirty = true; }
+  }
+
+  /**
+   * Render the piece from each light, six faces round it, into that light's
+   * layer of the shadow array. The light's own part is left out: the sample
+   * sits inside the tube, and the tube would otherwise shadow everything.
+   */
+  private bakeLocalShadows(encoder: GPUCommandEncoder, frame: Float32Array) {
+    const { device } = this.ctx;
+    const near = 0.4, far = Math.max(this.sceneRadius * 4, 10);
+    const proj = new Float32Array(16);
+    perspective(proj, Math.PI / 2, 1, near, far);
+    const view = new Float32Array(16);
+    const viewProj = new Float32Array(16);
+    // the faces in the order a cube map wants them, each with its own up
+    const faces: Array<[[number, number, number], [number, number, number]]> = [
+      [[1, 0, 0], [0, -1, 0]], [[-1, 0, 0], [0, -1, 0]],
+      [[0, 1, 0], [0, 0, 1]], [[0, -1, 0], [0, 0, -1]],
+      [[0, 0, 1], [0, -1, 0]], [[0, 0, -1], [0, -1, 0]],
+    ];
+    const shadowed = this.lightList.slice(0, MAX_LOCAL_SHADOWS);
+    shadowed.forEach((light, li) => {
+      faces.forEach(([dir, up], fi) => {
+        const slot = li * 6 + fi;
+        const target: [number, number, number] = [light.position[0] + dir[0], light.position[1] + dir[1], light.position[2] + dir[2]];
+        lookAt(view, light.position, target, up);
+        multiplyMat(viewProj, proj, view);
+        const lf = new Float32Array(frame);
+        lf.set(viewProj, 0);
+        device.queue.writeBuffer(this.faceFrames[slot], 0, lf);
+        const pass = encoder.beginRenderPass({
+          label: `light ${li} face ${fi}`,
+          colorAttachments: [],
+          depthStencilAttachment: {
+            view: this.localShadowMap.createView({ dimension: '2d', baseArrayLayer: slot, arrayLayerCount: 1 }),
+            depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store',
+          },
+        });
+        pass.setPipeline(this.shadowPipeline);
+        pass.setBindGroup(0, this.faceBinds[slot]);
+        this.groups.forEach((g, gi) => {
+          if (gi === light.group) return;
+          pass.setVertexBuffer(0, g.position);
+          pass.setVertexBuffer(1, g.instance);
+          pass.setIndexBuffer(g.index, 'uint32');
+          pass.drawIndexed(g.indexCount, g.instanceCount);
+        });
+        pass.end();
+      });
+    });
   }
 
   /**

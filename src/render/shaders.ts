@@ -42,10 +42,61 @@ struct Light {
   position: vec3f,
   radius: f32,     // of the sphere the light is taken to be, world units
   intensity: vec3f, // radiant intensity: irradiance at unit distance, facing it
-  _pad: f32,
+  shadow: f32,     // layer of its shadow cube in the array, or -1 for none
 };
-struct Lights { count: u32, _p0: u32, _p1: u32, _p2: u32, items: array<Light, 48> };
+struct Lights { count: u32, near: f32, far: f32, _p2: u32, items: array<Light, 48> };
 @group(0) @binding(7) var<uniform> lights: Lights;
+// each light's own view of the piece, six faces round it, baked when the
+// piece changes: the lights are part of the piece, so their shadows are still
+@group(0) @binding(8) var localShadows: texture_depth_2d_array;
+
+// the six faces round a light, in the order they were rendered: the way each
+// looks and which way is up in its image, with right = cross(dir, up)
+const FACE_DIR = array<vec3f, 6>(
+  vec3f(1.0, 0.0, 0.0), vec3f(-1.0, 0.0, 0.0), vec3f(0.0, 1.0, 0.0),
+  vec3f(0.0, -1.0, 0.0), vec3f(0.0, 0.0, 1.0), vec3f(0.0, 0.0, -1.0));
+const FACE_UP = array<vec3f, 6>(
+  vec3f(0.0, -1.0, 0.0), vec3f(0.0, -1.0, 0.0), vec3f(0.0, 0.0, 1.0),
+  vec3f(0.0, 0.0, -1.0), vec3f(0.0, -1.0, 0.0), vec3f(0.0, -1.0, 0.0));
+
+/**
+ * How much of a light reaches a point: 1 in the open, 0 behind something.
+ * The cube's faces were rendered with one perspective, so the depth to
+ * compare is that of the point along whichever axis the face looks down.
+ */
+fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
+  if (light.shadow < 0.0) { return 1.0; }
+  let layer = i32(light.shadow);
+  let size = f32(textureDimensions(localShadows).x);
+  // step the point out along its normal by about a texel at its distance,
+  // so a surface does not shadow itself where the map's resolution runs out
+  var d = p - light.position;
+  let dist = length(d);
+  let offset = n * (dist * 2.0 / size) * 1.5 * max(0.0, 1.0 - abs(dot(n, d / max(dist, 1e-4))) * 0.5);
+  d = p + offset - light.position;
+  let a = abs(d);
+  var face = 0;
+  if (a.y >= a.x && a.y >= a.z) { face = select(3, 2, d.y > 0.0); }
+  else if (a.z >= a.x) { face = select(5, 4, d.z > 0.0); }
+  else { face = select(1, 0, d.x > 0.0); }
+  let dir = FACE_DIR[face];
+  let up = FACE_UP[face];
+  let right = cross(dir, up);
+  let major = dot(d, dir);
+  // the face's image: right runs along u, up runs against v
+  let uv = vec2f(0.5 + 0.5 * dot(d, right) / major, 0.5 - 0.5 * dot(d, up) / major);
+  let near = lights.near; let far = lights.far;
+  let depth = far / (far - near) - (far * near) / ((far - near) * major);
+  let slice = layer * 6 + face;
+  let test = depth - 0.0008;
+  // a five-tap cross over the hardware's own 2x2, for an edge a texel or two soft
+  var lit = textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test) * 2.0;
+  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(1, 0));
+  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(-1, 0));
+  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(0, 1));
+  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(0, -1));
+  return lit / 6.0;
+}
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
 @group(0) @binding(2) var envBrdf: texture_2d<f32>;
 @group(0) @binding(3) var linearSampler: sampler;
@@ -189,7 +240,9 @@ fn localLights(n: vec3f, v: vec3f, p: vec3f, f0: vec3f, roughness: f32, body: ve
     if (ndl0 <= -sin(size)) { continue; }
     // inverse square, softened inside the sphere so nothing blows up on contact
     let falloff = 1.0 / max(dist2, light.radius * light.radius);
-    let irradiance = light.intensity * falloff;
+    let lit = localShadowAt(light, p, n);
+    if (lit <= 0.0) { continue; }
+    let irradiance = light.intensity * falloff * lit;
     // diffuse: the sphere seen over the horizon lights a little past grazing
     let w = sin(size);
     let ndl = clamp((ndl0 + w) / (1.0 + w), 0.0, 1.0);

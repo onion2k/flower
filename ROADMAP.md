@@ -174,7 +174,7 @@ a diode. The work is in lighting.
 - **Shadowed local light**: the rule in `lighting-and-camera` stands: each
   light carries its own shadow. A shadowed line light needs a second shadow
   map and a cube or dual-paraboloid projection. Treat this as its own project
-  after the two steps above.
+  after the two steps above. Done: see the status below.
 
 The light array is a new uniform buffer; the frame struct grows.
 
@@ -186,11 +186,22 @@ placement of a glowing part is sampled as up to six spheres down its longest
 axis, each carrying its share of the surface area as radiant intensity, into
 a 48-light uniform buffer at frame binding 7. Both the piece and the table
 take diffuse and a representative-point GGX highlight from them. The
-shadowed local light remains its own project. Brightness is controllable
+shadowed local light was done afterwards, see below. Brightness is controllable
 twice over: `glow n` after a part's material (or on a placement) sets its
 radiance in sky units, and a glow slider in the light panel scales every
 emitter, 0 putting them out. See the `neon` example. The material record is
 now full (256 bytes).
+
+**Shadows, September 2026:** the local lights now cast shadows. Because the
+lights are part of the piece, their shadows are still: each of the first 32
+sampled lights gets six 160² depth faces in one 2D-array texture (frame
+binding 8), rendered with the depth-only pipeline whenever the piece or the
+lights move, skipping the emitter's own part (the sample sits inside the
+tube). The lookup picks the face by major axis from the same face table the
+bake used, so no cube-map convention is involved, and filters five taps.
+Both the piece and the table read it through `localLights()`. Two lessons:
+a depth-only pass must bind a stand-in for the array it is rendering into,
+and `ref` is a reserved word in WGSL.
 
 ### 7. Silk and velvet, with deformation
 
