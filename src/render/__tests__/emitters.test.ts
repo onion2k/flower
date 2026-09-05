@@ -6,7 +6,7 @@ import { revolve } from '../../mesh/revolve';
 
 // emitterSamples lives with the viewer, which needs WebGPU to construct; the
 // function itself is pure and is imported on its own
-import { emitterSamples } from '../viewer';
+import { emitterSamples } from '../renderer';
 
 describe('emitterSamples', () => {
   it('puts a light every 8 mm or so down a tube, each of the tube\'s radius and a share of its area', () => {

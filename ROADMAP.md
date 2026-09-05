@@ -556,6 +556,23 @@ pass, and build or adopt a real-time engine around them. Either way the
 first job is the same — split the 2,000-line viewer into a headless
 renderer and the glue on top — and is a day or two.
 
+That split is done. `render/renderer.ts` is the renderer: it takes a
+device and a format (`Gpu`, which `createDevice` gives without a canvas),
+owns every GPU resource, the camera, the bakes and the frame, and draws
+into whatever texture view `render` is handed, only asking for it once a
+frame is due. It has no canvas, pointer, resize observer, timer or loop.
+What it cannot know it is told each tick: the target's size, whether the
+view is moving, and the focus and subject distances in world units.
+`render/viewer.ts` is the glue, under 300 lines: the canvas and its
+context, the orbit, the resize observer, the frame loop, the adaptive
+resolution, the pixel budgets, and picking from page coordinates. It
+forwards the panel's surface unchanged, so `main.ts` did not move. The
+one behaviour that changed shape is the daylight sun's re-bake, which was
+a `setTimeout` and is now a due time the renderer checks on its next
+frame, the way the probe already waited. The bakes and the post chain
+were only ever using the device and the format, so they now take `Gpu`
+and compile without a canvas in sight.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

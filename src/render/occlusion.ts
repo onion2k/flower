@@ -26,7 +26,7 @@
  * puts the sample budget where it shows.
  */
 
-import { bufferFrom, FULLSCREEN_VERT, shader, type GpuContext } from '../gpu/context';
+import { bufferFrom, FULLSCREEN_VERT, shader, type Gpu } from '../gpu/context';
 import type { Mesh } from '../mesh/types';
 import type { EnvSamples } from './env';
 
@@ -223,7 +223,7 @@ function getPipelines(device: GPUDevice): Pipelines {
   return p;
 }
 
-export function bakeOcclusion(ctx: GpuContext, groups: OcclusionGroup[], opts: OcclusionOptions = {}): Occlusion | null {
+export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: OcclusionOptions = {}): Occlusion | null {
   if (!groups.length) return null;
   const { device } = ctx;
   const pipes = getPipelines(device);

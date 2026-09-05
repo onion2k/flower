@@ -8,7 +8,7 @@
  * multisampling for free on the way out of the scene pass.
  */
 
-import { FULLSCREEN_VERT, shader, type GpuContext } from '../gpu/context';
+import { FULLSCREEN_VERT, shader, type Gpu } from '../gpu/context';
 
 /** The film: how the finished frame is brought to the screen. */
 export interface Film {
@@ -324,7 +324,7 @@ export class PostChain {
   readonly colourFormat = HDR;
   readonly sampleCount = SAMPLES;
 
-  constructor(private ctx: GpuContext) {
+  constructor(private ctx: Gpu) {
     const { device } = ctx;
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
     const pipe = (code: string, label: string, blend?: GPUBlendState, format: GPUTextureFormat = HDR) => {

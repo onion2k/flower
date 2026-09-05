@@ -45,7 +45,7 @@ Roughly bottom-up, from the math to the DOM:
 
 ## What's not covered, and why
 
-`src/render/viewer.ts` and the WGSL shaders — the scene pass, materials,
+`src/render/renderer.ts`, `src/render/viewer.ts` and the WGSL shaders — the scene pass, materials,
 occlusion baking, picking, selection — have no automated coverage. Node has
 no WebGPU implementation, so there's nothing to run them against in a test
 process. Verifying that layer means opening the app and looking at it: the

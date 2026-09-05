@@ -13,7 +13,7 @@
  * occlusion bake draws its directions from where the light is.
  */
 
-import { FULLSCREEN_VERT, halfToFloat, readbackLayer, shader, type GpuContext } from '../gpu/context';
+import { FULLSCREEN_VERT, halfToFloat, readbackLayer, shader, type Gpu } from '../gpu/context';
 
 /** IEEE half from a float, round to nearest, for uploading a probe. */
 function floatToHalf(value: number): number {
@@ -414,7 +414,7 @@ export interface EnvImage {
 }
 
 export function bakeEnvironment(
-  ctx: GpuContext,
+  ctx: Gpu,
   preset: EnvPreset,
   opts: { size?: number; mips?: number; brdfSize?: number; sampleSize?: number; sun?: [number, number, number]; sunSize?: number; image?: EnvImage } = {},
 ): Environment {
@@ -574,7 +574,7 @@ export function bakeEnvironment(
  * frame.
  */
 export function filterCube(
-  ctx: GpuContext, encoder: GPUCommandEncoder,
+  ctx: Gpu, encoder: GPUCommandEncoder,
   raw: GPUTexture, background: GPUTexture, specular: GPUTexture, size: number, mips: number,
 ): { dispose(): void } {
   const { device } = ctx;

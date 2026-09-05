@@ -8,15 +8,25 @@
  * removed.
  */
 
-export interface GpuContext {
+/**
+ * What the renderer and its bakes need of the GPU: a device, its queue and
+ * the format frames are composited to. No canvas: a renderer over this alone
+ * draws into any texture view of that format.
+ */
+export interface Gpu {
   device: GPUDevice;
   queue: GPUQueue;
-  canvas: HTMLCanvasElement;
-  context: GPUCanvasContext;
   format: GPUTextureFormat;
 }
 
-export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<GpuContext> {
+/** The same, presented on a canvas: what the viewer adds for the page. */
+export interface GpuContext extends Gpu {
+  canvas: HTMLCanvasElement;
+  context: GPUCanvasContext;
+}
+
+/** A device with no canvas, for rendering into textures. `format` defaults to the browser's preferred canvas format. */
+export async function createDevice(onLost?: (info: GPUDeviceLostInfo) => void, format?: GPUTextureFormat): Promise<Gpu> {
   if (!navigator.gpu) {
     throw new Error('WebGPU is not available in this browser');
   }
@@ -33,12 +43,16 @@ export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: G
     console.error(`WebGPU device lost (${info.reason}): ${info.message}`);
     onLost?.(info);
   });
+  return { device, queue: device.queue, format: format ?? navigator.gpu.getPreferredCanvasFormat() };
+}
+
+export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<GpuContext> {
+  const gpu = await createDevice(onLost);
   const context = canvas.getContext('webgpu');
   if (!context) throw new Error('WebGPU: no canvas context');
-  const format = navigator.gpu.getPreferredCanvasFormat();
   // COPY_SRC so a frame can be read back for a capture; it costs nothing otherwise
-  context.configure({ device, format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
-  return { device, queue: device.queue, canvas, context, format };
+  context.configure({ device: gpu.device, format: gpu.format, alphaMode: 'opaque', usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  return { ...gpu, canvas, context };
 }
 
 /** Compile a shader module and surface any diagnostics as an error, not a silent black frame. */

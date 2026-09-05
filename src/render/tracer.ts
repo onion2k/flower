@@ -20,7 +20,7 @@
  * post chain's scene target, so bloom and the film pass follow as they do
  * for a raster frame.
  */
-import { shader, type GpuContext } from '../gpu/context';
+import { shader, type Gpu } from '../gpu/context';
 import { COMMON, FRAME_STRUCT, GROUND_STRUCT, MATERIAL_FIELDS, MATERIAL_STRUCT, TABLE_SURFACES } from './shaders';
 import type { TracedScene } from './bvh';
 
@@ -790,7 +790,7 @@ export class PathTracer {
   readonly layout: GPUBindGroupLayout;
   readonly materialLayout: GPUBindGroupLayout;
 
-  constructor(private ctx: GpuContext, frameLayout: GPUBindGroupLayout) {
+  constructor(private ctx: Gpu, frameLayout: GPUBindGroupLayout) {
     const { device } = ctx;
     const c = GPUShaderStage.COMPUTE;
     this.materialLayout = device.createBindGroupLayout({

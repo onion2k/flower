@@ -25,7 +25,7 @@
  * shader takes the normal from the height's gradient, so lighting, shadow
  * and sheen all see the real shape.
  */
-import { shader, type GpuContext } from '../gpu/context';
+import { shader, type Gpu } from '../gpu/context';
 
 export const CUSHION_SIZE = 512;
 
@@ -151,7 +151,7 @@ export class CushionBake {
   private layout: GPUBindGroupLayout;
   private params: GPUBuffer;
 
-  constructor(private ctx: GpuContext) {
+  constructor(private ctx: Gpu) {
     const { device } = ctx;
     const make = (label: string) => device.createTexture({
       label, size: [CUSHION_SIZE, CUSHION_SIZE], format: 'r32float',

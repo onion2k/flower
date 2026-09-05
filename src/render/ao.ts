@@ -12,7 +12,7 @@
  * resolution from a few directions and steps with a per-pixel turn, and a
  * blur that respects depth so the noise goes and the edges stay.
  */
-import { FULLSCREEN_VERT, shader, type GpuContext } from '../gpu/context';
+import { FULLSCREEN_VERT, shader, type Gpu } from '../gpu/context';
 
 const AO = `
 ${FULLSCREEN_VERT}
@@ -158,7 +158,7 @@ export class ContactOcclusion {
   radius = 2.5;
   strength = 1;
 
-  constructor(private ctx: GpuContext, private depthFormat: GPUTextureFormat) {
+  constructor(private ctx: Gpu, private depthFormat: GPUTextureFormat) {
     const { device } = ctx;
     const make = (code: string, label: string) => {
       const module = shader(device, code, label);
