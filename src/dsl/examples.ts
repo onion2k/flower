@@ -611,6 +611,26 @@ form coral {
 }
 `,
 
+  bonsai: `# Branching in three dimensions. The coral forks in twos with no twist and
+# stays flat; here every tip throws three limbs, and twist rolls each fork
+# a sixth of a turn round its parent so no two levels lie in one plane.
+# Leaves go one level past the limbs, at their ends, authored large because
+# they are shrunk once per level on the way out.
+material bronze satin
+
+part limb = wire(path: bow((0, 0, 0), (16, 0, 0), sag: 1.8), radius: 1.4, tip: 0.6, sections: 24)
+part leaf = leaf(length: 32, width: 15, thickness: 2.2, cup: 25deg, curl: 18deg, enamel: emerald) in gold polished
+
+unit crown {
+  repeat limb around tree(depth: 4, count: 3, length: 16, spread: 36deg, shrink: 0.68, twist: 60deg)
+  repeat leaf around tree(depth: 5, count: 3, length: 16, spread: 36deg, shrink: 0.68, twist: 60deg, tips: yes)
+}
+
+form bonsai {
+  place crown pitch -90deg
+}
+`,
+
   tower: `# Constructivist: three posts, ringed and braced. Nothing decorative.
 material platinum brushed
 
