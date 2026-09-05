@@ -717,7 +717,7 @@ const PARTS = {
       bevel: a.num('bevel', -1, NaN) || undefined,
     })),
 
-  plate: define(['outline', 'thickness', 'cut', 'bore', 'bevel', 'enamel'], (a) =>
+  plate: define(['outline', 'thickness', 'cut', 'bore', 'bevel', 'enamel', 'tiers', 'shrink'], (a) =>
     plate({
       outline: a.outline('outline', 0)!.loop,
       thickness: a.num('thickness', 1, 1.2),
@@ -725,6 +725,8 @@ const PARTS = {
       bore: a.num('bore', -1, 0) || undefined,
       bevel: a.num('bevel', -1, NaN) || undefined,
       enamel: enamelName(a),
+      tiers: a.count('tiers', -1, 1),
+      shrink: a.num('shrink', -1, 0.2),
     })),
 
   gusset: define(['radius', 'thickness', 'bore', 'fillet', 'lighten', 'bevel'], (a) =>

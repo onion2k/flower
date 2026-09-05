@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
-import { extrude } from '../extrude';
-import { expectWellFormed, boundsOf } from './helpers';
+import { extrude, extrudeStepped } from '../extrude';
+import { expectWellFormed, expectWatertight, boundsOf } from './helpers';
 import type { Vec2 } from '../../geom/types';
 
 const square = (size: number): Vec2[] => [
@@ -101,6 +101,50 @@ describe('extrude: enamel', () => {
     const mesh = extrude({ outline: square(10), thickness: 2, bevel: 0.5, enamelTop: true });
     for (let i = 0; i < mesh.positions.length / 3; i++) {
       if (mesh.cap![i] === 0) expect(mesh.enamel![i]).toBe(0);
+    }
+  });
+});
+
+describe('extrudeStepped', () => {
+  const sq = (h: number): Vec2[] => [[-h, -h], [h, -h], [h, h], [-h, h]];
+
+  it('is well-formed and rises through its tiers from z = 0', () => {
+    const mesh = extrudeStepped({ tiers: [{ outline: sq(10), thickness: 2 }, { outline: sq(7), thickness: 2 }, { outline: sq(4), thickness: 2 }], bevel: 0.3 });
+    expectWellFormed(mesh);
+    const b = boundsOf(mesh);
+    expect(b.min[2]).toBeCloseTo(0);
+    expect(b.max[2]).toBeCloseTo(6);
+    expect(b.max[0]).toBeCloseTo(10);
+  });
+
+  it('is watertight: one closed surface with no hidden faces', () => {
+    const mesh = extrudeStepped({ tiers: [{ outline: sq(10), thickness: 2 }, { outline: sq(6), thickness: 2 }] });
+    expectWatertight(mesh);
+  });
+
+  it('marks every tread as a top cap and only the foot as a bottom cap', () => {
+    const mesh = extrudeStepped({ tiers: [{ outline: sq(10), thickness: 2 }, { outline: sq(6), thickness: 2 }] });
+    const z = mesh.positions;
+    let treads = 0, feet = 0;
+    for (let i = 0; i < mesh.cap!.length; i++) {
+      if (mesh.cap![i] > 0.5) { treads++; expect([2, 4]).toContainEqual(expect.closeTo(z[i * 3 + 2], 5)); }
+      if (mesh.cap![i] < -0.5) { feet++; expect(z[i * 3 + 2]).toBeCloseTo(0); }
+    }
+    expect(treads).toBeGreaterThan(0);
+    expect(feet).toBeGreaterThan(0);
+  });
+
+  it('uses fewer triangles than the same tiers stacked as whole plates', () => {
+    const tiers = [{ outline: sq(10), thickness: 2 }, { outline: sq(7), thickness: 2 }, { outline: sq(4), thickness: 2 }];
+    const stepped = extrudeStepped({ tiers, bevel: 0.3 });
+    const stacked = tiers.reduce((n, t) => n + extrude({ outline: t.outline, thickness: t.thickness, bevel: 0.3 }).indices.length, 0);
+    expect(stepped.indices.length).toBeLessThan(stacked);
+  });
+
+  it('enamels the treads only', () => {
+    const mesh = extrudeStepped({ tiers: [{ outline: sq(10), thickness: 2 }, { outline: sq(6), thickness: 2 }], enamelTop: true });
+    for (let i = 0; i < mesh.enamel!.length; i++) {
+      expect(mesh.enamel![i]).toBe(mesh.cap![i] > 0.5 ? 1 : 0);
     }
   });
 });

@@ -2,7 +2,7 @@ import {
   boltCircle, circleOutline, ensureWinding, gussetOutline, polygonOutline,
   stadiumOutline, transformLoop,
 } from '../geom/outline';
-import { extrude } from '../mesh/extrude';
+import { extrude, extrudeStepped } from '../mesh/extrude';
 import { meshBounds, type Anchor, type Part } from './types';
 import type { Vec2, Vec3 } from '../geom/types';
 
@@ -169,6 +169,14 @@ export interface PlateSpec {
   bevel?: number;
   /** Enamel the top face inside the bevel. */
   enamel?: string;
+  /**
+   * Stack this many tiers, each `thickness` thick and shrunk about the
+   * outline's centroid by `shrink` more than the one below: a ziggurat.
+   * Holes apply to a flat plate only.
+   */
+  tiers?: number;
+  /** How much smaller each tier is than the one below, as a fraction of the base. */
+  shrink?: number;
 }
 
 /**
@@ -187,6 +195,30 @@ export function plate(spec: PlateSpec): Part {
     { name: 'face', position: [cx, cy, spec.thickness / 2], axis: [0, 0, 1], tangent: [1, 0, 0], bore: spec.bore },
     { name: 'back', position: [cx, cy, -spec.thickness / 2], axis: [0, 0, -1], tangent: [1, 0, 0], bore: spec.bore },
   ];
+
+  const tiers = Math.max(1, Math.floor(spec.tiers ?? 1));
+  if (tiers > 1) {
+    // a stack: each tier the outline scaled toward the centroid, so the steps
+    // keep the shape of the foot the way a ziggurat's terraces do
+    const shrink = spec.shrink ?? 0.2;
+    const stack = [];
+    for (let k = 0; k < tiers; k++) {
+      const f = Math.max(1 - shrink * k, 0.05);
+      stack.push({
+        outline: outline.map(([x, y]): Vec2 => [cx + (x - cx) * f, cy + (y - cy) * f]),
+        thickness: spec.thickness,
+      });
+    }
+    const mesh = extrudeStepped({ tiers: stack, bevel: bevelFor(spec.thickness, spec.bevel), enamelTop: !!spec.enamel });
+    // centred on z like a flat plate, so it sits the same way when placed
+    const total = spec.thickness * tiers;
+    for (let i = 2; i < mesh.positions.length; i += 3) mesh.positions[i] -= total / 2;
+    const stepped: Anchor[] = [
+      { name: 'face', position: [cx, cy, total / 2], axis: [0, 0, 1], tangent: [1, 0, 0] },
+      { name: 'back', position: [cx, cy, -total / 2], axis: [0, 0, -1], tangent: [1, 0, 0] },
+    ];
+    return { name: spec.name ?? 'plate', mesh, bounds: meshBounds(mesh), anchors: stepped, enamel: spec.enamel };
+  }
 
   const mesh = extrude({
     outline, holes,

@@ -127,3 +127,15 @@ describe('plate', () => {
     expect(Array.from(p.mesh.enamel!).some((v) => v > 0.5)).toBe(true);
   });
 });
+
+describe('stepped plate', () => {
+  it('stacks tiers shrinking about the centroid, centred on z like a flat plate', () => {
+    const p = plate({ outline: fanOutline(12), thickness: 1, tiers: 3, shrink: 0.25 });
+    expectWellFormed(p.mesh);
+    const b = boundsOf(p.mesh);
+    expect(b.max[2]).toBeCloseTo(1.5);
+    expect(b.min[2]).toBeCloseTo(-1.5);
+    expect(findAnchor(p, 'face').position[2]).toBeCloseTo(1.5);
+    expect(findAnchor(p, 'back').position[2]).toBeCloseTo(-1.5);
+  });
+});

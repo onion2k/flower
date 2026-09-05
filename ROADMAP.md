@@ -51,8 +51,10 @@ No shader work.
 keystone, scallop, lozenge, plus polygon, roundel, stadium and card) and the
 `plate` builtin with `cut`, `bore` and `enamel` are in; see the `deco` example
 sketch. Outlines are a DSL value kind of their own, with completions. The
-stepped extrude option is not done; a ziggurat is a stacked set of plates
-for now.
+stepped extrude was done later: `plate(..., tiers: n, shrink: f)` stacks
+tiers shrunk about the centroid as one watertight mesh (`extrudeStepped`),
+each tier's tread an annular cap, no hidden faces, engraving continuous
+across the treads.
 
 ### 2. Math curves and surfaces
 

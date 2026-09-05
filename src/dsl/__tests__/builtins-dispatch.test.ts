@@ -507,3 +507,15 @@ describe('glow', () => {
     expect(buildErr('part t = bead(radius: 2, point: 1) glow 2\nform f { place t glow 3 }').message).toMatch(/already glows at 2/);
   });
 });
+
+describe('stepped plate', () => {
+  it('tiers and shrink make a ziggurat of one mesh', () => {
+    const flat = build('part p = plate(sunburst(radius: 12, rays: 8), thickness: 1)\nform f { place p }');
+    const stepped = build('part p = plate(sunburst(radius: 12, rays: 8), thickness: 1, tiers: 3, shrink: 0.2)\nform f { place p }');
+    const a = flat.assembly.placements[0].part.mesh, b = stepped.assembly.placements[0].part.mesh;
+    expect(b.indices.length).toBeGreaterThan(a.indices.length);
+    expect(b.indices.length).toBeLessThan(a.indices.length * 3);
+    const zs = Array.from(b.positions).filter((_, i) => i % 3 === 2);
+    expect(Math.max(...zs) - Math.min(...zs)).toBeCloseTo(3);
+  });
+});

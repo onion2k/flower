@@ -435,13 +435,14 @@ form frame {
 # roundel, stadium or card — and stacks face to back the way a disc does.
 # The motifs are drawn once; the symmetries do the repeating. "engraved rays"
 # cuts sunray lines into a plate, radiating from its outline's origin.
+# tiers: n stacks a plate as a ziggurat, each tier shrunk by "shrink".
 material gold satin
 
 part burst = plate(sunburst(radius: 22, rays: 16, inner: 0.7, tip: 0.25), thickness: 1.2) engraved rays(scale: 0.9, depth: 0.04)
 part field = plate(roundel(radius: 15), thickness: 1, enamel: black) in platinum polished
 part wing  = plate(fan(radius: 11, spread: 150deg, blades: 7, inner: 3.4), thickness: 1) in platinum polished engraved rays(scale: 0.6, depth: 0.04)
 part rib   = plate(chevron(width: 6, rise: 2.2, bar: 1.2), thickness: 0.8)
-part drop  = plate(ziggurat(width: 12, height: 9, steps: 4, top: 4), thickness: 1, enamel: black) in platinum polished
+part drop  = plate(ziggurat(width: 12, height: 9, steps: 4, top: 4), thickness: 0.6, tiers: 2, shrink: 0.18, enamel: black) in platinum polished
 part mount = setting(width: 6, style: bezel, height: 1.8) in platinum polished
 part stone = gem(cut: step, width: 6) in onyx
 

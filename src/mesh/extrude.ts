@@ -1,5 +1,6 @@
 import earcut from 'earcut';
 import type { Vec2 } from '../geom/types';
+import { ensureWinding } from '../geom/outline';
 import { MeshBuilder, type Mesh } from './types';
 
 export interface ExtrudeOptions {
@@ -54,39 +55,9 @@ export function extrude(opts: ExtrudeOptions): Mesh {
 
   // --- caps, from the inset outline so the bevel has somewhere to sit ---
   for (const top of [true, false]) {
-    const z = top ? hz : -hz;
-    const nz = top ? 1 : -1;
-    const flat: number[] = [];
-    const holeIndices: number[] = [];
-    for (let li = 0; li < insets.length; li++) {
-      if (li > 0) holeIndices.push(flat.length / 2);
-      for (const [x, y] of insets[li]) flat.push(x, y);
-    }
-    let tri = earcut(flat, holeIndices, 2);
-    let points = flat;
-    // A cap always gets some interior points, however flat it is. Per-vertex
-    // shading — baked occlusion, curvature wear — interpolates across whatever
-    // triangles exist, and a fan of slivers from rim to rim smears an edge value
-    // over the whole face. Twenty or so points across the span is enough, and
-    // still reaches the bars of a pierced leaf.
-    const spacing = Math.min(opts.maxCapEdge ?? Infinity, Math.max(span.width, span.height) * 0.05);
-    if (Number.isFinite(spacing) && spacing > 0) {
-      ({ points, tris: tri } = tessellateCap(points, tri, insets, spacing));
-    }
-    const base = mb.vertexCount;
-    for (let i = 0; i < points.length; i += 2) {
-      const x = points[i], y = points[i + 1];
-      mb.vertex(x, y, z, 0, 0, nz, (x - span.minX) / span.width, (y - span.minY) / span.height);
-    }
-    if (top) topCap = [base, mb.vertexCount];
-    else bottomCap = [base, mb.vertexCount];
-    for (let i = 0; i < tri.length; i += 3) {
-      // Every triangle is kept, including the occasional sliver earcut leaves
-      // where an outline is nearly collinear. They are invisible, but they carry
-      // edges: dropping them tears real holes in the cap around each piercing.
-      if (top) mb.triangle(base + tri[i], base + tri[i + 1], base + tri[i + 2]);
-      else mb.triangle(base + tri[i], base + tri[i + 2], base + tri[i + 1]);
-    }
+    const range = cap(mb, insets, top ? hz : -hz, top, span, opts.maxCapEdge);
+    if (top) topCap = range;
+    else bottomCap = range;
   }
 
   // --- bevel bands and walls, one ring pair per loop ---
@@ -119,6 +90,127 @@ export function extrude(opts: ExtrudeOptions): Mesh {
   if (opts.enamelTop) {
     mesh.enamel = new Float32Array(mesh.positions.length / 3);
     mesh.enamel.fill(1, topCap[0], topCap[1]);
+  }
+  return mesh;
+}
+
+/**
+ * One cap: the loops triangulated with earcut, seeded with interior points,
+ * at height z facing up or down. Returns the vertex range it added.
+ */
+function cap(
+  mb: MeshBuilder, loops: Vec2[][], z: number, top: boolean,
+  span: ReturnType<typeof boundsOf>, maxCapEdge?: number,
+): [number, number] {
+  const nz = top ? 1 : -1;
+  const flat: number[] = [];
+  const holeIndices: number[] = [];
+  for (let li = 0; li < loops.length; li++) {
+    if (li > 0) holeIndices.push(flat.length / 2);
+    for (const [x, y] of loops[li]) flat.push(x, y);
+  }
+  let tri = earcut(flat, holeIndices, 2);
+  let points = flat;
+  // A cap always gets some interior points, however flat it is. Per-vertex
+  // shading — baked occlusion, curvature wear — interpolates across whatever
+  // triangles exist, and a fan of slivers from rim to rim smears an edge value
+  // over the whole face. Twenty or so points across the span is enough, and
+  // still reaches the bars of a pierced leaf.
+  const spacing = Math.min(maxCapEdge ?? Infinity, Math.max(span.width, span.height) * 0.05);
+  if (Number.isFinite(spacing) && spacing > 0) {
+    ({ points, tris: tri } = tessellateCap(points, tri, loops, spacing));
+  }
+  const base = mb.vertexCount;
+  for (let i = 0; i < points.length; i += 2) {
+    const x = points[i], y = points[i + 1];
+    mb.vertex(x, y, z, 0, 0, nz, (x - span.minX) / span.width, (y - span.minY) / span.height);
+  }
+  for (let i = 0; i < tri.length; i += 3) {
+    // Every triangle is kept, including the occasional sliver earcut leaves
+    // where an outline is nearly collinear. They are invisible, but they carry
+    // edges: dropping them tears real holes in the cap around each piercing.
+    if (top) mb.triangle(base + tri[i], base + tri[i + 1], base + tri[i + 2]);
+    else mb.triangle(base + tri[i], base + tri[i + 2], base + tri[i + 1]);
+  }
+  return [base, mb.vertexCount];
+}
+
+export interface Tier {
+  /** Closed outer boundary, counter-clockwise; must lie within the tier below. */
+  outline: Vec2[];
+  thickness: number;
+}
+
+export interface SteppedOptions {
+  /** Tiers from the foot up. */
+  tiers: Tier[];
+  /** Edge break on every tier's top edge and the foot's bottom edge. */
+  bevel?: number;
+  maxCapEdge?: number;
+  /** Enamel the treads: every tier's top face inside its bevel. */
+  enamelTop?: boolean;
+}
+
+/**
+ * A stepped plate: tiers of outlines stacked, each smaller than the one
+ * below — the ziggurat of the deco vocabulary — built as one mesh with no
+ * hidden faces. Each tier is its outer walls and a top bevel; its cap is the
+ * tread, the ring the tier above leaves uncovered, and the top tier's cap is
+ * whole. A tier's foot meets the tread below at a sharp inside corner, the
+ * way a cast or machined step does, so it has no lower bevel.
+ *
+ * The foot sits at z = 0 and the stack rises along +Z.
+ */
+export function extrudeStepped(opts: SteppedOptions): Mesh {
+  const tiers = opts.tiers;
+  if (!tiers.length) throw new Error('a stepped plate needs at least one tier');
+  const mb = new MeshBuilder();
+  const span = boundsOf(tiers[0].outline);
+  const treads: Array<[number, number]> = [];
+  let bottomCap: [number, number] = [0, 0];
+
+  let z = 0;
+  for (let k = 0; k < tiers.length; k++) {
+    const tier = tiers[k];
+    const loop = ensureWinding(tier.outline, true);
+    const bevel = Math.min(opts.bevel ?? 0, tier.thickness / 2 - 1e-4);
+    const top = z + tier.thickness;
+    const insetPts = bevel > 0 ? insetLoop(loop, bevel) : loop;
+    const outward = outwardNormals(loop);
+    const perimeter = perimeterParam(loop);
+
+    const mid = z + tier.thickness / 2;
+    const half = tier.thickness / 2;
+    // the foot: a bevelled bottom cap on the first tier only
+    if (k === 0) {
+      bottomCap = cap(mb, [insetPts], z, false, span, opts.maxCapEdge);
+      if (bevel > 0) band(mb, insetPts, loop, half, half - bevel, outward, perimeter, -1, 3, mid);
+    }
+    // the wall, from the foot (or the tread below) up to the top bevel
+    const wallBottom = k === 0 && bevel > 0 ? z + bevel : z;
+    wall(mb, loop, top - bevel, wallBottom, outward, perimeter);
+    if (bevel > 0) band(mb, insetPts, loop, half, half - bevel, outward, perimeter, 1, 3, mid);
+
+    // the tread: this tier's top inside its bevel, less the tier above
+    const above = tiers[k + 1];
+    const holes = above ? [ensureWinding(above.outline, false)] : [];
+    treads.push(cap(mb, [insetPts, ...holes], top, true, span, opts.maxCapEdge));
+    z = top;
+  }
+
+  const mesh = mb.build();
+  mesh.uvSpan = [span.minX, span.minY, span.width, span.height];
+  mesh.engrave = new Float32Array(mesh.positions.length / 3 * 2);
+  for (let i = 0; i < mesh.positions.length / 3; i++) {
+    mesh.engrave[i * 2] = span.minX + mesh.uvs[i * 2] * span.width;
+    mesh.engrave[i * 2 + 1] = span.minY + mesh.uvs[i * 2 + 1] * span.height;
+  }
+  mesh.cap = new Float32Array(mesh.positions.length / 3);
+  for (const [a, b] of treads) mesh.cap.fill(1, a, b);
+  mesh.cap.fill(-1, bottomCap[0], bottomCap[1]);
+  if (opts.enamelTop) {
+    mesh.enamel = new Float32Array(mesh.positions.length / 3);
+    for (const [a, b] of treads) mesh.enamel.fill(1, a, b);
   }
   return mesh;
 }
@@ -432,13 +524,14 @@ function band(
   perimeter: number[],
   dir: number,
   steps = 3,
+  zMid = 0,
 ) {
   const n = cap.length;
   const base = mb.vertexCount;
   for (let k = 0; k <= steps; k++) {
     const theta = (k / steps) * (Math.PI / 2);
     const s = Math.sin(theta), c = Math.cos(theta);
-    const z = dir * (inner + (hz - inner) * c);
+    const z = zMid + dir * (inner + (hz - inner) * c);
     for (let i = 0; i < n; i++) {
       const [ox, oy] = outward[i];
       const x = cap[i][0] + (wallLoop[i][0] - cap[i][0]) * s;
