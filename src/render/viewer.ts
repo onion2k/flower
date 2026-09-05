@@ -17,6 +17,7 @@ import { invert, transformDirection, transformPoint } from '../geom/transform';
 import { computeWear } from '../mesh/wear';
 import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
+import { CushionBake, CUSHION_SIZE } from './cushion';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey } from './glyphs';
 import { bakeEnvironment, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
@@ -182,14 +183,16 @@ export const tableNames: TableName[] = ['matte', 'oak', 'walnut', 'slate', 'line
  * The ground shader's surfaces: which one, how glossy, the size of its
  * pattern in mm, and for a cloth how far it sags under the piece, in mm.
  */
-const TABLES: Record<TableName, { kind: number; roughness: number; scale: number; sag?: number }> = {
+const TABLES: Record<TableName, { kind: number; roughness: number; scale: number; cushion?: { puff: number; slope: number; size: number } }> = {
   matte: { kind: 0, roughness: 0.9, scale: 1 },
   oak: { kind: 1, roughness: 0.35, scale: 60 },
   walnut: { kind: 2, roughness: 0.35, scale: 75 },
   slate: { kind: 3, roughness: 0.55, scale: 90 },
   linen: { kind: 4, roughness: 0.95, scale: 1.8 },
-  velvet: { kind: 5, roughness: 0.8, scale: 1.2, sag: 1.4 },
-  silk: { kind: 6, roughness: 0.3, scale: 0.4, sag: 0.7 },
+  // the cloths are cushions: a plump pad the piece sinks into. Velvet is
+  // thick and holds its shape; silk is thin over its stuffing and drapes wider
+  velvet: { kind: 5, roughness: 0.8, scale: 1.2, cushion: { puff: 6, slope: 0.5, size: 0.64 } },
+  silk: { kind: 6, roughness: 0.3, scale: 0.4, cushion: { puff: 5, slope: 0.35, size: 0.64 } },
 };
 
 export class Viewer {
@@ -306,6 +309,12 @@ export class Viewer {
   private shadowPipeline: GPURenderPipeline;
   /** The frame uniform as the key sees it: only viewProj differs. */
   private shadowFrameBuffer: GPUBuffer;
+  private cushion: CushionBake;
+  private cushionDepth: GPUTexture;
+  private cushionDepthView: GPUTextureView;
+  private cushionFrameBuffer: GPUBuffer;
+  private cushionFrameBind: GPUBindGroup | null = null;
+  private cushionDirty = true;
   private shadowFrameBind: GPUBindGroup | null = null;
   private lightViewProj = new Float32Array(16);
   private sceneCentre: Vec3 = [0, 0, 0];
@@ -371,6 +380,8 @@ export class Viewer {
       entries: [
         { binding: 0, visibility: both, buffer: { type: 'uniform' } },
         { binding: 1, visibility: GPUShaderStage.FRAGMENT, texture: {} },
+        // the cushion's height, read by the vertex stage to shape the mesh and by the fragment for its normal
+        { binding: 2, visibility: both, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
 
@@ -422,6 +433,14 @@ export class Viewer {
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
     });
     this.shadowFrameBuffer = device.createBuffer({ label: 'shadow frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    // the piece seen straight down, for the cushion to take its shape from
+    this.cushionDepth = device.createTexture({
+      size: [CUSHION_SIZE, CUSHION_SIZE], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'cushion depth',
+    });
+    this.cushionDepthView = this.cushionDepth.createView();
+    this.cushionFrameBuffer = device.createBuffer({ label: 'cushion frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.cushion = new CushionBake(ctx);
 
     const pbr = shader(device, PBR_WGSL, 'pbr');
     this.pbrPipeline = device.createRenderPipeline({
@@ -483,9 +502,10 @@ export class Viewer {
     this.lightsBuffer = device.createBuffer({ label: 'lights', size: LIGHTS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.lightsBuffer, 0, new Uint32Array([0, 0, 0, 0]));
     this.dummyLookup = emptyBuffer(device, 8, GPUBufferUsage.STORAGE, 'no occlusion');
-    this.groundBuffer = device.createBuffer({ label: 'ground', size: 64, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.groundBuffer = device.createBuffer({ label: 'ground', size: 80, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
-    const disc = unitDisc(96);
+    // a grid rather than a fan, so a cushion has vertices to rise through
+    const disc = unitGrid(256);
     this.discPosition = bufferFrom(device, disc.positions, GPUBufferUsage.VERTEX, 'disc');
     this.discIndex = bufferFrom(device, disc.indices, GPUBufferUsage.INDEX, 'disc index');
     this.discCount = disc.indices.length;
@@ -578,7 +598,13 @@ export class Viewer {
 
   private writeTable() {
     const t = TABLES[this.table];
-    this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([t.kind, t.roughness, t.scale, t.sag ?? 0]));
+    const c = t.cushion;
+    this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([
+      t.kind, t.roughness, t.scale, c ? c.puff : 0,
+      c ? c.size : 1, c ? c.slope : 0, 0, 0,
+    ]));
+    this.cushionDirty = true;
+    this.dirty = true;
   }
 
   /** The canvas's own colour behind the piece, as sRGB 0..1. The ground disc fades into it. */
@@ -910,6 +936,32 @@ export class Viewer {
       }
       shadowPass.end();
     }
+    const cushionShape = TABLES[this.table].cushion;
+    if (this.cushionDirty && cushionShape && this.groups.length && this.occlusion && this.cushionFrameBind) {
+      this.cushionDirty = false;
+      // the piece from straight above, over the ground disc
+      const cf = new Float32Array(frame);
+      const down = new Float32Array(16);
+      orthoFromDirection(down, [0, 0, 1], this.occlusion.groundCentre, this.occlusion.groundRadius);
+      cf.set(down, 0);
+      device.queue.writeBuffer(this.cushionFrameBuffer, 0, cf);
+      const downPass = encoder.beginRenderPass({
+        label: 'cushion depth',
+        colorAttachments: [],
+        depthStencilAttachment: { view: this.cushionDepthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      });
+      downPass.setPipeline(this.shadowPipeline);
+      downPass.setBindGroup(0, this.cushionFrameBind);
+      for (const g of this.groups) {
+        downPass.setVertexBuffer(0, g.position);
+        downPass.setVertexBuffer(1, g.instance);
+        downPass.setIndexBuffer(g.index, 'uint32');
+        downPass.drawIndexed(g.indexCount, g.instanceCount);
+      }
+      downPass.end();
+      this.cushion.bake(encoder, this.cushionDepthView, this.occlusion.groundCentre, this.occlusion.groundRadius, cushionShape);
+    }
+
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
     pass.setBindGroup(0, this.frameBind);
 
@@ -1015,6 +1067,7 @@ export class Viewer {
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
     this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView) });
+    this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView) });
   }
 
   /**
@@ -1188,8 +1241,10 @@ export class Viewer {
       entries: [
         { binding: 0, resource: { buffer: this.groundBuffer } },
         { binding: 1, resource: occ.ground.createView() },
+        { binding: 2, resource: this.cushion.height.createView() },
       ],
     });
+    this.cushionDirty = true;
   }
 
   private clearOcclusion() {
@@ -1273,18 +1328,25 @@ function rayMesh(o: Vec3, d: Vec3, mesh: PartMesh, limit: number): number | null
 }
 
 /** A unit disc in the XY plane, wound counter-clockwise seen from +Z. */
-function unitDisc(segments: number) {
-  const positions = new Float32Array((segments + 1) * 3);
-  for (let i = 0; i < segments; i++) {
-    const a = (i / segments) * Math.PI * 2;
-    positions[(i + 1) * 3] = Math.cos(a);
-    positions[(i + 1) * 3 + 1] = Math.sin(a);
+/** A square grid over [-1, 1]², (n + 1)² vertices, wound counter-clockwise seen from +Z. */
+function unitGrid(n: number) {
+  const positions = new Float32Array((n + 1) * (n + 1) * 3);
+  for (let j = 0; j <= n; j++) {
+    for (let i = 0; i <= n; i++) {
+      const o = (j * (n + 1) + i) * 3;
+      positions[o] = (i / n) * 2 - 1;
+      positions[o + 1] = (j / n) * 2 - 1;
+    }
   }
-  const indices = new Uint32Array(segments * 3);
-  for (let i = 0; i < segments; i++) {
-    indices[i * 3] = 0;
-    indices[i * 3 + 1] = i + 1;
-    indices[i * 3 + 2] = ((i + 1) % segments) + 1;
+  const indices = new Uint32Array(n * n * 6);
+  let k = 0;
+  for (let j = 0; j < n; j++) {
+    for (let i = 0; i < n; i++) {
+      const a = j * (n + 1) + i, b = a + 1, c = a + n + 1, d = c + 1;
+      indices[k++] = a; indices[k++] = b; indices[k++] = d;
+      indices[k++] = a; indices[k++] = d; indices[k++] = c;
+    }
   }
   return { positions, indices };
 }
+

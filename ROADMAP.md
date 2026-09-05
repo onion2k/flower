@@ -221,6 +221,17 @@ over it, and the cloth's normal is tilted by the gradient of that footprint
 with the floor of the dip self-shaded. It is a tilt, not a displacement, so
 the cloth never rises up the side of a part.
 
+**Revised:** that read as a flat rigid plane, so the cloths are now cushions
+(`render/cushion.ts`). The ground is a 256² grid; the piece is rendered
+straight down into a depth map; four min-plus sweeps turn that into a
+draped "cone" (the cloth no higher than any part's underside, nor higher
+than that plus a slope times the distance away); the result is capped by a
+plump rounded-square dome and written to a height map the ground's vertex
+shader displaces by and its fragment shader takes normals from. A piece
+sinks into the pillow by the cushion's puff. Outside the rim the ground
+shades as the matte table. Baked whenever the scene, occlusion or table
+changes; ~5 compute passes over 512², cheap.
+
 ## Infrastructure the list implies, in order
 
 1. **Generic outline and `plate` builtin** in the DSL. Unblocks 1, and makes

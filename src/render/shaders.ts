@@ -1037,9 +1037,35 @@ struct Ground {
   table: f32,          // which surface: 0 matte, 1 oak, 2 walnut, 3 slate, 4 linen, 5 velvet, 6 silk
   roughness: f32,
   scale: f32,          // pattern size, mm per feature
-  sag: f32,            // how far a cloth sinks under the piece, mm; 0 for anything hard
+  puff: f32,           // how proud a cushion stands, mm; 0 for anything hard and flat
+  cushionSize: f32,    // the cushion's half-side, as a fraction of the disc's radius
+  slope: f32,
+  _pad4: vec2f,
 };
 @group(1) @binding(0) var<uniform> ground: Ground;
+@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+
+/** The cushion's height at a point of the disc, bilinear over the baked map. */
+fn heightAt(uv: vec2f) -> f32 {
+  let s = f32(textureDimensions(cushionHeight).x);
+  let p = clamp(uv * s - 0.5, vec2f(0.0), vec2f(s - 1.001));
+  let i = vec2i(floor(p));
+  let f = fract(p);
+  let h00 = textureLoad(cushionHeight, i, 0).r;
+  let h10 = textureLoad(cushionHeight, i + vec2i(1, 0), 0).r;
+  let h01 = textureLoad(cushionHeight, i + vec2i(0, 1), 0).r;
+  let h11 = textureLoad(cushionHeight, i + vec2i(1, 1), 0).r;
+  return mix(mix(h00, h10, f.x), mix(h01, h11, f.x), f.y);
+}
+
+/** The cushion's own dome, without the piece pressed into it. */
+fn domeAt(local: vec2f) -> f32 {
+  let q = abs(local) / ground.cushionSize;
+  let e = pow(pow(q.x, 4.0) + pow(q.y, 4.0), 0.25);
+  let shoulder = 1.0 - smoothstep(0.45, 1.0, e);
+  let crown = 0.8 + 0.2 * max(0.0, 1.0 - e * e);
+  return ground.puff * shoulder * crown;
+}
 
 /**
  * What the table is at a point. sheen is a cloth's fuzz colour: velvet
@@ -1141,7 +1167,7 @@ fn silkSurface(p: vec2f) -> Surface {
   let foot = clamp(fwidth(p.y / s) * 2.0, 0.0, 1.0);
   let rib = mix(thread, 0.5, foot);
   let slub = noise3(vec3f(p.x * 0.05, p.y * 0.3, 5.0));
-  let albedo = vec3f(0.58, 0.52, 0.40) * mix(0.94, 1.02, rib) * mix(0.96, 1.04, slub);
+  let albedo = vec3f(0.48, 0.43, 0.33) * mix(0.94, 1.02, rib) * mix(0.96, 1.04, slub);
   let n = normalize(vec3f(0.0, (rib - 0.5) * 0.1 * (1.0 - foot), 1.0));
   return Surface(albedo, ground.roughness, n, vec3f(0.5, 0.48, 0.42), 0.75);
 }
@@ -1165,26 +1191,6 @@ fn tableSurface(p: vec2f) -> Surface {
   return silkSurface(p);
 }
 
-/**
- * Where a cloth sinks under the piece. The occlusion bake already knows how
- * much of the sky each point of the table can see; where the piece sits on
- * or near the cloth that is little, and the cloth gives there. The slope of
- * that dip is what shows — the table is one flat disc, so the dip is a tilt
- * of the normal rather than a real displacement.
- */
-fn clothSag(uv: vec2f, sag: f32) -> vec3f {
-  let step = 1.6 / (2.0 * ground.radius);     // 1.6 mm, in the texture's own units
-  let px = pressAt(uv + vec2f(step, 0.0)) - pressAt(uv - vec2f(step, 0.0));
-  let py = pressAt(uv + vec2f(0.0, step)) - pressAt(uv - vec2f(0.0, step));
-  // the pressure rises toward the piece; the cloth's surface falls toward it
-  let slope = sag / 1.4;
-  return normalize(vec3f(-px * slope, -py * slope, 1.0));
-}
-fn pressAt(uv: vec2f) -> f32 {
-  let acc = textureSampleLevel(shadow, linearSampler, uv, 0.0).rg;
-  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0);
-  return smoothstep(0.35, 0.95, 1.0 - ao);
-}
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 
 struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
@@ -1192,7 +1198,9 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
 @vertex fn vsMain(@location(0) position: vec3f) -> VsOut {
   var out: VsOut;
   out.local = position.xy;
-  let world = ground.centre + vec3f(position.xy * ground.radius, 0.0);
+  // a cushion rises out of the disc by its baked height
+  let lift = select(0.0, heightAt(position.xy * 0.5 + 0.5), ground.puff > 0.0);
+  let world = ground.centre + vec3f(position.xy * ground.radius, lift);
   out.world = world;
   out.clip = frame.viewProj * vec4f(world, 1.0);
   return out;
@@ -1208,13 +1216,22 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   let surface = tableSurface(in.world.xy);
   var n = surface.normal;
   var dipShade = 1.0;
-  if (ground.sag > 0.0) {
-    // a cloth gives under the piece: its normal tilts into the dip, and the
-    // floor of the dip is a fold that shades itself
+  var cushion = 1.0;
+  if (ground.puff > 0.0) {
+    // the cushion's normal from its height's slope, and the cloth's own
+    // fine normal laid over it; where the piece has pressed the cloth down
+    // out of its dome it sits in a fold, and shades itself
     let uv = in.local * 0.5 + 0.5;
-    let dip = clothSag(uv, ground.sag);
-    n = normalize(vec3f(n.xy + dip.xy, n.z * dip.z));
-    dipShade = 1.0 - 0.4 * pressAt(uv);
+    let step = 1.0 / f32(textureDimensions(cushionHeight).x);
+    let mm = 2.0 * ground.radius * step;
+    let dx = (heightAt(uv + vec2f(step, 0.0)) - heightAt(uv - vec2f(step, 0.0))) / (2.0 * mm);
+    let dy = (heightAt(uv + vec2f(0.0, step)) - heightAt(uv - vec2f(0.0, step))) / (2.0 * mm);
+    let slopeN = normalize(vec3f(-dx, -dy, 1.0));
+    n = normalize(vec3f(slopeN.xy + n.xy * 0.6, slopeN.z));
+    let pressed = clamp((domeAt(in.local) - heightAt(uv)) / max(ground.puff, 0.1), 0.0, 1.0);
+    dipShade = 1.0 - 0.45 * pressed;
+    // beyond the cushion's rim there is only the table under it
+    cushion = smoothstep(0.0, 0.15, domeAt(in.local) / max(ground.puff, 0.1));
   }
   let v = normalize(frame.cameraPos - in.world);
   let ndv = max(dot(n, v), 1e-3);
@@ -1256,7 +1273,13 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   }
   // the piece's own lights pool on the table under it
   let local = localLights(n, v, in.world, vec3f(0.04), rough, surface.albedo);
-  let lit = (diffuse * (1.0 - fresnel) + specular + local) * frame.exposure;
+  var lit = (diffuse * (1.0 - fresnel) + specular + local) * frame.exposure;
+  if (cushion < 1.0) {
+    // the table the cushion sits on: a dark matte, lit as the matte table is
+    let matte = max(ground.background, vec3f(0.04, 0.04, 0.043));
+    let flat = matte * (env(spin * vec3f(0.0, 0.0, 1.0), frame.maxLod) * ao + keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyLit) * frame.exposure;
+    lit = mix(flat, lit, cushion);
+  }
   let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
   var colour = mix(ground.background, lit, fade);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
