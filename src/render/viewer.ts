@@ -387,6 +387,11 @@ export class Viewer {
   private anchorPosition: GPUBuffer | null = null;
   private anchorColour: GPUBuffer | null = null;
   private anchorCount = 0;
+  /** The focal plane helper: lines rebuilt from the camera each frame while it is shown. */
+  private focusHelper = false;
+  private helperPosition: GPUBuffer | null = null;
+  private helperColour: GPUBuffer | null = null;
+  private helperCount = 0;
 
   static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<Viewer> {
     const canvas = document.createElement('canvas');
@@ -781,6 +786,65 @@ export class Viewer {
     });
     this.dirty = true;
   }
+  /** Draw the plane in focus, and the band either side of it that stays sharp. */
+  setFocusHelper(on: boolean) { this.focusHelper = on; this.dirty = true; }
+
+  /**
+   * The helper's lines: a square grid on the plane of focus, sized to the
+   * piece and centred on the line of sight, cut wherever the piece passes
+   * through it; and a fainter square at the near and far edges of the sharp
+   * band. Squares, not the frustum: the frame's own edge drawn again tells
+   * nothing, where a card held up at the focus distance shows at once what
+   * is in front of it and what behind.
+   */
+  private buildFocusHelper() {
+    const cam = this.camera;
+    const f = this.controls.distance * this.focusScale;
+    const fwd = [cam.target[0] - cam.position[0], cam.target[1] - cam.position[1], cam.target[2] - cam.position[2]];
+    const len = Math.hypot(fwd[0], fwd[1], fwd[2]) || 1;
+    for (let i = 0; i < 3; i++) fwd[i] /= len;
+    const right = cam.right, up = cam.up;
+    const half = Math.max(this.sceneRadius / 1.9 * 0.85, 1);
+    const position: number[] = [], colour: number[] = [];
+    const at = (d: number, x: number, y: number) => [
+      cam.position[0] + fwd[0] * d + right[0] * x + up[0] * y,
+      cam.position[1] + fwd[1] * d + right[1] * x + up[1] * y,
+      cam.position[2] + fwd[2] * d + right[2] * x + up[2] * y,
+    ];
+    const line = (a: number[], b: number[], c: [number, number, number]) => {
+      position.push(...a, ...b);
+      colour.push(...c, ...c);
+    };
+    const square = (d: number, h: number, c: [number, number, number], grid: number) => {
+      line(at(d, -h, -h), at(d, h, -h), c); line(at(d, h, -h), at(d, h, h), c);
+      line(at(d, h, h), at(d, -h, h), c); line(at(d, -h, h), at(d, -h, -h), c);
+      const dim: [number, number, number] = [c[0] * 0.45, c[1] * 0.45, c[2] * 0.45];
+      for (let i = 1; i < grid; i++) {
+        const t = -h + (2 * h * i) / grid;
+        line(at(d, t, -h), at(d, t, h), dim);
+        line(at(d, -h, t), at(d, h, t), dim);
+      }
+    };
+    square(f, half, [1, 0.72, 0.15], 6);
+    // the sharp band: where the circle of confusion is still under two pixels
+    if (this.dof > 0) {
+      const maxRadius = Math.max(6, Math.min(this.post.renderWidth, this.post.renderHeight) * 0.03);
+      const rel = 2 / (this.dof * maxRadius);
+      square(f * (1 + rel), half * 0.92, [0.5, 0.38, 0.12], 1);
+      square(Math.max(f * (1 - rel / 1.5), cam.near * 2), half * 0.92, [0.5, 0.38, 0.12], 1);
+    }
+    const { device } = this.ctx;
+    const bytes = position.length * 4;
+    if (!this.helperPosition || this.helperPosition.size < bytes) {
+      this.helperPosition?.destroy(); this.helperColour?.destroy();
+      this.helperPosition = device.createBuffer({ label: 'focus helper', size: bytes, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+      this.helperColour = device.createBuffer({ label: 'focus helper colours', size: bytes, usage: GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST });
+    }
+    device.queue.writeBuffer(this.helperPosition, 0, new Float32Array(position));
+    device.queue.writeBuffer(this.helperColour!, 0, new Float32Array(colour));
+    this.helperCount = position.length / 3;
+  }
+
   /** Where the camera is, for a panel to show: angles in radians, distance in world units. */
   viewState() {
     return {
@@ -1160,6 +1224,7 @@ export class Viewer {
     this.controls.update();
     this.camera.update();
     if (!this.frameBind) return;
+    if (this.focusHelper) this.buildFocusHelper();
     if (this.bakeQueued) {
       this.bakeQueued = false;
       this.bakeOcclusion();
@@ -1395,6 +1460,12 @@ export class Viewer {
       pass.setVertexBuffer(0, this.anchorPosition);
       pass.setVertexBuffer(1, this.anchorColour);
       pass.draw(this.anchorCount);
+    }
+    if (this.focusHelper && this.helperCount && this.helperPosition && this.helperColour) {
+      pass.setPipeline(this.anchorPipeline);
+      pass.setVertexBuffer(0, this.helperPosition);
+      pass.setVertexBuffer(1, this.helperColour);
+      pass.draw(this.helperCount);
     }
     pass.end();
 

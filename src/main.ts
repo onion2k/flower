@@ -107,13 +107,14 @@ const state = {
   shiftY: 0,
   debug: 0,
   showAnchors: false,
+  showFocus: false,
   renderScale: 1,
   quality: 'draft' as Quality,
 };
 
 let framed = '';
 
-function toggle(label: string, key: 'showAnchors', onChange: () => void) {
+function toggle(label: string, key: 'showAnchors' | 'showFocus', onChange: () => void) {
   const wrap = document.createElement('label');
   wrap.className = 'check';
   const input = document.createElement('input');
@@ -529,6 +530,7 @@ cameraSet.append(
     state.focus = v;
     viewer.setDepthOfField(state.dof, state.focus);
   }),
+  toggle('show focal plane', 'showFocus', () => viewer.setFocusHelper(state.showFocus)),
 );
 
 const viewSet = document.createElement('fieldset');

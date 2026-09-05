@@ -1707,12 +1707,15 @@ struct PrepassOut { @builtin(position) @invariant clip: vec4f };
 
 export const ANCHOR_WGSL = `
 ${FRAME_STRUCT}
-struct VsOut { @builtin(position) clip: vec4f, @location(0) colour: vec3f };
+struct VsOut { @builtin(position) clip: vec4f, @location(0) colour: vec3f, @location(1) world: vec3f };
 @vertex fn vsMain(@location(0) position: vec3f, @location(1) colour: vec3f) -> VsOut {
   var out: VsOut;
   out.clip = frame.viewProj * vec4f(position, 1.0);
   out.colour = colour;
+  out.world = position;
   return out;
 }
-@fragment fn fsMain(in: VsOut) -> @location(0) vec4f { return vec4f(in.colour, 1.0); }
+// alpha carries the distance to the eye, as the piece's does, so the depth
+// of field blurs a line by where it stands rather than smearing every one
+@fragment fn fsMain(in: VsOut) -> @location(0) vec4f { return vec4f(in.colour, length(frame.cameraPos - in.world)); }
 `;

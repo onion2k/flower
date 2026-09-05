@@ -410,7 +410,12 @@ field and focus that were under View. The tracer's ray generation and the
 contact occlusion's depth reconstruction both take the shift; roll comes
 through the view matrix, so everything downstream has it for free. Camera
 rays that miss now return the page colour in the tracer too, so the two
-paths frame and backdrop alike.
+paths frame and backdrop alike. A **focal plane helper** (a toggle in the
+same panel) draws a gridded square at the focus distance, sized to the
+piece and cut wherever the piece passes through it, with a fainter square
+at each edge of the sharp band; the line shader now writes distance in
+alpha, so the depth of field treats helpers and anchors as things at a
+distance rather than smearing them.
 
 ### Open, from the second phase
 
