@@ -19,7 +19,7 @@ import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
 import { CushionBake, CUSHION_SIZE } from './cushion';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey } from './glyphs';
-import { bakeEnvironment, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
+import { bakeEnvironment, filterCube, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
@@ -32,7 +32,10 @@ const IDENTITY = new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 
 const MATERIAL_STRIDE = 256;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 256;
-const FRAME_SIZE = 224;
+const FRAME_SIZE = 256;
+/** The reflection probe: face size and prefilter levels. */
+const PROBE_SIZE = 256;
+const PROBE_MIPS = 6;
 const MAX_LIGHTS = 48;
 /** Lights beyond this many cast no shadow; the first ones get a cube each. */
 const MAX_LOCAL_SHADOWS = 32;
@@ -259,6 +262,20 @@ export class Viewer {
   private faceFrames: GPUBuffer[] = [];
   private faceBinds: GPUBindGroup[] = [];
   private localShadowDirty = false;
+  /** The reflection probe: the lit piece and table from their centre, drawn then filtered like the sky. */
+  private probeRaw: GPUTexture;
+  private probeBackground: GPUTexture;
+  private probeSpecular: GPUTexture;
+  private probeDepth: GPUTexture;
+  private probeView: GPUTextureView;
+  private dummyProbeView: GPUTextureView;
+  private probeFrames: GPUBuffer[] = [];
+  private probeBinds: GPUBindGroup[] = [];
+  private probeDirty = true;
+  private probeReady = false;
+  private prepassProbePipeline: GPURenderPipeline;
+  private pbrProbePipeline: GPURenderPipeline;
+  private groundProbePipeline: GPURenderPipeline;
   /** The lights as last written: where each is, and which group it belongs to (not shadowed by itself). */
   private lightList: Array<{ position: [number, number, number]; group: number }> = [];
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
@@ -381,6 +398,7 @@ export class Viewer {
         { binding: 6, visibility: both, sampler: { type: 'comparison' } },
         { binding: 7, visibility: both, buffer: { type: 'uniform' } },
         { binding: 8, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
+        { binding: 9, visibility: both, texture: { viewDimension: 'cube' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -414,7 +432,7 @@ export class Viewer {
       attributes: [4, 5, 6, 7].map((loc, k) => ({ shaderLocation: loc, offset: k * 16, format: 'float32x4' as GPUVertexFormat })),
     };
     const prepass = shader(device, PREPASS_WGSL, 'prepass');
-    this.prepassPipeline = device.createRenderPipeline({
+    const prepassPipelineDesc = (ms: GPUMultisampleState): GPURenderPipelineDescriptor => ({
       label: 'prepass',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
       vertex: {
@@ -424,8 +442,10 @@ export class Viewer {
       fragment: { module: prepass, entryPoint: 'fsMain', targets: [{ format: this.post.colourFormat, writeMask: 0 }] },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: depth(true),
-      multisample,
+      multisample: ms,
     });
+    this.prepassPipeline = device.createRenderPipeline(prepassPipelineDesc(multisample));
+    this.prepassProbePipeline = device.createRenderPipeline({ ...prepassPipelineDesc({ count: 1 }), label: 'prepass probe' });
 
     // the key's shadow: the prepass vertex shader with the key's own
     // viewProj, into a depth-only target; there is no fragment stage at all
@@ -471,9 +491,26 @@ export class Viewer {
     for (let i = 0; i < 6 * MAX_LOCAL_SHADOWS; i++) {
       this.faceFrames.push(device.createBuffer({ label: `light face ${i}`, size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     }
+    const probeCube = (label: string, mips: number) => device.createTexture({
+      label, size: [PROBE_SIZE, PROBE_SIZE, 6], format: 'rgba16float', mipLevelCount: mips,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.probeRaw = probeCube('probe raw', 1);
+    this.probeBackground = probeCube('probe background', Math.floor(Math.log2(PROBE_SIZE)) + 1);
+    this.probeSpecular = probeCube('probe specular', PROBE_MIPS);
+    this.probeView = this.probeSpecular.createView({ dimension: 'cube' });
+    this.probeDepth = device.createTexture({
+      label: 'probe depth', size: [PROBE_SIZE, PROBE_SIZE], format: this.post.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.dummyProbeView = device.createTexture({
+      label: 'no probe', size: [1, 1, 6], format: 'rgba16float', usage: GPUTextureUsage.TEXTURE_BINDING,
+    }).createView({ dimension: 'cube' });
+    for (let i = 0; i < 6; i++) {
+      this.probeFrames.push(device.createBuffer({ label: `probe face ${i}`, size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
+    }
 
     const pbr = shader(device, PBR_WGSL, 'pbr');
-    this.pbrPipeline = device.createRenderPipeline({
+    const pbrPipelineDesc = (ms: GPUMultisampleState): GPURenderPipelineDescriptor => ({
       label: 'pbr',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.materialLayout] }),
       vertex: {
@@ -493,11 +530,13 @@ export class Viewer {
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       // the prepass has written depth; only the visible surface passes here
       depthStencil: { format: this.post.depthFormat, depthWriteEnabled: false, depthCompare: 'less-equal' },
-      multisample,
+      multisample: ms,
     });
+    this.pbrPipeline = device.createRenderPipeline(pbrPipelineDesc(multisample));
+    this.pbrProbePipeline = device.createRenderPipeline({ ...pbrPipelineDesc({ count: 1 }), label: 'pbr probe' });
 
     const ground = shader(device, GROUND_WGSL, 'ground');
-    this.groundPipeline = device.createRenderPipeline({
+    const groundPipelineDesc = (ms: GPUMultisampleState): GPURenderPipelineDescriptor => ({
       label: 'ground',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.groundLayout] }),
       vertex: {
@@ -508,8 +547,10 @@ export class Viewer {
       // seen from underneath, the table should not hide the piece
       primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
       depthStencil: depth(true),
-      multisample,
+      multisample: ms,
     });
+    this.groundPipeline = device.createRenderPipeline(groundPipelineDesc(multisample));
+    this.groundProbePipeline = device.createRenderPipeline({ ...groundPipelineDesc({ count: 1 }), label: 'ground probe' });
 
     const anchor = shader(device, ANCHOR_WGSL, 'anchors');
     this.anchorPipeline = device.createRenderPipeline({
@@ -570,6 +611,7 @@ export class Viewer {
   setEnvironment(preset: EnvPreset | 'image') {
     if (preset === 'image' && !this.envImage) return this.environment!;
     this.preset = preset;
+    this.invalidateProbe();
     const previous = this.environment;
     const env = bakeEnvironment(this.ctx, preset === 'image' ? 'studio' : preset, {
       sun: this.keyDir, sunSize: this.keySize, image: preset === 'image' ? this.envImage! : undefined,
@@ -621,6 +663,7 @@ export class Viewer {
    * occlusion's, soft, not a cast shadow.
    */
   setKeyLight(opts: { elevation: number; azimuth: number; strength: number; warmth: number; size?: number }) {
+    this.invalidateProbe();
     const ce = Math.cos(opts.elevation);
     this.keyDir = [Math.cos(opts.azimuth) * ce, Math.sin(opts.azimuth) * ce, Math.sin(opts.elevation)];
     this.keyStrength = opts.strength;
@@ -644,10 +687,11 @@ export class Viewer {
   setDepthOfField(strength: number, focusScale: number) { this.dof = strength; this.focusScale = focusScale; this.dirty = true; }
 
   /** How much of the baked environment lights the piece: 1 as baked, 0 none — turn it down to let the key light carry the scene. */
-  setEnvStrength(v: number) { this.envStrength = v; this.dirty = true; }
+  setEnvStrength(v: number) { this.envStrength = v; this.invalidateProbe(); }
 
   /** What the piece stands on. `matte` is a cloth in the page's colour; the rest are their own material. */
   setTable(name: TableName) {
+    this.invalidateProbe();
     this.table = name;
     this.writeTable();
     this.dirty = true;
@@ -683,6 +727,7 @@ export class Viewer {
 
   setEnvSpin(radians: number) {
     this.envSpin = radians;
+    this.invalidateProbe();
     if (this.groups.length && this.envSamples) this.bakeQueued = true;
     this.dirty = true;
   }
@@ -709,6 +754,7 @@ export class Viewer {
     if (groups.length) {
       const b = worldBounds(groups.map((g) => ({ mesh: g.mesh, matrices: g.matrices })));
       this.sceneCentre = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
+      this.sceneTop = b.max[2];
       // the table under the piece is in the shadow's view too, so it reaches out to the occlusion bake's ground radius
       this.sceneRadius = Math.max(1e-3, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2) * 1.9;
     }
@@ -969,6 +1015,12 @@ export class Viewer {
     frame[53] = 1.5 / 2048;
     frame[54] = this.keyStrength > 0 && this.groups.length ? 1 : 0;
     frame[55] = this.keySize;
+    // the probe: just over the piece, where nothing is in the way, reaching
+    // out to take the table in
+    frame.set(this.probeCentre(), 56);
+    frame[59] = this.sceneRadius * 2.2;
+    frame[60] = this.probeReady && this.groups.length ? 1 : 0;
+    frame[61] = PROBE_MIPS - 1;
     device.queue.writeBuffer(this.frameBuffer, 0, frame);
 
     const encoder = device.createCommandEncoder({ label: 'frame' });
@@ -1023,6 +1075,16 @@ export class Viewer {
       }
       downPass.end();
       this.cushion.bake(encoder, this.cushionDepthView, this.occlusion.groundCentre, this.occlusion.groundRadius, cushionShape);
+    }
+
+    if (this.probeDirty && this.groups.length && this.occlusion && this.probeBinds.length) {
+      this.probeDirty = false;
+      this.bakeProbe(encoder, frame);
+      // the probe is filtered later in this same encoder; the frame that
+      // follows reads it, and the bind group already points at it
+      this.probeReady = true;
+      frame[60] = 1;
+      device.queue.writeBuffer(this.frameBuffer, 0, frame);
     }
 
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
@@ -1118,7 +1180,7 @@ export class Viewer {
   private rebuildFrameBind() {
     const env = this.environment;
     if (!env) return;
-    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView): GPUBindGroupEntry[] => [
+    const entries = (buffer: GPUBuffer, shadow: GPUTextureView, local = this.localShadowView, probe = this.probeView): GPUBindGroupEntry[] => [
       { binding: 0, resource: { buffer } },
       { binding: 1, resource: env.specular.createView({ dimension: 'cube' }) },
       { binding: 2, resource: env.brdf.createView() },
@@ -1128,11 +1190,14 @@ export class Viewer {
       { binding: 6, resource: this.shadowSampler },
       { binding: 7, resource: { buffer: this.lightsBuffer } },
       { binding: 8, resource: local },
+      { binding: 9, resource: probe },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
     this.shadowFrameBind = this.ctx.device.createBindGroup({ label: 'shadow frame', layout: this.frameLayout, entries: entries(this.shadowFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
     this.cushionFrameBind = this.ctx.device.createBindGroup({ label: 'cushion frame', layout: this.frameLayout, entries: entries(this.cushionFrameBuffer, this.dummyShadowView, this.dummyLocalShadowView) });
     this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView) }));
+    // the probe's own faces see the key's shadow and the local shadows, but not the probe: it is what they are drawing
+    this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView) }));
   }
 
   /**
@@ -1224,6 +1289,7 @@ export class Viewer {
     });
     this.ctx.device.queue.writeBuffer(this.materialBuffer, 0, data);
     this.writeLights();
+    this.invalidateProbe();
   }
 
   /**
@@ -1271,6 +1337,95 @@ export class Viewer {
       || list.some((l, i) => l.group !== this.lightList[i].group || l.position.some((v, k) => v !== this.lightList[i].position[k]));
     if (moved) { this.lightList = list; this.localShadowDirty = true; this.dirty = true; }
   }
+
+  /**
+   * The reflection probe: the lit piece and its table, seen from the scene's
+   * centre in six directions, then filtered by roughness the way the sky is.
+   * Everything the frame has already baked — the key's shadow, the lights'
+   * shadows, the cushion — is in it; the probe itself is not, so it holds one
+   * bounce. Alpha is left at zero where a face saw only sky.
+   */
+  private bakeProbe(encoder: GPUCommandEncoder, frame: Float32Array) {
+    const { device } = this.ctx;
+    const near = Math.max(this.sceneRadius * 0.01, 0.2), far = Math.max(this.sceneRadius * 6, 50);
+    const proj = new Float32Array(16);
+    perspective(proj, Math.PI / 2, 1, near, far);
+    const view = new Float32Array(16);
+    const viewProj = new Float32Array(16);
+    const faces: Array<[[number, number, number], [number, number, number]]> = [
+      [[1, 0, 0], [0, -1, 0]], [[-1, 0, 0], [0, -1, 0]],
+      [[0, 1, 0], [0, 0, 1]], [[0, -1, 0], [0, 0, -1]],
+      [[0, 0, 1], [0, -1, 0]], [[0, 0, -1], [0, -1, 0]],
+    ];
+    const eye = this.probeCentre();
+    faces.forEach(([dir, up], fi) => {
+      lookAt(view, eye, [eye[0] + dir[0], eye[1] + dir[1], eye[2] + dir[2]], up);
+      multiplyMat(viewProj, proj, view);
+      const pf = new Float32Array(frame);
+      pf.set(viewProj, 0);
+      pf.set(eye, 16);
+      pf[60] = 0;   // no probe within the probe
+      device.queue.writeBuffer(this.probeFrames[fi], 0, pf);
+      const pass = encoder.beginRenderPass({
+        label: `probe face ${fi}`,
+        colorAttachments: [{
+          view: this.probeRaw.createView({ dimension: '2d', baseArrayLayer: fi, arrayLayerCount: 1 }),
+          clearValue: { r: 0, g: 0, b: 0, a: 0 }, loadOp: 'clear', storeOp: 'store',
+        }],
+        depthStencilAttachment: { view: this.probeDepth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
+      });
+      pass.setBindGroup(0, this.probeBinds[fi]);
+      pass.setPipeline(this.prepassProbePipeline);
+      for (const g of this.groups) {
+        pass.setVertexBuffer(0, g.position);
+        pass.setVertexBuffer(1, g.instance);
+        pass.setIndexBuffer(g.index, 'uint32');
+        pass.drawIndexed(g.indexCount, g.instanceCount);
+      }
+      if (this.groundBind) {
+        pass.setPipeline(this.groundProbePipeline);
+        pass.setBindGroup(1, this.groundBind);
+        pass.setVertexBuffer(0, this.discPosition);
+        pass.setIndexBuffer(this.discIndex, 'uint32');
+        pass.drawIndexed(this.discCount);
+      }
+      if (this.materialBind) {
+        pass.setPipeline(this.pbrProbePipeline);
+        this.groups.forEach((g, k) => {
+          pass.setBindGroup(1, this.materialBind!, [k * MATERIAL_STRIDE]);
+          pass.setVertexBuffer(0, g.position);
+          pass.setVertexBuffer(1, g.normal);
+          pass.setVertexBuffer(2, g.uv);
+          pass.setVertexBuffer(3, g.wear);
+          pass.setVertexBuffer(4, g.instance);
+          pass.setVertexBuffer(5, g.face);
+          pass.setVertexBuffer(6, g.selected);
+          pass.setVertexBuffer(7, g.engrave);
+          pass.setIndexBuffer(g.index, 'uint32');
+          pass.drawIndexed(g.indexCount, g.instanceCount);
+        });
+      }
+      pass.end();
+    });
+    this.probeFilter?.dispose();
+    this.probeFilter = filterCube(this.ctx, encoder, this.probeRaw, this.probeBackground, this.probeSpecular, PROBE_SIZE, PROBE_MIPS);
+  }
+  /** The filter's own buffer, kept until its encoder has been submitted. */
+  private probeFilter: { dispose(): void } | null = null;
+
+  /**
+   * Where the probe stands: above the piece's top by a little, at its
+   * centre. The scene's centroid is often inside a part — the stone at the
+   * heart of a cluster — and a probe drawn from inside a gem fills every
+   * reflection with the inside of a gem.
+   */
+  private probeCentre(): [number, number, number] {
+    return [this.sceneCentre[0], this.sceneCentre[1], this.sceneTop + this.sceneRadius * 0.12];
+  }
+  private sceneTop = 0;
+
+  /** Anything that changes what the probe would see: the piece, its lights, the table, the sky, the key. */
+  private invalidateProbe() { this.probeDirty = true; this.dirty = true; }
 
   /**
    * Render the piece from each light, six faces round it, into that light's
@@ -1346,7 +1501,7 @@ export class Viewer {
     this.occlusion = occ;
     // a superseded bake stops at its next chunk; this one redraws as each chunk lands
     previous?.dispose();
-    if (occ) occ.onProgress = () => { this.dirty = true; };
+    if (occ) occ.onProgress = () => { this.invalidateProbe(); };
     this.rebuildFrameBind();
     this.writeMaterials();
     if (!occ) { this.groundBind = null; return; }

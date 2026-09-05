@@ -201,6 +201,19 @@ ${CUBE_BASIS}
   return vec4f(textureSampleLevel(image, samp, st, 0.0).rgb * basis.roughness, 1.0);
 }`;
 
+/**
+ * A probe face as drawn carries each pixel's distance in alpha, for the depth
+ * of field (the table's negated); the probe wants a plain hit mask there.
+ */
+const MASK = `
+${FULLSCREEN_VERT}
+@group(0) @binding(0) var src: texture_2d<f32>;
+@group(0) @binding(1) var samp: sampler;
+@fragment fn fsMain(@location(0) uv: vec2f) -> @location(0) vec4f {
+  let c = textureSampleLevel(src, samp, uv, 0.0);
+  return vec4f(c.rgb, select(0.0, 1.0, c.a != 0.0));
+}`;
+
 /** One mip level down: a linear sample at the centre of each texel averages the four beneath. */
 const DOWNSAMPLE = `
 ${FULLSCREEN_VERT}
@@ -249,7 +262,7 @@ ${GGX_COMMON}
   let SAMPLES = 128u;
   // never let alpha reach zero: the pdf becomes 0/0 and mip 0 fills with NaN
   let a = max(basis.roughness * basis.roughness, 1e-3);
-  var sum = vec3f(0.0);
+  var sum = vec4f(0.0);
   var weight = 0.0;
   for (var i = 0u; i < SAMPLES; i++) {
     let xi = vec2f(f32(i) / f32(SAMPLES), radicalInverse(i));
@@ -264,10 +277,11 @@ ${GGX_COMMON}
     let saTexel = 4.0 * PI / (6.0 * basis.sourceSize * basis.sourceSize);
     let saSample = 1.0 / (f32(SAMPLES) * pdf + 0.0001);
     let lod = select(0.5 * log2(saSample / saTexel), 0.0, basis.roughness == 0.0);
-    sum += textureSampleLevel(source, samp, l, lod).rgb * ndl;
+    sum += textureSampleLevel(source, samp, l, lod) * ndl;
     weight += ndl;
   }
-  return vec4f(sum / max(weight, 0.001), 1.0);
+  // alpha comes along: for a probe it is the hit mask, premultiplied
+  return sum / max(weight, 0.001);
 }`;
 
 const BRDF = `
@@ -324,6 +338,7 @@ interface Pipelines {
   sky: GPURenderPipeline;
   equirect: GPURenderPipeline;
   down: GPURenderPipeline;
+  mask: GPURenderPipeline;
   prefilter: GPURenderPipeline;
   brdf: GPURenderPipeline;
   sampler: GPUSampler;
@@ -369,6 +384,7 @@ function getPipelines(device: GPUDevice): Pipelines {
     sky: make(SKY, 'env sky', skyLayout),
     equirect: make(EQUIRECT, 'env equirect', equirectLayout),
     down: make(DOWNSAMPLE, 'env downsample'),
+    mask: make(MASK, 'probe mask'),
     prefilter: make(PREFILTER, 'env prefilter', prefilterLayout),
     brdf: make(BRDF, 'env brdf'),
     sampler: device.createSampler({
@@ -543,4 +559,78 @@ export function bakeEnvironment(
       imageTexture?.destroy();
     },
   };
+}
+
+/**
+ * Filter a cube that has already been drawn — a reflection probe of the
+ * piece — the way the sky is filtered: its mip chain by averaging, then a
+ * GGX prefilter into a second cube, level by roughness. Records the passes
+ * on the encoder given, so a probe can be drawn, filtered and read in one
+ * frame.
+ */
+export function filterCube(
+  ctx: GpuContext, encoder: GPUCommandEncoder,
+  raw: GPUTexture, background: GPUTexture, specular: GPUTexture, size: number, mips: number,
+): { dispose(): void } {
+  const { device } = ctx;
+  const pipes = getPipelines(device);
+  const backgroundMips = Math.floor(Math.log2(size)) + 1;
+  const slots = 6 * mips;
+  const basisBuffer = device.createBuffer({ size: slots * BASIS_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+  const basisData = new Float32Array((slots * BASIS_STRIDE) / 4);
+  for (let level = 0; level < mips; level++) {
+    for (let face = 0; face < 6; face++) {
+      const [f, r, u] = FACES[face];
+      basisData.set(
+        [f[0], f[1], f[2], 0, r[0], r[1], r[2], 0, u[0], u[1], u[2], 0, 0, mips > 1 ? level / (mips - 1) : 0, size, 0, 0, 0, 0, 0],
+        ((level * 6 + face) * BASIS_STRIDE) / 4,
+      );
+    }
+  }
+  device.queue.writeBuffer(basisBuffer, 0, basisData);
+  const faceView = (tex: GPUTexture, face: number, level: number) =>
+    tex.createView({ dimension: '2d', baseArrayLayer: face, arrayLayerCount: 1, baseMipLevel: level, mipLevelCount: 1 });
+  const drawTo = (view: GPUTextureView, pipeline: GPURenderPipeline, bind: GPUBindGroup, offsets?: number[]) => {
+    const pass = encoder.beginRenderPass({
+      colorAttachments: [{ view, loadOp: 'clear', storeOp: 'store', clearValue: { r: 0, g: 0, b: 0, a: 0 } }],
+    });
+    pass.setPipeline(pipeline);
+    pass.setBindGroup(0, bind, offsets);
+    pass.draw(3);
+    pass.end();
+  };
+  // the drawn faces in, with alpha made a hit mask
+  for (let face = 0; face < 6; face++) {
+    const bind = device.createBindGroup({
+      layout: pipes.mask.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: faceView(raw, face, 0) }, { binding: 1, resource: pipes.sampler }],
+    });
+    drawTo(faceView(background, face, 0), pipes.mask, bind);
+  }
+  for (let level = 1; level < backgroundMips; level++) {
+    for (let face = 0; face < 6; face++) {
+      const bind = device.createBindGroup({
+        layout: pipes.down.getBindGroupLayout(0),
+        entries: [
+          { binding: 0, resource: faceView(background, face, level - 1) },
+          { binding: 1, resource: pipes.sampler },
+        ],
+      });
+      drawTo(faceView(background, face, level), pipes.down, bind);
+    }
+  }
+  const prefilterBind = device.createBindGroup({
+    layout: pipes.prefilter.getBindGroupLayout(0),
+    entries: [
+      { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
+      { binding: 1, resource: background.createView({ dimension: 'cube' }) },
+      { binding: 2, resource: pipes.sampler },
+    ],
+  });
+  for (let level = 0; level < mips; level++) {
+    for (let face = 0; face < 6; face++) {
+      drawTo(faceView(specular, face, level), pipes.prefilter, prefilterBind, [(level * 6 + face) * BASIS_STRIDE]);
+    }
+  }
+  return { dispose() { basisBuffer.destroy(); } };
 }
