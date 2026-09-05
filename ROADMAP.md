@@ -4,7 +4,8 @@ Written in September 2026 as a plan for eight long-term directions, and
 rewritten at the end of that month when all eight were in. A second phase,
 realism, was planned and built in the same month, all nine items of it;
 a third filled the catalogue of sketches; a fourth gave the camera its
-own panel and a focus helper. This records what each became, the
+own panel and a focus helper; a profiling pass then took the cost out of
+final and traced quality. This records what each became, the
 decisions worth knowing before touching them, and what is still open. The
 original plans' reasoning is kept where it still explains the shape of
 the code.
@@ -22,18 +23,33 @@ the code.
   revolve, arc lengths on a sheet. Anything drawn on a surface — patterns,
   lettering — is drawn in these, so a groove is the same width on a plate, a
   wire and a bead.
-- **One PBR shader draws everything**, procedurally except for two textures:
-  the glyph atlas and the local shadow array. Metals, nacre, gems, plastics,
-  wood and lights are `model` cases in one `Material` record, which is full
-  at its 256-byte stride.
+- **One material model, two renderers.** The raster shader draws the piece
+  procedurally except for the glyph atlas and the shadow maps; metals,
+  nacre, gems, plastics, wood, lights and enamel are `model` cases in one
+  `Material` record. The path tracer (traced quality) walks a CPU-built
+  BVH of every placement and shares that record and every field function,
+  so relief, engraving, lettering and wires are the same code lit honestly.
+  Where the two disagree, the tracer is the reference, and comparing them
+  at the same pixels has found two lighting bugs already.
 - **The shader engraves per pixel.** A height field in surface millimetres,
   its gradient bending the normal: the chased vein relief, seven patterns,
   and lettering from a signed-distance atlas all go through the same bend.
-- **Lighting**: a baked environment, one movable key with a shadow map, and
-  the piece's own lights, sampled as spheres along every glowing part, each
-  with its own six-face shadow, on both the piece and the table.
+- **Lighting**: a baked environment (four presets or a loaded HDRI), a
+  reflection probe of the piece and its table, one movable area key with a
+  soft shadow and a studio rig of up to three more, each with its own
+  shadow, the piece's own lights sampled as spheres along every glowing
+  part with six-face shadows, per-pixel contact occlusion, and a film pass
+  (AgX, grain, vignette, fringe, depth of field) at the end.
+- **A camera** with a lens in millimetres, a horizon tilt, a lens shift,
+  viewpoint presets, sliders that follow a drag, and focus peaking to show
+  what is sharp.
 - **The table is geometry.** A 256² grid, flat for the hard surfaces and
-  displaced by a baked height map for the cloth cushions.
+  displaced by a baked height map for the cloth cushions. The tracer takes
+  it as a plane.
+- **Three qualities.** Draft for working (a laptop screen's worth of pixels,
+  a light bake), final for looking (a larger budget, supersampled once the
+  view is still), traced for the honest answer (a sample per frame in
+  bands, converging while the view is still).
 - **Symmetry is a list of matrices**, now including a recursive one, and any
   number in a sketch can carry play (`rnd`) that the growers draw from.
 
