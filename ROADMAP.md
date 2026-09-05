@@ -451,6 +451,33 @@ anchors and helper lines as things at a distance rather than smearing them.
 Also in this round: the display example's ring stood stone uppermost (a
 shank's crown is on +X, and pitching it +90° had sent that to −Z).
 
+## Performance, measured
+
+Profiled at the end of September 2026 in the in-app browser at 1400×1000.
+Draft is in good shape — a frame is 5 to 14 ms from the solitaire to the
+840k-triangle boutique, a keystroke rebuild 8 to 20 ms with parts memoised,
+a cold compile 20 to 115 ms — so the cost was in final and traced quality
+and in what followed every light change. Three things were done:
+
+- **Final supersamples only when the view is still.** Orbiting in final
+  used to draw four times the pixels of every interactive frame; now the
+  scene is drawn at the canvas's size while the camera moves and at twice
+  it once it settles, the way the tracer already hands off.
+- **The tracer works in bands.** A sample is traced in bands of rows sized
+  to about 1.5 Mpx a dispatch, each band copied back into the accumulation
+  as it lands, so no frame waits on more tracing than a frame's worth and
+  the panel stays responsive at the full pixel budget. Measured: five
+  dispatches of 4 ms replacing one of 15 ms, with no seam.
+- **The probe waits for a slider to stop.** A rebake is six views of the
+  whole scene (20 to 30 ms); it now runs 150 ms after the last change,
+  as the daylight sun already did, and ten ticks of a slider bake once.
+
+Still open, in order of payoff: the occlusion bake at final quality
+restarts on every keystroke (0.5 to 1.5 s); contact occlusion could be a
+final-only feature; the densest examples (hydrangea, boutique) are a
+million triangles from default segment counts on parts repeated hundreds
+of times, and a draft-quality tessellation would cut both frame and bake.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

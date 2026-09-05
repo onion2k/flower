@@ -62,7 +62,8 @@ struct Params {
   seed: u32,
   triangles: u32,
   shift: vec2f,     // the lens shift, as the projection applies it
-  _q: vec2f,
+  rowOffset: u32,   // the first row of this dispatch's band
+  _q: u32,
 };
 @group(2) @binding(0) var<uniform> params: Params;
 @group(2) @binding(1) var<storage, read> nodes: array<Node>;
@@ -725,12 +726,14 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
 }
 
 @compute @workgroup_size(8, 8)
-fn main(@builtin(global_invocation_id) id: vec3u) {
+fn main(@builtin(global_invocation_id) gid: vec3u) {
+  // a sample is traced in bands of rows, one band a frame, so no dispatch runs longer than a frame should
+  let id = vec2u(gid.x, gid.y + params.rowOffset);
   if (id.x >= params.width || id.y >= params.height) { return; }
   rng = pcg(id.x + id.y * params.width + params.sample * 0x9e3779b9u + params.seed);
   // a thin lens: the ray through a jittered point of the pixel, from a point on the aperture, meeting at the focus
   let jitter = vec2f(rand(), rand());
-  let px = (vec2f(id.xy) + jitter) / vec2f(f32(params.width), f32(params.height));
+  let px = (vec2f(id) + jitter) / vec2f(f32(params.width), f32(params.height));
   // a lens shift moved the image across the frame; the ray for this pixel is the one the unshifted frame had here
   let ndc = vec2f(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0) + 2.0 * params.shift;
   var d = normalize(params.forward + params.right * ndc.x * params.tanHalf * params.aspect + params.up * ndc.y * params.tanHalf);
@@ -743,10 +746,10 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
     d = normalize(focal - o);
   }
   var c = radiance(o, d);
-  let prev = select(vec4f(0.0), textureLoad(accumIn, vec2i(id.xy), 0), params.sample > 0u);
+  let prev = select(vec4f(0.0), textureLoad(accumIn, vec2i(id), 0), params.sample > 0u);
   let sum = prev + vec4f(c, 1.0);
-  textureStore(accumOut, vec2i(id.xy), sum);
-  textureStore(output, vec2i(id.xy), vec4f(sum.rgb / sum.a * frame.exposure, 1.0));
+  textureStore(accumOut, vec2i(id), sum);
+  textureStore(output, vec2i(id), vec4f(sum.rgb / sum.a * frame.exposure, 1.0));
 }
 `;
 
@@ -772,7 +775,10 @@ export class PathTracer {
   private width = 0;
   private height = 0;
   private output: GPUTexture | null = null;
-  private parity = 0;
+  /** The next row a dispatch starts at; 0 means a sample is about to begin. */
+  private cursor = 0;
+  /** Pixels a dispatch is allowed: about a frame's worth of tracing on a modest GPU. */
+  bandBudget = 1_500_000;
   /** Samples taken into the current accumulation. */
   samples = 0;
   /** Where the accumulation stops. */
@@ -845,7 +851,7 @@ export class PathTracer {
   }
 
   /** Start the accumulation over: the view or the scene changed. */
-  reset() { this.samples = 0; }
+  reset() { this.samples = 0; this.cursor = 0; }
 
   get done() { return this.samples >= this.maxSamples; }
 
@@ -854,19 +860,26 @@ export class PathTracer {
     if (width === this.width && height === this.height && output === this.output) return;
     this.width = width; this.height = height; this.output = output;
     for (const t of this.accum) t.destroy();
+    // two copies: a dispatch reads the one and writes the other for its
+    // band, then the band is copied back, so both always hold the whole
     this.accum = [0, 1].map((i) => this.ctx.device.createTexture({
       label: `trace accumulation ${i}`, size: [width, height], format: 'rgba32float',
-      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING,
+      usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.STORAGE_BINDING | GPUTextureUsage.COPY_SRC | GPUTextureUsage.COPY_DST,
     }));
     this.reset();
   }
 
-  /** Take one more sample per pixel into the accumulation, and write the mean to the output. */
+  /**
+   * Trace the next band of the current sample into the accumulation and
+   * write its mean to the output. A band is as many rows as the budget
+   * allows; a small frame is one band, a large one several, so a frame
+   * never waits on more tracing than a frame's worth.
+   */
   sample(encoder: GPUCommandEncoder, frameBind: GPUBindGroup, materialBind: GPUBindGroup, camera: TraceCamera, groundOn: boolean) {
     if (!this.output || !this.groundBuffer || !this.accum.length || this.done) return;
     const { device } = this.ctx;
-    const read = this.accum[this.parity], write = this.accum[1 - this.parity];
-    this.parity = 1 - this.parity;
+    const read = this.accum[0], write = this.accum[1];
+    const rows = Math.max(8, Math.min(this.height - this.cursor, Math.ceil(this.bandBudget / this.width / 8) * 8));
     const pixelAngle = 2 * camera.tanHalf / this.height;
     const p = new ArrayBuffer(112);
     const f = new Float32Array(p), u = new Uint32Array(p);
@@ -877,6 +890,7 @@ export class PathTracer {
     f[16] = camera.focus; u[17] = this.bounces; u[18] = this.width; u[19] = this.height;
     f[20] = groundOn ? 1 : 0; f[21] = pixelAngle; u[22] = 0x51ed27; u[23] = this.triangleCount;
     f[24] = camera.shift[0]; f[25] = camera.shift[1];
+    u[26] = this.cursor;
     device.queue.writeBuffer(this.params, 0, p);
     const bind = device.createBindGroup({
       label: 'trace scene', layout: this.layout,
@@ -894,9 +908,15 @@ export class PathTracer {
     pass.setBindGroup(0, frameBind);
     pass.setBindGroup(1, materialBind);
     pass.setBindGroup(2, bind);
-    pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(this.height / 8));
+    pass.dispatchWorkgroups(Math.ceil(this.width / 8), Math.ceil(rows / 8));
     pass.end();
-    this.samples++;
+    // the band written is copied back, so the next read sees it
+    const bandRows = Math.min(rows, this.height - this.cursor);
+    encoder.copyTextureToTexture(
+      { texture: write, origin: [0, this.cursor, 0] }, { texture: read, origin: [0, this.cursor, 0] }, [this.width, bandRows, 1],
+    );
+    this.cursor += bandRows;
+    if (this.cursor >= this.height) { this.cursor = 0; this.samples++; }
   }
 
   dispose() {

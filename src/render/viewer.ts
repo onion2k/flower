@@ -963,6 +963,8 @@ export class Viewer {
   // --- the path tracer: final quality, traced while the view is still ---
   private tracer: PathTracer | null = null;
   private wasMoving = false;
+  /** Whether the view has settled, which is when final quality spends its supersample. */
+  private still = true;
   private traceMaterialBind: GPUBindGroup | null = null;
   private traceSceneStale = true;
   private traceFrame = new Float32Array(FRAME_SIZE / 4);
@@ -1189,7 +1191,9 @@ export class Viewer {
     this.ctx.canvas.width = w;
     this.ctx.canvas.height = h;
     this.camera.aspect = w / h;
-    const ss = this.quality === 'final' && w * h * Viewer.SUPERSAMPLE ** 2 <= Viewer.PIXEL_BUDGET * 2 ? Viewer.SUPERSAMPLE : 1;
+    // final supersamples only once the view is still: four times the pixels
+    // is for looking at, not for orbiting through
+    const ss = this.quality === 'final' && this.still && w * h * Viewer.SUPERSAMPLE ** 2 <= Viewer.PIXEL_BUDGET * 2 ? Viewer.SUPERSAMPLE : 1;
     this.post.resize(w, h, ss);
     this.ao.resize(this.post.renderWidth, this.post.renderHeight);
     // the occlusion texture is new: the frame group must point at it
@@ -1203,9 +1207,14 @@ export class Viewer {
     const sinceTick = tickNow - this.lastTickAt;
     this.lastTickAt = tickNow;
     const moving = this.controls.moving;
-    // the moment the view settles, the tracer has a still view to start on
-    if (this.wasMoving && !moving && this.quality === 'traced') this.dirty = true;
+    // the moment the view settles, the tracer has a still view to start on,
+    // and final quality has a frame worth supersampling
+    if (this.wasMoving && !moving) this.dirty = true;
     this.wasMoving = moving;
+    if (this.still === moving) {
+      this.still = !moving;
+      if (this.quality === 'final') this.resize();
+    }
     this.controls.update();
     this.camera.update();
     if (!this.frameBind) return;
@@ -1347,7 +1356,10 @@ export class Viewer {
       this.cushion.bake(encoder, this.cushionDepthView, this.occlusion.groundCentre, this.occlusion.groundRadius, cushionShape);
     }
 
-    if (this.probeDirty && this.groups.length && this.occlusion && this.probeBinds.length) {
+    if (this.probeDirty && performance.now() < this.probeDue) {
+      // not yet: come back for it once the slider has stopped
+      this.dirty = true;
+    } else if (this.probeDirty && this.groups.length && this.occlusion && this.probeBinds.length) {
       this.probeDirty = false;
       this.bakeProbe(encoder, frame);
       // the probe is filtered later in this same encoder; the frame that
@@ -1776,7 +1788,18 @@ export class Viewer {
   private sceneTop = 0;
 
   /** Anything that changes what the probe would see: the piece, its lights, the table, the sky, the key. */
-  private invalidateProbe() { this.probeDirty = true; this.dirty = true; }
+  /**
+   * The probe is six views of the whole scene, so it is not rebaked on every
+   * tick of a slider: the bake waits until the change has stopped for a
+   * moment, and the frames in between keep the probe they had. The first
+   * bake, with no probe yet, goes at once.
+   */
+  private invalidateProbe() {
+    this.probeDirty = true;
+    this.probeDue = this.probeReady ? performance.now() + 150 : 0;
+    this.dirty = true;
+  }
+  private probeDue = 0;
 
   /**
    * Render the piece from each light, six faces round it, into that light's
