@@ -875,6 +875,9 @@ const PBR_MAIN = `
   var n = normalize(in.normal);
   let v = normalize(frame.cameraPos - in.world);
   if (!frontFacing) { n = -n; }
+  // the mesh's own normal, before anything bends it: what the specular
+  // anti-aliasing measures the bends against
+  let meshNormal = n;
 
   var tbn = tangentFrame(n, in.world, in.uv);
   // how much of the flat plate one pixel covers, for antialiasing anything drawn on it
@@ -1045,10 +1048,20 @@ const PBR_MAIN = `
   metallic = mix(metallic, metallic * 0.6, crease * 0.6);
 
   // --- specular anti-aliasing: widen the lobe by the normal's variance across the pixel ---
+  // What sparkles is the detail bent into the normal — hammer, swirls,
+  // relief, engraving — where a pixel straddles more of it than it can show.
+  // The mesh's own curvature is not that: a small polished ring turns its
+  // normal a good deal across one pixel too, and widening the lobe for it
+  // makes every polished thing satin at a distance, which the path tracer,
+  // averaging the same pixel honestly, never does. So the bends are measured
+  // against the mesh, and the curvature counts for a fraction, enough to
+  // keep a bead's silhouette from glittering.
   {
-    let dnx = dpdx(n); let dny = dpdy(n);
-    let variance = 0.25 * (dot(dnx, dnx) + dot(dny, dny));
-    let kernel = min(2.0 * variance, 0.18);
+    let dbx = dpdx(n) - dpdx(meshNormal); let dby = dpdy(n) - dpdy(meshNormal);
+    let dgx = dpdx(meshNormal); let dgy = dpdy(meshNormal);
+    let bumps = 0.25 * (dot(dbx, dbx) + dot(dby, dby));
+    let curvature = 0.25 * (dot(dgx, dgx) + dot(dgy, dgy));
+    let kernel = min(2.0 * bumps + 0.15 * curvature, 0.18);
     let alpha = roughness * roughness;
     roughness = sqrt(sqrt(alpha * alpha + kernel));
   }
@@ -1068,10 +1081,15 @@ const PBR_MAIN = `
   let ndv = clamp(dot(n, v), 0.001, 1.0);
   let spin = spinZ(frame.envSpin);
 
-  // never sample the environment sharper than the pixel can show
-  let envSize = f32(textureDimensions(envSpecular).x);
+  // Never sample the environment sharper than the pixel can show. The
+  // pixel covers a cone of reflection directions, and the environment's
+  // levels are not plain mips but GGX prefilters by roughness, so the level
+  // to read is the one whose lobe is about that cone wide: a lobe's angular
+  // spread is near its alpha, and alpha is roughness squared. Reading the
+  // level whose texel matched the pixel instead made a polished ring, whose
+  // normal turns a good deal across one pixel, satin from any distance.
   let footprint = max(length(dpdx(r)), length(dpdy(r)));
-  let footLod = log2(max(footprint * envSize * 0.5, 1.0));
+  let footLod = clamp(sqrt(footprint), 0.0, 1.0) * frame.maxLod;
   let lod = max(roughness * frame.maxLod, footLod);
   let prefiltered = reflectionAt(r, lod, in.world);
   let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
