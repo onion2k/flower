@@ -401,6 +401,17 @@ Also from this phase, though not on the list: the cloisonné wire is now a
 half-round bead of its own metal that flattens into roughness as it nears a
 pixel wide, after the archvis lighting had left it a flat pale line.
 
+Added after the phase closed: a **Camera** panel — viewpoint presets, a
+lens in millimetres on a 24 mm frame (42 is the old 32° view), elevation,
+azimuth and distance sliders that follow a drag on the canvas, a horizon
+tilt, a lens shift (rise and cross, as an architectural lens has, carried
+in the projection's z column so verticals stay vertical), and the depth of
+field and focus that were under View. The tracer's ray generation and the
+contact occlusion's depth reconstruction both take the shift; roll comes
+through the view matrix, so everything downstream has it for free. Camera
+rays that miss now return the page colour in the tracer too, so the two
+paths frame and backdrop alike.
+
 ### Open, from the second phase
 
 - The tracer's table is a plane: a velvet or silk cushion's dome is not

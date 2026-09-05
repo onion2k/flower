@@ -111,3 +111,42 @@ describe('Camera', () => {
     expect(depthAt(-100)).toBeCloseTo(1, 2);
   });
 });
+
+describe('lens, shift and roll', () => {
+  const project = (cam: Camera, p: [number, number, number]) => {
+    cam.update();
+    const m = cam.viewProjection;
+    const x = m[0] * p[0] + m[4] * p[1] + m[8] * p[2] + m[12];
+    const y = m[1] * p[0] + m[5] * p[1] + m[9] * p[2] + m[13];
+    const w = m[3] * p[0] + m[7] * p[1] + m[11] * p[2] + m[15];
+    return [x / w, y / w];
+  };
+
+  it('a 42 mm lens on a 24 mm frame is about the 32 degree view the camera starts with', () => {
+    expect(Camera.fovForLens(42)).toBeCloseTo(31.9, 0);
+    expect(Camera.lensForFov(Camera.fovForLens(85))).toBeCloseTo(85, 6);
+  });
+
+  it('a rise carries the frame up: a point ahead lands lower on the picture', () => {
+    const cam = new Camera();
+    cam.position = [0, -50, 0]; cam.target = [0, 0, 0]; cam.aspect = 1;
+    const before = project(cam, [0, 0, 5]);
+    cam.shift = [0, 0.3];
+    const after = project(cam, [0, 0, 5]);
+    expect(after[0]).toBeCloseTo(before[0], 6);
+    expect(after[1]).toBeCloseTo(before[1] - 0.6, 6);
+  });
+
+  it('a roll turns the picture about its centre and leaves the centre where it was', () => {
+    const cam = new Camera();
+    cam.position = [0, -50, 0]; cam.target = [0, 0, 0]; cam.aspect = 1;
+    const centre = project(cam, [0, 0, 0]);
+    const up = project(cam, [0, 0, 5]);
+    cam.roll = Math.PI / 2;
+    expect(project(cam, [0, 0, 0])[0]).toBeCloseTo(centre[0], 6);
+    const turned = project(cam, [0, 0, 5]);
+    // a quarter turn takes what was above the centre to one side of it, at the same distance
+    expect(Math.abs(turned[0])).toBeCloseTo(Math.abs(up[1]), 5);
+    expect(Math.abs(turned[1])).toBeLessThan(1e-5);
+  });
+});

@@ -17,6 +17,15 @@ export class Camera {
   aspect = 1;
   near = 0.5;
   far = 4000;
+  /** Tilt of the horizon: a turn about the line of sight, radians, positive clockwise. */
+  roll = 0;
+  /**
+   * Lens shift, as fractions of half the frame: the image slid across the
+   * sensor without turning the camera, which is how an architectural lens
+   * keeps verticals vertical while looking up at a tall thing. (0, 0.3) is
+   * a rise: the frame takes in 30% of its half-height more above.
+   */
+  shift: [number, number] = [0, 0];
 
   readonly view: Mat4 = new Float32Array(16);
   readonly projection: Mat4 = new Float32Array(16);
@@ -24,8 +33,17 @@ export class Camera {
 
   update() {
     lookAt(this.view, this.position, this.target, [0, 0, 1]);
-    perspective(this.projection, (this.fov * Math.PI) / 180, this.aspect, this.near, this.far);
+    if (this.roll) rollView(this.view, this.roll);
+    perspective(this.projection, (this.fov * Math.PI) / 180, this.aspect, this.near, this.far, this.shift);
     multiply(this.viewProjection, this.projection, this.view);
+  }
+
+  /** The vertical field of view a lens of this focal length gives on a 24 mm tall frame. */
+  static fovForLens(mm: number): number {
+    return (2 * Math.atan(12 / Math.max(mm, 1)) * 180) / Math.PI;
+  }
+  static lensForFov(fovDeg: number): number {
+    return 12 / Math.tan((fovDeg * Math.PI) / 360);
   }
 
   /** Camera right and up axes in world space, from the view matrix's rows. */
@@ -76,6 +94,16 @@ export class Orbit {
   private toRadius = 1;
   private toAzimuth = 0;
   private toPolar = Math.PI / 3;
+
+  /** Where the orbit stands now, for a panel that shows it. */
+  get currentAzimuth() { return this.azimuth; }
+  get currentPolar() { return this.polar; }
+  /** Send the orbit somewhere, easing as a drag would. Angles in radians, polar from the zenith. */
+  setSpherical(to: { azimuth?: number; polar?: number; radius?: number }) {
+    if (to.azimuth !== undefined) this.toAzimuth = to.azimuth;
+    if (to.polar !== undefined) this.toPolar = clamp(to.polar, this.minPolar, this.maxPolar);
+    if (to.radius !== undefined) this.toRadius = clamp(to.radius, this.minDistance, this.maxDistance);
+  }
 
   private spinDelta = { azimuth: 0, polar: 0 };
   private panDelta: Vec3 = [0, 0, 0];
@@ -244,15 +272,32 @@ export function lookAt(out: Mat4, eye: Vec3, target: Vec3, up: Vec3) {
   out[15] = 1;
 }
 
-/** Perspective with depth mapped to [0, 1], as WebGPU clips it. */
-export function perspective(out: Mat4, fovY: number, aspect: number, near: number, far: number) {
+/**
+ * Perspective with depth mapped to [0, 1], as WebGPU clips it. A shift
+ * slides the image across the frame by that fraction of its half-size: the
+ * terms sit in the z column so they survive the perspective divide.
+ */
+export function perspective(out: Mat4, fovY: number, aspect: number, near: number, far: number, shift: [number, number] = [0, 0]) {
   const f = 1 / Math.tan(fovY / 2);
   out.fill(0);
   out[0] = f / aspect;
   out[5] = f;
+  out[8] = 2 * shift[0];
+  out[9] = 2 * shift[1];
   out[10] = far / (near - far);
   out[11] = -1;
   out[14] = (near * far) / (near - far);
+}
+
+/** Turn a view matrix about its own line of sight: the horizon tilts, nothing else moves. */
+export function rollView(view: Mat4, roll: number) {
+  const c = Math.cos(roll), s = Math.sin(roll);
+  // rows 0 and 1 of the view are the camera's right and up; mix them
+  for (let col = 0; col < 4; col++) {
+    const x = view[col * 4], y = view[col * 4 + 1];
+    view[col * 4] = c * x - s * y;
+    view[col * 4 + 1] = s * x + c * y;
+  }
 }
 
 export function multiply(out: Mat4, a: Mat4, b: Mat4) {

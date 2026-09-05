@@ -61,6 +61,8 @@ struct Params {
   pixelAngle: f32,   // radians a pixel subtends
   seed: u32,
   triangles: u32,
+  shift: vec2f,     // the lens shift, as the projection applies it
+  _q: vec2f,
 };
 @group(2) @binding(0) var<uniform> params: Params;
 @group(2) @binding(1) var<storage, read> nodes: array<Node>;
@@ -651,7 +653,9 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
   for (var bounce = 0u; bounce <= params.bounces; bounce++) {
     let hit = trace(o, d, 1e6);
     if (hit.tri == 0xffffffffu && !hit.ground) {
-      result += throughput * sky(skyDir, skyRough);
+      // the sky lights the piece and shows in it; behind the piece the raster
+      // path draws the page's colour, and so does this, so the two agree
+      result += throughput * select(sky(skyDir, skyRough), ground.background, bounce == 0u);
       break;
     }
     dist += hit.t;
@@ -727,7 +731,8 @@ fn main(@builtin(global_invocation_id) id: vec3u) {
   // a thin lens: the ray through a jittered point of the pixel, from a point on the aperture, meeting at the focus
   let jitter = vec2f(rand(), rand());
   let px = (vec2f(id.xy) + jitter) / vec2f(f32(params.width), f32(params.height));
-  let ndc = vec2f(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0);
+  // a lens shift moved the image across the frame; the ray for this pixel is the one the unshifted frame had here
+  let ndc = vec2f(px.x * 2.0 - 1.0, 1.0 - px.y * 2.0) + 2.0 * params.shift;
   var d = normalize(params.forward + params.right * ndc.x * params.tanHalf * params.aspect + params.up * ndc.y * params.tanHalf);
   var o = params.origin;
   if (params.aperture > 0.0) {
@@ -755,6 +760,8 @@ export interface TraceCamera {
   /** Aperture radius in world units, 0 for a pinhole; and the distance in focus. */
   aperture: number;
   focus: number;
+  /** Lens shift, as the camera's projection carries it. */
+  shift: [number, number];
 }
 
 export class PathTracer {
@@ -810,7 +817,7 @@ export class PathTracer {
       layout: device.createPipelineLayout({ bindGroupLayouts: [frameLayout, this.materialLayout, this.layout] }),
       compute: { module, entryPoint: 'main' },
     });
-    this.params = device.createBuffer({ label: 'trace params', size: 96, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.params = device.createBuffer({ label: 'trace params', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
   /** The scene to trace, with the table's record; rebuilt whenever the piece changes. */
@@ -861,7 +868,7 @@ export class PathTracer {
     const read = this.accum[this.parity], write = this.accum[1 - this.parity];
     this.parity = 1 - this.parity;
     const pixelAngle = 2 * camera.tanHalf / this.height;
-    const p = new ArrayBuffer(96);
+    const p = new ArrayBuffer(112);
     const f = new Float32Array(p), u = new Uint32Array(p);
     f.set(camera.origin, 0); u[3] = this.samples;
     f.set(camera.forward, 4); f[7] = camera.tanHalf;
@@ -869,6 +876,7 @@ export class PathTracer {
     f.set(camera.up, 12); f[15] = camera.aperture;
     f[16] = camera.focus; u[17] = this.bounces; u[18] = this.width; u[19] = this.height;
     f[20] = groundOn ? 1 : 0; f[21] = pixelAngle; u[22] = 0x51ed27; u[23] = this.triangleCount;
+    f[24] = camera.shift[0]; f[25] = camera.shift[1];
     device.queue.writeBuffer(this.params, 0, p);
     const bind = device.createBindGroup({
       label: 'trace scene', layout: this.layout,

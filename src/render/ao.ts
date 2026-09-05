@@ -25,7 +25,7 @@ struct Params {
   far: f32,
   radius: f32,        // reach in world units
   strength: f32,
-  _p: vec2f,
+  shift: vec2f,       // the camera's lens shift, which moved the image on the frame
 };
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var depthTex: texture_depth_2d;
@@ -38,7 +38,8 @@ fn depthAt(uv: vec2f) -> f32 {
   return textureLoad(depthTex, p, 0);
 }
 fn viewPos(uv: vec2f, z: f32) -> vec3f {
-  return vec3f((uv.x * 2.0 - 1.0) * params.aspect * params.tanHalf * z, (1.0 - uv.y * 2.0) * params.tanHalf * z, -z);
+  let ndc = vec2f(uv.x * 2.0 - 1.0, 1.0 - uv.y * 2.0) + 2.0 * params.shift;
+  return vec3f(ndc.x * params.aspect * params.tanHalf * z, ndc.y * params.tanHalf * z, -z);
 }
 fn hash(p: vec2f) -> f32 {
   let q = fract(p * vec2f(0.1031, 0.1030));
@@ -98,7 +99,7 @@ fn hash(p: vec2f) -> f32 {
 
 const BLUR = `
 ${FULLSCREEN_VERT}
-struct Params { size: vec2f, depthSize: vec2f, tanHalf: f32, aspect: f32, near: f32, far: f32, radius: f32, strength: f32, _p: vec2f };
+struct Params { size: vec2f, depthSize: vec2f, tanHalf: f32, aspect: f32, near: f32, far: f32, radius: f32, strength: f32, shift: vec2f };
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var depthTex: texture_depth_2d;
 @group(0) @binding(2) var src: texture_2d<f32>;
@@ -136,6 +137,7 @@ export interface AoCamera {
   aspect: number;
   near: number;
   far: number;
+  shift: [number, number];
 }
 
 export class ContactOcclusion {
@@ -200,7 +202,7 @@ export class ContactOcclusion {
     device.queue.writeBuffer(this.params, 0, new Float32Array([
       hw, hh, this.width, this.height,
       Math.tan(camera.fovY / 2), camera.aspect, camera.near, camera.far,
-      this.radius, this.strength, 0, 0,
+      this.radius, this.strength, camera.shift[0], camera.shift[1],
     ]));
     const draw = (pipe: GPURenderPipeline, entries: GPUBindGroupEntry[], target: GPUTexture, label: string) => {
       const bind = device.createBindGroup({ layout: pipe.getBindGroupLayout(0), entries });

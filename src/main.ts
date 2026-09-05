@@ -101,6 +101,10 @@ const state = {
   envStrength: 0.3,
   dof: 0,
   focus: 1,
+  lens: 42,
+  tilt: 0,
+  shiftX: 0,
+  shiftY: 0,
   debug: 0,
   showAnchors: false,
   renderScale: 1,
@@ -171,6 +175,7 @@ const hexToRgb = (hex: string): [number, number, number] =>
 function slider(
   label: string, min: number, max: number, step: number, value: number,
   fmt: (v: number) => string, onInput: (v: number) => void,
+  register?: (set: (v: number) => void) => void,
 ) {
   const wrap = document.createElement('label');
   const row = document.createElement('div');
@@ -188,6 +193,12 @@ function slider(
     const v = parseFloat(input.value);
     val.textContent = fmt(v);
     onInput(v);
+  });
+  // something else may move the value — a drag on the canvas moves the camera — and the slider follows
+  register?.((v) => {
+    if (document.activeElement === input) return;
+    input.value = String(v);
+    val.textContent = fmt(v);
   });
   wrap.append(row, input);
   return wrap;
@@ -480,6 +491,46 @@ lightSet.append(hdrNote);
 
 const DEBUG_MODES = ['shaded', 'normals', 'uv', 'roughness', 'prefiltered', 'brdf', 'occlusion', 'wear'];
 
+/**
+ * The camera. Where it stands is the orbit's, which a drag on the canvas
+ * also moves, so those sliders follow the camera each frame; the lens, the
+ * tilt of the horizon and the shift are the camera's own. Presets are
+ * viewpoints round the piece: they set the angles and leave the distance.
+ */
+const VIEWS: Record<string, { elevation: number; azimuth: number }> = {
+  'three-quarter': { elevation: 0.72, azimuth: 0.87 },
+  front: { elevation: 0.17, azimuth: 0 },
+  profile: { elevation: 0.17, azimuth: Math.PI / 2 },
+  high: { elevation: 1.1, azimuth: 0.7 },
+  top: { elevation: 1.5, azimuth: 0.78 },
+  low: { elevation: 0.06, azimuth: 0.5 },
+};
+const cameraFollowers: Array<(v: ReturnType<Viewer['viewState']>) => void> = [];
+const applyLens = () => viewer.setLens(state.lens);
+const cameraSet = document.createElement('fieldset');
+cameraSet.innerHTML = '<legend>Camera</legend>';
+cameraSet.append(
+  picker('view', Object.keys(VIEWS), 'three-quarter', (v) => viewer.setView(VIEWS[v])),
+  slider('lens', 20, 200, 1, state.lens, (v) => `${Math.round(v)} mm`, (v) => { state.lens = v; applyLens(); }),
+  slider('elevation', 0, 1.55, 0.01, 0.72, degrees, (v) => viewer.setView({ elevation: v }),
+    (set) => cameraFollowers.push((v) => set(Math.round(v.elevation * 100) / 100))),
+  slider('azimuth', -3.142, 3.142, 0.01, 0.87, degrees, (v) => viewer.setView({ azimuth: v }),
+    (set) => cameraFollowers.push((v) => set(Math.round(Math.atan2(Math.sin(v.azimuth), Math.cos(v.azimuth)) * 100) / 100))),
+  slider('distance', 10, 600, 1, 120, (v) => `${Math.round(v)} mm`, (v) => viewer.setView({ distance: v }),
+    (set) => cameraFollowers.push((v) => set(Math.round(v.distance)))),
+  slider('tilt', -0.8, 0.8, 0.01, state.tilt, degrees, (v) => { state.tilt = v; viewer.setCameraRoll(v); }),
+  slider('shift across', -0.6, 0.6, 0.01, state.shiftX, (v) => `${Math.round(v * 100)}%`, (v) => { state.shiftX = v; viewer.setLensShift(state.shiftX, state.shiftY); }),
+  slider('shift up', -0.6, 0.6, 0.01, state.shiftY, (v) => `${Math.round(v * 100)}%`, (v) => { state.shiftY = v; viewer.setLensShift(state.shiftX, state.shiftY); }),
+  slider('depth of field', 0, 1, 0.02, state.dof, (v) => (v === 0 ? 'off' : v.toFixed(2)), (v) => {
+    state.dof = v;
+    viewer.setDepthOfField(state.dof, state.focus);
+  }),
+  slider('focus', 0.4, 2.5, 0.02, state.focus, (v) => `${v.toFixed(2)}× distance`, (v) => {
+    state.focus = v;
+    viewer.setDepthOfField(state.dof, state.focus);
+  }),
+);
+
 const viewSet = document.createElement('fieldset');
 viewSet.innerHTML = '<legend>View</legend>';
 // traced quality converges while the view is still: say how far it has got
@@ -498,14 +549,6 @@ viewSet.append(
     traceNote.hidden = state.quality !== 'traced';
   }),
   traceNote,
-  slider('depth of field', 0, 1, 0.02, state.dof, (v) => (v === 0 ? 'off' : v.toFixed(2)), (v) => {
-    state.dof = v;
-    viewer.setDepthOfField(state.dof, state.focus);
-  }),
-  slider('focus', 0.4, 2.5, 0.02, state.focus, (v) => `${v.toFixed(2)}× distance`, (v) => {
-    state.focus = v;
-    viewer.setDepthOfField(state.dof, state.focus);
-  }),
   picker('debug', DEBUG_MODES, 'shaded', (v) => {
     state.debug = DEBUG_MODES.indexOf(v);
     viewer.setDebug(state.debug);
@@ -545,7 +588,7 @@ filmSet.append(
   }),
 );
 
-controlsEl.append(subjectSet, materialSet, lightSet, keySet, filmSet, viewSet);
+controlsEl.append(subjectSet, materialSet, lightSet, keySet, cameraSet, filmSet, viewSet);
 
 /** Group placements by the mesh they share — that grouping is the draw call list. */
 function groupByMesh(assembly: Assembly) {
@@ -740,7 +783,12 @@ function layoutLabels() {
     el.style.transform = `translate(${p[0].toFixed(0)}px, ${p[1].toFixed(0)}px)`;
   });
 }
-viewer.onFrame = () => { if (labelled.length) layoutLabels(); showTraceProgress(); };
+viewer.onFrame = () => {
+  if (labelled.length) layoutLabels();
+  showTraceProgress();
+  const view = viewer.viewState();
+  for (const follow of cameraFollowers) follow(view);
+};
 
 function build() {
   const [kind] = select.value.split(':');

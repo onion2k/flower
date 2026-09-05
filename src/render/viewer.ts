@@ -765,6 +765,34 @@ export class Viewer {
   /** Depth of field: 0 off, 1 a lens wide open; focus as a multiple of the distance to the orbit target, 1 being the target itself. */
   setDepthOfField(strength: number, focusScale: number) { this.dof = strength; this.focusScale = focusScale; this.dirty = true; }
 
+  // --- the camera, as a panel drives it ---
+  /** Focal length in millimetres on a 24 mm frame: 42 is about the eye's view, 100 a portrait lens that flattens a piece. */
+  setLens(mm: number) { this.camera.fov = Camera.fovForLens(mm); this.dirty = true; }
+  /** Tilt of the horizon, radians. */
+  setCameraRoll(radians: number) { this.camera.roll = radians; this.dirty = true; }
+  /** Lens shift as fractions of the half-frame. */
+  setLensShift(x: number, y: number) { this.camera.shift = [x, y]; this.dirty = true; }
+  /** Send the orbit to an elevation above the table, an azimuth round it, and a distance, easing there. */
+  setView(to: { elevation?: number; azimuth?: number; distance?: number }) {
+    this.controls.setSpherical({
+      azimuth: to.azimuth,
+      polar: to.elevation === undefined ? undefined : Math.PI / 2 - to.elevation,
+      radius: to.distance,
+    });
+    this.dirty = true;
+  }
+  /** Where the camera is, for a panel to show: angles in radians, distance in world units. */
+  viewState() {
+    return {
+      elevation: Math.PI / 2 - this.controls.currentPolar,
+      azimuth: this.controls.currentAzimuth,
+      distance: this.controls.distance,
+      lens: Camera.lensForFov(this.camera.fov),
+      roll: this.camera.roll,
+      shift: this.camera.shift,
+    };
+  }
+
   /** How much of the baked environment lights the piece: 1 as baked, 0 none — turn it down to let the key light carry the scene. */
   setEnvStrength(v: number) { this.envStrength = v; this.invalidateProbe(); }
 
@@ -937,7 +965,7 @@ export class Viewer {
       forward: [fwd[0] / len, fwd[1] / len, fwd[2] / len],
       right: cam.right as [number, number, number],
       up: cam.up as [number, number, number],
-      tanHalf, aspect: cam.aspect, aperture, focus,
+      tanHalf, aspect: cam.aspect, aperture, focus, shift: cam.shift,
     }, !!this.occlusion);
     return true;
   }
@@ -1321,7 +1349,7 @@ export class Viewer {
         dp.drawIndexed(this.discCount);
       }
       dp.end();
-      this.ao.run(encoder, { fovY: (this.camera.fov * Math.PI) / 180, aspect: this.camera.aspect, near: this.camera.near, far: this.camera.far });
+      this.ao.run(encoder, { fovY: (this.camera.fov * Math.PI) / 180, aspect: this.camera.aspect, near: this.camera.near, far: this.camera.far, shift: this.camera.shift });
     }
 
     const pass = encoder.beginRenderPass(this.post.scenePass(this.background));
