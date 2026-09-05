@@ -494,6 +494,68 @@ final-only feature; the densest examples (hydrangea, boutique) are a
 million triangles from default segment counts on parts repeated hundreds
 of times, and a draft-quality tessellation would cut both frame and bake.
 
+## As a library
+
+Asked at the end of September 2026: how much of the renderer could power
+other applications, and which. The import graph says the renderer is
+already nearly a package. `render/` and `gpu/` are about 8,300 lines and
+import nothing from the language, the part generators or the editor; they
+need only the mesh record (positions, normals, uvs, indices, and the
+optional enamel, cap, uvSpan and engrave arrays), the anchor, relief,
+engraving and inscription types, Vec3 and Box3 with the matrix helpers,
+and two mesh functions (engraving coordinates for a mesh without them, and
+edge-wear analysis) — some 600 lines that would move with it. Going the
+other way, the language and editor take only the materials catalogue from
+the renderer, for the names of metals, finishes and enamels. The part
+generators, mesh builders, geometry, symmetries and assembly are another
+8,000 lines that import nothing from either, and are a second package on
+their own: the catalogue.
+
+What the renderer is, judged against any new use: a still-life renderer.
+One small object on a table at millimetre scale under a fixed
+environment, its quality coming from bakes that rerun when the scene
+changes and from time spent while the view is still. Every material is
+procedural; there is no texture support. One camera model, an orbit, no
+scene graph, animation, culling or level of detail.
+
+The applications considered, and the fit:
+
+- **Math-based sculptures.** The best fit, nearly a subset of what exists:
+  parametric surfaces, wire on any curve, the mathematical paths, the
+  metals, the turntable. Needs a scale parameter and headroom for denser
+  meshes. Small.
+- **Archvis interiors.** The same intent as the realism phase at another
+  scale; static scenes and still views, so the bake-then-look design holds.
+  Needs metres, rooms as geometry in place of the table, several shadowed
+  lights of more kinds, more than one probe, textured materials, glass.
+  Medium, and it pulls the renderer toward general.
+- **A puzzle box.** Right scale, part count and look, and picking exists,
+  but parts move, and every move restarts the occlusion bake and the probe.
+  Workable at a modest rate for a small box; done well it wants dynamic
+  occlusion for the moving parts, animation and an input loop. Medium,
+  with the engine parts new.
+- **A platformer, a clockwork FPS.** A different engine: moving worlds,
+  skinned characters, dynamic lights with cascaded shadows, culling,
+  streaming, physics, audio, a free camera. What carries is the material
+  code — for a clockwork world the brass, steel, patina, engraving and
+  polish are an asset — and the film pass, as a shader library inside
+  another engine. Large, and the renderer would not be the core.
+- **A business data visualiser.** Wants text, lines, axes, transparency,
+  thousands of instances, an orthographic camera, hover; has no use for
+  the materials. A different product.
+
+What this changes about the extraction. For the first three, the library
+should be designed rather than lifted: a scale parameter through everything
+that assumes millimetres; a scene interface with add, remove and move, and
+the bakes as stages that can be skipped or made dynamic; texture support
+beside the procedural surfaces; lights as a list of several kinds each
+with its own shadow; the headless renderer split from the orbit and the
+DOM, with an orthographic option and a free camera. For the games, the
+smaller plan is the right one: extract the material shaders and the film
+pass, and build or adopt a real-time engine around them. Either way the
+first job is the same — split the 2,000-line viewer into a headless
+renderer and the glue on top — and is a day or two.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
