@@ -36,6 +36,8 @@ export interface PostOptions {
   dof: number;
   /** Distance to the piece's own centre — the table is kept no sharper than this. */
   subject: number;
+  /** Tint what is in focus: the helper photographers know as peaking. */
+  peaking?: boolean;
 }
 
 const HDR: GPUTextureFormat = 'rgba16float';
@@ -166,7 +168,12 @@ struct Params { factor: u32, _p: u32, _q: vec2u };
 
 const COMPOSITE = `
 ${FULLSCREEN_VERT}
-struct Params { bloom: f32, raw: f32, tonemap: f32, vignette: f32, grain: f32, fringe: f32, _p: vec2f };
+struct Params {
+  bloom: f32, raw: f32, tonemap: f32, vignette: f32, grain: f32, fringe: f32,
+  // focus peaking: 0 off, else the distance in focus, the blur's strength and its
+  // widest circle, so what would blur under two pixels can be tinted as sharp
+  peak: f32, focus: f32, strength: f32, maxRadius: f32, subject: f32, _p: f32,
+};
 @group(0) @binding(0) var scene: texture_2d<f32>;
 @group(0) @binding(1) var samp: sampler;
 @group(0) @binding(2) var<uniform> params: Params;
@@ -244,6 +251,24 @@ fn hash(p: vec2f) -> f32 {
   let g = (hash(uv * size) - 0.5) * params.grain * 0.12;
   colour = clamp(colour + g * (1.0 - colour * 0.6), vec3f(0.0), vec3f(1.0));
   if (params.raw > 0.5) { colour = s; }
+  // focus peaking: the piece and the table carry their distance in alpha
+  // (the table's negated); what lies within the sharp band goes green
+  if (params.peak > 0.5) {
+    let a = textureSample(scene, samp, uv).a;
+    let d = abs(a);
+    if (d > 0.0) {
+      let rel = (d - params.focus) / params.focus;
+      let r = select(rel, -rel * 1.5, rel < 0.0);
+      var coc = r * params.strength * params.maxRadius;
+      // the table is kept no sharper than the piece's centre, as the blur keeps it
+      if (a < 0.0) {
+        let relS = (params.subject - params.focus) / params.focus;
+        coc = max(coc, select(relS, -relS * 1.5, relS < 0.0) * params.strength * params.maxRadius);
+      }
+      let sharp = 1.0 - smoothstep(0.6, 1.6, coc);
+      colour = mix(colour, vec3f(0.25, 0.95, 0.4), sharp * 0.55);
+    }
+  }
   return vec4f(srgb(colour), 1.0);
 }`;
 
@@ -282,7 +307,7 @@ export class PostChain {
   private depthView: GPUTextureView | null = null;
   private bloomViews: GPUTextureView[] = [];
   /** Rewritten in place each frame rather than allocated. */
-  private compositeData = new Float32Array(8);
+  private compositeData = new Float32Array(12);
 
   private brightBind: GPUBindGroup | null = null;
   private downBinds: GPUBindGroup[] = [];
@@ -326,7 +351,7 @@ export class PostChain {
 
     this.brightParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     device.queue.writeBuffer(this.brightParams, 0, new Float32Array([1.2, 0.5, 0, 0]));
-    this.compositeParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.compositeParams = device.createBuffer({ size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.dofParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
@@ -476,6 +501,13 @@ export class PostChain {
     this.compositeData[3] = opts.raw ? 0 : opts.film.vignette;
     this.compositeData[4] = opts.raw ? 0 : opts.film.grain;
     this.compositeData[5] = opts.raw ? 0 : opts.film.fringe;
+    // peaking reads the band the blur would leave sharp; with the blur off it
+    // shows the band a middling blur would, so the helper says something either way
+    this.compositeData[6] = opts.peaking ? 1 : 0;
+    this.compositeData[7] = opts.focus;
+    this.compositeData[8] = opts.dof > 0 ? opts.dof : 0.5;
+    this.compositeData[9] = Math.max(6, Math.min(this.renderWidth, this.renderHeight) * 0.03);
+    this.compositeData[10] = opts.subject;
     device.queue.writeBuffer(this.compositeParams, 0, this.compositeData);
 
     const draw = (pipeline: GPURenderPipeline, bind: GPUBindGroup, target: GPUTextureView, load: GPULoadOp) => {

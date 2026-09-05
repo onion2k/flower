@@ -790,13 +790,9 @@ export class Viewer {
   setFocusHelper(on: boolean) { this.focusHelper = on; this.dirty = true; }
 
   /**
-   * The helper's lines: the plane of focus drawn where it cuts the scene.
-   * A plane square to the line of sight, seen from the camera, is a flat
-   * card and says nothing about depth; where it meets the table and passes
-   * through the piece, it is a slice standing in the scene. So: its trace
-   * across the table, and its contours through the piece's box at a run of
-   * heights, each cut where the piece stands in front of it. The near and
-   * far edges of the sharp band get their traces on the table, fainter.
+   * The helper's one line: where the plane of focus meets the table, so the
+   * focus distance can be seen against the piece from any angle. What is
+   * sharp is shown on the picture itself, by the composite's peaking.
    */
   private buildFocusHelper() {
     const cam = this.camera;
@@ -805,67 +801,24 @@ export class Viewer {
     const len = Math.hypot(n[0], n[1], n[2]) || 1;
     for (let i = 0; i < 3; i++) n[i] /= len;
     const position: number[] = [], colour: number[] = [];
-    const line = (a: number[], b: number[], c: [number, number, number]) => {
-      position.push(...a, ...b);
-      colour.push(...c, ...c);
-    };
-    // the plane n·p = k at distance d cut by the level z: a line in xy
-    const planeK = (d: number) => n[0] * (cam.position[0] + n[0] * d) + n[1] * (cam.position[1] + n[1] * d) + n[2] * (cam.position[2] + n[2] * d);
-    const levelLine = (k: number, z: number) => {
-      // n.x x + n.y y = k - n.z z; a point on it and its direction
-      const c = k - n[2] * z;
-      const nn = n[0] * n[0] + n[1] * n[1];
-      if (nn < 1e-8) return null;   // looking straight down: the plane is level and never meets a level
-      return { p: [n[0] * c / nn, n[1] * c / nn], d: [-n[1], n[0]] };
-    };
-    // clip that line to a disc
-    const inDisc = (k: number, z: number, centre: Vec3, radius: number, c: [number, number, number]) => {
-      const l = levelLine(k, z);
-      if (!l) return null;
-      const rx = l.p[0] - centre[0], ry = l.p[1] - centre[1];
-      const b = rx * l.d[0] + ry * l.d[1], cc = rx * rx + ry * ry - radius * radius;
-      const disc = b * b - cc;
-      if (disc <= 0) return null;
-      const r = Math.sqrt(disc);
-      const a = [l.p[0] + l.d[0] * (-b - r), l.p[1] + l.d[1] * (-b - r), z], e = [l.p[0] + l.d[0] * (-b + r), l.p[1] + l.d[1] * (-b + r), z];
-      line(a, e, c);
-      return [a, e];
-    };
     const ground = this.occlusion;
-    const box = this.pieceBounds;
-    const slice = (d: number, c: [number, number, number], contours: number) => {
-      const k = planeK(d);
-      if (ground) inDisc(k, ground.groundCentre[2] + 0.05, ground.groundCentre, ground.groundRadius * 0.98, c);
-      if (box && contours > 0) {
-        // the gate: the piece's heights, over a round a good deal wider than
-        // the piece, so it still stands when the focus is just short of it
-        const dim: [number, number, number] = [c[0] * 0.55, c[1] * 0.55, c[2] * 0.55];
-        const reach = Math.hypot(box.max[0] - box.min[0], box.max[1] - box.min[1]) / 2 * 1.6;
-        const centre: Vec3 = [(box.min[0] + box.max[0]) / 2, (box.min[1] + box.max[1]) / 2, 0];
-        let first: number[][] | null = null, last: number[][] | null = null;
-        for (let i = 0; i <= contours; i++) {
-          const z = box.min[2] + ((box.max[2] - box.min[2]) * i) / contours;
-          const ends = inDisc(k, z, centre, reach, i === 0 || i === contours ? c : dim);
-          if (ends && !first) first = ends;
-          if (ends) last = ends;
-        }
-        // the slice's own edges, so the contours read as one plane standing in the scene
-        if (first && last && first !== last) {
-          line(first[0], last[0], c);
-          line(first[1], last[1], c);
-        }
-      }
-    };
-    slice(f, [1, 0.72, 0.15], 6);
-    // the sharp band: where the circle of confusion is still under two pixels
-    if (this.dof > 0) {
-      const maxRadius = Math.max(6, Math.min(this.post.renderWidth, this.post.renderHeight) * 0.03);
-      const rel = 2 / (this.dof * maxRadius);
-      slice(f * (1 + rel), [0.5, 0.38, 0.12], 0);
-      slice(Math.max(f * (1 - rel / 1.5), cam.near * 2), [0.5, 0.38, 0.12], 0);
-    }
-    this.helperCount = position.length / 3;
-    if (!this.helperCount) return;
+    this.helperCount = 0;
+    const nn = n[0] * n[0] + n[1] * n[1];
+    if (!ground || nn < 1e-8) return;   // looking straight down, the plane is level and never meets the table
+    // the plane n·p = k cut by the table's level z: a line in xy, clipped to the disc
+    const k = n[0] * (cam.position[0] + n[0] * f) + n[1] * (cam.position[1] + n[1] * f) + n[2] * (cam.position[2] + n[2] * f);
+    const z = ground.groundCentre[2] + 0.05;
+    const c = k - n[2] * z;
+    const p = [n[0] * c / nn, n[1] * c / nn], d = [-n[1], n[0]];
+    const rx = p[0] - ground.groundCentre[0], ry = p[1] - ground.groundCentre[1];
+    const radius = ground.groundRadius * 0.98;
+    const b = rx * d[0] + ry * d[1], cc = rx * rx + ry * ry - radius * radius;
+    const disc = b * b - cc;
+    if (disc <= 0) return;
+    const r = Math.sqrt(disc);
+    position.push(p[0] + d[0] * (-b - r), p[1] + d[1] * (-b - r), z, p[0] + d[0] * (-b + r), p[1] + d[1] * (-b + r), z);
+    colour.push(0.25, 0.95, 0.4, 0.25, 0.95, 0.4);
+    this.helperCount = 2;
     const { device } = this.ctx;
     const bytes = position.length * 4;
     if (!this.helperPosition || this.helperPosition.size < bytes) {
@@ -958,7 +911,6 @@ export class Viewer {
       const b = worldBounds(groups.map((g) => ({ mesh: g.mesh, matrices: g.matrices })));
       this.sceneCentre = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
       this.sceneTop = b.max[2];
-      this.pieceBounds = { min: [...b.min] as Vec3, max: [...b.max] as Vec3 };
       // the table under the piece is in the shadow's view too, so it reaches out to the occlusion bake's ground radius
       this.sceneRadius = Math.max(1e-3, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2) * 1.9;
     }
@@ -1411,7 +1363,7 @@ export class Viewer {
       if (this.traceFrameStep(encoder, frame)) {
         this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
           bloom: this.bloom, raw: this.debugMode > 0, film: this.film,
-          focus: this.controls.distance * this.focusScale, dof: 0, subject: this.controls.distance,
+          focus: this.controls.distance * this.focusScale, dof: 0, subject: this.controls.distance, peaking: this.focusHelper,
         });
         device.queue.submit([encoder.finish()]);
         this.dirty = !this.tracer!.done;
@@ -1504,7 +1456,7 @@ export class Viewer {
 
     this.post.finish(encoder, this.ctx.context.getCurrentTexture().createView(), {
       bloom: this.bloom, raw: this.debugMode > 0, film: this.film,
-      focus: this.controls.distance * this.focusScale, dof: this.dof, subject: this.controls.distance,
+      focus: this.controls.distance * this.focusScale, dof: this.dof, subject: this.controls.distance, peaking: this.focusHelper,
     });
     device.queue.submit([encoder.finish()]);
     this.onFrame?.();
@@ -1822,8 +1774,6 @@ export class Viewer {
     return [this.sceneCentre[0], this.sceneCentre[1], this.sceneTop + this.sceneRadius * 0.12];
   }
   private sceneTop = 0;
-  /** The piece's own box, for helpers that slice it. */
-  private pieceBounds: { min: Vec3; max: Vec3 } | null = null;
 
   /** Anything that changes what the probe would see: the piece, its lights, the table, the sky, the key. */
   private invalidateProbe() { this.probeDirty = true; this.dirty = true; }

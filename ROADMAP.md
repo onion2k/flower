@@ -410,17 +410,16 @@ field and focus that were under View. The tracer's ray generation and the
 contact occlusion's depth reconstruction both take the shift; roll comes
 through the view matrix, so everything downstream has it for free. Camera
 rays that miss now return the page colour in the tracer too, so the two
-paths frame and backdrop alike. A **focal plane helper** (a toggle in the
-same panel) draws the plane of focus where it cuts the scene: its trace
-across the table, and a gate of level contours through the piece's
-heights, clipped to a round wider than the piece and cut wherever the
-piece stands in front; the near and far edges of the sharp band get
-fainter traces on the table. The first version was a gridded card square
-to the line of sight, which from the camera is a flat overlay and says
-nothing about depth — a helper has to be drawn in the scene's own frame
-to help. The line shader now writes distance in alpha, so the depth of
-field treats helpers and anchors as things at a distance rather than
-smearing them.
+paths frame and backdrop alike. A **focus helper** (a toggle in the same
+panel) is focus peaking: the composite tints green whatever the blur would
+leave sharp — the piece and the table carry their distance in alpha — and
+one green line marks where the plane of focus meets the table. Two earlier
+tries taught what a helper has to be: a gridded card square to the line of
+sight is a flat overlay from the camera and shows nothing of depth, and a
+gate of contour lines standing in the scene is accurate but abstract. The
+tint is on the picture itself, which is what "what is in focus" means. The
+line shader now writes distance in alpha, so the depth of field treats
+anchors and helper lines as things at a distance rather than smearing them.
 
 ### Open, from the second phase
 

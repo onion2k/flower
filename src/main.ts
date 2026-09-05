@@ -530,7 +530,7 @@ cameraSet.append(
     state.focus = v;
     viewer.setDepthOfField(state.dof, state.focus);
   }),
-  toggle('show focal plane', 'showFocus', () => viewer.setFocusHelper(state.showFocus)),
+  toggle('show focus', 'showFocus', () => viewer.setFocusHelper(state.showFocus)),
 );
 
 const viewSet = document.createElement('fieldset');
