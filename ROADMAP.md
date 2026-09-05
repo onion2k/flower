@@ -337,6 +337,16 @@ things the plan did not foresee:
   an overcast day — their irradiance is about three times the key's at its
   default — so the ambient default came down from 1 to 0.3, which keeps the
   key dominant and the table dark in all four presets; exposure stays at 1.
+  The same comparison then found a second, older one: the environment's
+  levels are GGX prefilters by roughness, not plain mips, and the footprint
+  term chose the level whose *texel* matched the pixel, which on a small
+  polished ring was a roughness-0.3 blur. Polished gold had read as satin
+  from any distance for as long as that term existed. The footprint now
+  maps to the roughness whose lobe is the pixel's cone (`sqrt(footprint)`),
+  and the specular anti-aliasing measures the normal's variance against the
+  mesh normal, so bumps count in full and curvature only a little. Comparing
+  the two paths at the same pixels is the quickest way to catch this class
+  of thing; keep doing it whenever the raster shading changes.
 - Sharing the material code between the two paths, rather than writing a
   second material model for the tracer, cost one afternoon of splitting the
   shader text and repaid it at once: relief, engraving, lettering and wires
@@ -359,8 +369,10 @@ pixel wide, after the archvis lighting had left it a flat pale line.
 - Caustics — a polished ring throwing light on the table — arrive as
   speckle and take hundreds of samples to smooth.
 - The raster and traced paths still differ in places: the enamel's body
-  reads brighter in the raster, and the probe's one bounce is not the
-  tracer's six. Where they disagree, the tracer is the reference.
+  reads brighter in the raster, the probe's one bounce is not the tracer's
+  six, and the probe at 256² cannot show a band's inside reflected in its
+  outside as the tracer does. Where they disagree, the tracer is the
+  reference.
 - Traced quality re-samples from nothing on any change to the frame, the
   exposure slider included, though the exposure is applied at the write.
 - The tracer takes at most 256 draw groups, and the storage-buffer limit
