@@ -32,7 +32,11 @@ export async function createDevice(onLost?: (info: GPUDeviceLostInfo) => void, f
   }
   const adapter = await navigator.gpu.requestAdapter({ powerPreference: 'high-performance' });
   if (!adapter) throw new Error('WebGPU: no adapter');
-  const device = await adapter.requestDevice();
+  // the defaults stop at 256 MB a buffer and 128 MB a storage binding, which a
+  // dense mesh's traced scene passes at a few million triangles; the adapter
+  // usually allows far more, and asking costs nothing
+  const { maxBufferSize, maxStorageBufferBindingSize } = adapter.limits;
+  const device = await adapter.requestDevice({ requiredLimits: { maxBufferSize, maxStorageBufferBindingSize } });
   device.addEventListener('uncapturederror', (e) => {
     console.error('WebGPU error:', (e as GPUUncapturedErrorEvent).error.message);
   });

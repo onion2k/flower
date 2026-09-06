@@ -69,15 +69,9 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
   // above never sees the crease at all: each copy only connects to its own face.
   // Find the copies and judge the crease by whether one face falls below the
   // other's tangent plane.
-  const buckets = new Map<string, number[]>();
-  for (let v = 0; v < count; v++) {
-    const key = `${Math.round(p[v * 3] * 1e4)},${Math.round(p[v * 3 + 1] * 1e4)},${Math.round(p[v * 3 + 2] * 1e4)}`;
-    const list = buckets.get(key);
-    if (list) list.push(v); else buckets.set(key, [v]);
-  }
+  const buckets = positionGroups(p, count);
   const sharp = new Float32Array(count);
-  for (const group of buckets.values()) {
-    if (group.length < 2) continue;
+  for (const group of buckets) {
     for (const a of group) {
       let verdict = 0;
       for (const b of group) {
@@ -112,8 +106,7 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
       acc[b] += wear[a]; cnt[b]++;
     }
   }
-  for (const group of buckets.values()) {
-    if (group.length < 2) continue;
+  for (const group of buckets) {
     let s = 0;
     for (const v of group) s += wear[v];
     for (const v of group) { acc[v] += s - wear[v]; cnt[v] += group.length - 1; }
@@ -134,11 +127,51 @@ function geometricNormals(mesh: Mesh): Float32Array {
     const e1x = p[b] - p[a], e1y = p[b + 1] - p[a + 1], e1z = p[b + 2] - p[a + 2];
     const e2x = p[c] - p[a], e2y = p[c + 1] - p[a + 1], e2z = p[c + 2] - p[a + 2];
     const nx = e1y * e2z - e1z * e2y, ny = e1z * e2x - e1x * e2z, nz = e1x * e2y - e1y * e2x;
-    for (const v of [a, b, c]) { n[v] += nx; n[v + 1] += ny; n[v + 2] += nz; }
+    n[a] += nx; n[a + 1] += ny; n[a + 2] += nz;
+    n[b] += nx; n[b + 1] += ny; n[b + 2] += nz;
+    n[c] += nx; n[c + 1] += ny; n[c + 2] += nz;
   }
   for (let i = 0; i < n.length; i += 3) {
     const l = Math.hypot(n[i], n[i + 1], n[i + 2]) || 1;
     n[i] /= l; n[i + 1] /= l; n[i + 2] /= l;
   }
   return n;
+}
+
+/**
+ * The vertices that share a position, to a tenth of a micron, as groups of
+ * two or more. A hash table over the quantised coordinates rather than a map
+ * keyed by string: on a few million vertices the strings alone took seconds.
+ */
+function positionGroups(p: Float32Array, count: number): number[][] {
+  const qx = new Float64Array(count), qy = new Float64Array(count), qz = new Float64Array(count);
+  for (let v = 0; v < count; v++) {
+    qx[v] = Math.round(p[v * 3] * 1e4); qy[v] = Math.round(p[v * 3 + 1] * 1e4); qz[v] = Math.round(p[v * 3 + 2] * 1e4);
+  }
+  let size = 1;
+  while (size < count * 2) size <<= 1;
+  const mask = size - 1;
+  // open addressing: a slot holds the first vertex of its chain, the chain runs through `next`
+  const head = new Int32Array(size).fill(-1);
+  const next = new Int32Array(count).fill(-1);
+  const groups: number[][] = [];
+  const grouped = new Map<number, number[]>();
+  for (let v = 0; v < count; v++) {
+    let h = ((qx[v] | 0) * 73856093) ^ ((qy[v] | 0) * 19349663) ^ ((qz[v] | 0) * 83492791);
+    h = (h >>> 0) & mask;
+    for (;;) {
+      const first = head[h];
+      if (first < 0) { head[h] = v; break; }
+      if (qx[first] === qx[v] && qy[first] === qy[v] && qz[first] === qz[v]) {
+        // the same position: join its chain, in a group once it has two members
+        next[v] = next[first]; next[first] = v;
+        let g = grouped.get(first);
+        if (!g) { g = [first]; grouped.set(first, g); groups.push(g); }
+        g.push(v);
+        break;
+      }
+      h = (h + 1) & mask;
+    }
+  }
+  return groups;
 }

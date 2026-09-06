@@ -60,8 +60,13 @@ into a texture, and its pixels read back — the piece is at the centre and
 gold, the background at the corners, the debug views draw, the tracer takes
 a sample, every shader compiles and no GPU error is raised; and the same
 rosette modelled in metres with `mmPerUnit: 1000` draws the same frame to
-within a level. It says the renderer draws, and draws the same at any
-unit, not that it draws well: a material or lighting change still means
+within a level. A second file, `headroom.gpu.test.ts`, builds a parametric
+shell at rising density and prints the time of every stage — generation,
+upload, first frame, shadow bake, probe, traced scene, first sample — as a
+record of what the renderer takes; its largest size, eleven million
+triangles, runs only under `VITE_HEADROOM=full`. These say the renderer
+draws, draws the same at any unit, and draws dense meshes, not that it
+draws well: a material or lighting change still means
 opening the app and looking at it, in the in-app browser preview or a real
 browser. Treat a change there as unverified until it's actually been seen
 on screen.

@@ -33,6 +33,7 @@ import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from
 import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
 import { PathTracer } from './tracer';
+import type { SceneRequest, SceneResponse } from './scene.worker';
 import { buildScene } from './bvh';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
 
@@ -939,6 +940,11 @@ export class Renderer {
   private tracer: PathTracer | null = null;
   private traceMaterialBind: GPUBindGroup | null = null;
   private traceSceneStale = true;
+  /** The scene builder off the main thread, made on first use; null where there are no workers, and the build is done here. */
+  private sceneWorker: Worker | null | undefined;
+  /** Numbers the build in flight, so a scene for a piece since replaced is dropped. */
+  private sceneToken = 0;
+  private sceneBuilding = false;
   private traceFrame = new Float32Array(FRAME_SIZE / 4);
   /** Samples the tracer has taken into the current view, for the panel to show. */
   get traceSamples() { return this.tracer?.samples ?? 0; }
@@ -947,9 +953,18 @@ export class Renderer {
   private ensureTracer() {
     if (!this.tracer) this.tracer = new PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
     if (this.traceSceneStale && this.groups.length) {
-      const scene = buildScene(this.groups.map((g) => ({ mesh: g.source.mesh, matrices: g.source.matrices })));
-      this.tracer.setScene(scene, this.groundBuffer);
       this.traceSceneStale = false;
+      const groups = this.groups.map((g) => ({ mesh: g.source.mesh, matrices: g.source.matrices, wear: wearOf(g.source.mesh, this.mm(0.6)) }));
+      const token = ++this.sceneToken;
+      const worker = this.ensureSceneWorker();
+      if (worker) {
+        // built off the thread: the raster view stays live, and a sample starts when the scene lands
+        this.sceneBuilding = true;
+        const request: SceneRequest = { token, groups };
+        worker.postMessage(request);
+      } else {
+        this.tracer.setScene(buildScene(groups), this.groundBuffer);
+      }
     }
     if (!this.traceMaterialBind && this.materialBuffer && this.glyphBuffer && this.atlasTexture && this.gemPlaneBuffer) {
       this.traceMaterialBind = this.ctx.device.createBindGroup({
@@ -964,10 +979,24 @@ export class Renderer {
     return this.tracer;
   }
 
+  private ensureSceneWorker(): Worker | null {
+    if (this.sceneWorker !== undefined) return this.sceneWorker;
+    if (typeof Worker === 'undefined') return (this.sceneWorker = null);
+    const worker = new Worker(new URL('./scene.worker.ts', import.meta.url), { type: 'module' });
+    worker.addEventListener('message', (e: MessageEvent<SceneResponse>) => {
+      if (e.data.token !== this.sceneToken) return;
+      this.sceneBuilding = false;
+      if (!this.tracer || !this.groups.length) return;
+      this.tracer.setScene(e.data.scene, this.groundBuffer);
+      this.dirty = true;
+    });
+    return (this.sceneWorker = worker);
+  }
+
   /** One more sample of the still view, or nothing if the accumulation is complete. Returns whether a frame was drawn. */
   private traceFrameStep(encoder: GPUCommandEncoder, frame: Float32Array): boolean {
     const tracer = this.ensureTracer();
-    if (!this.traceMaterialBind || !this.frameBind || !this.post.sceneTexture) return false;
+    if (!this.traceMaterialBind || !this.frameBind || !this.post.sceneTexture || this.sceneBuilding || !tracer.hasScene) return false;
     tracer.resize(this.post.renderWidth, this.post.renderHeight, this.post.sceneTexture);
     // anything that moved — the camera, a light, the exposure — starts the accumulation over
     let same = true;
@@ -1118,6 +1147,8 @@ export class Renderer {
     this.environment?.dispose();
     this.occlusion?.dispose();
     this.post.dispose();
+    this.sceneWorker?.terminate();
+    this.sceneWorker = null;
   }
 
   // ---- internals ----

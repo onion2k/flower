@@ -20,6 +20,8 @@ import { computeWear } from '../mesh/wear';
 export interface SceneGroup {
   mesh: PartMesh;
   matrices: Float32Array;
+  /** Wear per mesh vertex, if already analysed; computed here otherwise. */
+  wear?: Float32Array;
 }
 
 export interface TracedScene {
@@ -66,7 +68,7 @@ export function buildScene(groups: SceneGroup[]): TracedScene {
     const ic = g.matrices.length / 16;
     groupTable.set([attrBase, flatBase, vc, instBase], gi * 4);
     const engrave = engraveCoords(m);
-    const wear = computeWear(m);
+    const wear = g.wear ?? computeWear(m);
     for (let v = 0; v < vc; v++) {
       const o = (attrBase + v) * ATTR_STRIDE;
       attributes[o] = m.normals[v * 3]; attributes[o + 1] = m.normals[v * 3 + 1]; attributes[o + 2] = m.normals[v * 3 + 2];
@@ -123,17 +125,25 @@ function buildBvh(positions: Float32Array, tri: Uint32Array, count: number): Flo
   const order = new Uint32Array(count);
   for (let i = 0; i < count; i++) order[i] = i;
 
-  const nodes: number[] = [];
-  const stack: Array<{ node: number; first: number; count: number }> = [];
-  const pushNode = () => { const id = nodes.length / 8; nodes.push(0, 0, 0, 0, 0, 0, 0, 0); return id; };
+  // a binary tree over leaves of at least one triangle has under 2n nodes;
+  // laid out in place rather than grown, since a growing array of numbers
+  // was a third of the build on a few million triangles
+  const nodes = new Float64Array(Math.max(1, 2 * count) * 8);
+  let nodeCount = 0;
+  const pushNode = () => nodeCount++;
+  // the stack as three parallel arrays: no object a pop
+  const stackNode = new Int32Array(Math.max(1, 2 * count)), stackFirst = new Int32Array(stackNode.length), stackCount = new Int32Array(stackNode.length);
+  let top = 0;
+  const push = (node: number, first: number, n: number) => { stackNode[top] = node; stackFirst[top] = first; stackCount[top] = n; top++; };
   const root = pushNode();
-  stack.push({ node: root, first: 0, count });
+  push(root, 0, count);
 
   const binMin = new Float32Array(BINS * 3), binMax = new Float32Array(BINS * 3), binCount = new Uint32Array(BINS);
   const leftMin = new Float32Array(BINS * 3), leftMax = new Float32Array(BINS * 3), leftCount = new Uint32Array(BINS);
 
-  while (stack.length) {
-    const { node, first, count: n } = stack.pop()!;
+  while (top > 0) {
+    top--;
+    const node = stackNode[top], first = stackFirst[top], n = stackCount[top];
     // bounds of the run, and of its centroids
     let minX = Infinity, minY = Infinity, minZ = Infinity, maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
     let cminX = Infinity, cminY = Infinity, cminZ = Infinity, cmaxX = -Infinity, cmaxY = -Infinity, cmaxZ = -Infinity;
@@ -210,8 +220,8 @@ function buildBvh(positions: Float32Array, tri: Uint32Array, count: number): Flo
     nodes[node * 8 + 3] = left;
     nodes[node * 8 + 7] = 0;
     // the right child is pushed first so the left is built first: no matter for the layout, since ids are fixed here
-    stack.push({ node: right, first: mid, count: first + n - mid });
-    stack.push({ node: left, first, count: mid - first });
+    push(right, mid, first + n - mid);
+    push(left, first, mid - first);
   }
 
   // apply the order to the triangle array
@@ -221,11 +231,11 @@ function buildBvh(positions: Float32Array, tri: Uint32Array, count: number): Flo
     sorted[i * 4] = tri[t * 4]; sorted[i * 4 + 1] = tri[t * 4 + 1]; sorted[i * 4 + 2] = tri[t * 4 + 2]; sorted[i * 4 + 3] = tri[t * 4 + 3];
   }
   tri.set(sorted);
-  const out = new Float32Array(nodes.length);
-  out.set(nodes);
+  const out = new Float32Array(nodeCount * 8);
+  out.set(nodes.subarray(0, nodeCount * 8));
   // the child index and the leaf's first triangle are read as u32 on the GPU: store their bit patterns
   const u = new Uint32Array(out.buffer);
-  for (let i = 0; i < nodes.length / 8; i++) {
+  for (let i = 0; i < nodeCount; i++) {
     u[i * 8 + 3] = nodes[i * 8 + 3];
     u[i * 8 + 7] = nodes[i * 8 + 7];
   }

@@ -856,6 +856,9 @@ export class PathTracer {
   /** Start the accumulation over: the view or the scene changed. */
   reset() { this.samples = 0; this.cursor = 0; }
 
+  /** Whether a scene has been set: nothing can be sampled before one. */
+  get hasScene() { return this.sceneBuffers.length > 0; }
+
   get done() { return this.samples >= this.maxSamples; }
 
   /** Size the accumulation to the target the mean is written into. */

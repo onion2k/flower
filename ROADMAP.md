@@ -541,7 +541,8 @@ The applications considered, and the fit:
 - **Math-based sculptures.** The best fit, nearly a subset of what exists:
   parametric surfaces, wire on any curve, the mathematical paths, the
   metals, the turntable. Needs a scale parameter (done: `mmPerUnit`) and
-  headroom for denser meshes. Small.
+  headroom for denser meshes (done: eleven million triangles measured).
+  Small.
 - **Archvis interiors.** The same intent as the realism phase at another
   scale; static scenes and still views, so the bake-then-look design holds.
   Needs metres, rooms as geometry in place of the table, several shadowed
@@ -618,6 +619,28 @@ a level in 255. Told nothing, the first frame differs by nearly four, most
 of the fixed sizes being under a pixel at that frame's size. What is not
 covered is the catalogue: its generators and chord tolerances are in
 millimetres and stay there, since a sculpture app brings its own.
+
+Then the headroom, measured before it was raised: a headless test builds
+a parametric shell at rising density and times every stage. At three
+million triangles everything held; at eleven million, three things gave.
+The occlusion bake dispatched one workgroup of 64 vertices along one
+axis, past the 65,535 a dimension allows: it takes rows now. The traced
+scene's buffers passed the default 256 MB a buffer and 128 MB a storage
+binding, which the adapter lifts to four gigabytes when asked: the device
+is now made with the adapter's own limits. And the CPU: the wear analysis
+took four seconds, most of it building strings to find the vertices that
+share a position, and ran twice, once for the raster upload and again in
+the tracer's scene; it keys a hash table on the quantised coordinates now,
+five times faster, and the tracer takes the wear the renderer has. What
+was left, five seconds of building the hierarchy over eleven million
+triangles, went to a worker: the raster view stays live and the tracer
+starts when the scene lands, with a token so a scene for a piece since
+replaced is dropped. Eleven million triangles now upload in a second,
+draw a draft frame in a twentieth, bake their shadows in under one, and
+trace within a quarter of a minute of asking; three million are ready to
+trace in a second and a half. The next lever, if it is ever needed, is
+the hierarchy's leaf size: four triangles a leaf gives seven million
+nodes, and eight would halve the build for a little more work a ray.
 
 ## Open, from the first phase
 

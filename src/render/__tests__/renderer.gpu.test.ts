@@ -186,13 +186,14 @@ describe('the renderer, headless', () => {
   it('traces a sample once the view is still', async () => {
     renderer.setQuality('traced');
     renderer.setMoving(false);
-    let drew = false;
-    for (let i = 0; i < 4 && !drew; i++) {
-      // the tracer builds its scene on the first still frame and samples on the next
-      const r = await frame(`traced${i}`);
-      drew = r.drew && renderer.traceSamples > 0;
+    // the scene is built off the thread: raster frames until it lands, then a sample a frame
+    for (let i = 0; i < 500 && renderer.traceSamples === 0; i++) {
+      renderer.requestRender();
+      renderer.render(view);
+      await new Promise((r) => setTimeout(r, 10));
     }
     expect(renderer.traceSamples).toBeGreaterThan(0);
+    await frame('traced');
     renderer.setQuality('draft');
   });
 

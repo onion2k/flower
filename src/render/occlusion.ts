@@ -70,6 +70,8 @@ export const OCCLUSION_SCALE = 1024;
 
 const DIR_STRIDE = 256;
 const WORKGROUP = 64;
+/** WebGPU's guaranteed maxComputeWorkgroupsPerDimension; past it the accumulate dispatch takes rows. */
+const MAX_WORKGROUPS = 65535;
 /** Triangle-draws per submitted chunk of the bake; a comfortable fraction of a second on a small GPU. */
 const TRIANGLE_BUDGET = 12_000_000;
 
@@ -103,7 +105,8 @@ struct Params {
 @group(1) @binding(4) var<uniform> params: Params;
 
 @compute @workgroup_size(${WORKGROUP}) fn main(@builtin(global_invocation_id) id: vec3u) {
-  let i = id.x;
+  // a dispatch is at most 65535 workgroups a dimension: rows of them for a dense mesh
+  let i = id.x + id.y * ${MAX_WORKGROUPS}u * ${WORKGROUP}u;
   if (i >= params.vertexCount * params.instanceCount) { return; }
   let inst = i / params.vertexCount;
   let vid = i - inst * params.vertexCount;
@@ -381,7 +384,8 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
     groups.forEach((g, k) => {
       compute.setBindGroup(1, groupBinds[k]);
       const count = (g.mesh.positions.length / 3) * (g.matrices.length / 16);
-      compute.dispatchWorkgroups(Math.ceil(count / WORKGROUP));
+      const workgroups = Math.ceil(count / WORKGROUP);
+      compute.dispatchWorkgroups(Math.min(workgroups, MAX_WORKGROUPS), Math.ceil(workgroups / MAX_WORKGROUPS));
     });
     compute.end();
 
