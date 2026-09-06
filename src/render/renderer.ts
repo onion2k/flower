@@ -843,6 +843,8 @@ export class Renderer {
       c ? c.size : 1, c ? c.slope : 0, 0, 0,
     ]));
     this.cushionDirty = true;
+    // the tracer reads the table's record and the cushion: a new table is a new scene to it
+    this.tracer?.reset();
     this.dirty = true;
   }
 
@@ -963,7 +965,7 @@ export class Renderer {
         const request: SceneRequest = { token, groups };
         worker.postMessage(request);
       } else {
-        this.tracer.setScene(buildScene(groups), this.groundBuffer);
+        this.tracer.setScene(buildScene(groups), this.groundBuffer, this.cushion.height.createView());
       }
     }
     if (!this.traceMaterialBind && this.materialBuffer && this.glyphBuffer && this.atlasTexture && this.gemPlaneBuffer) {
@@ -987,7 +989,7 @@ export class Renderer {
       if (e.data.token !== this.sceneToken) return;
       this.sceneBuilding = false;
       if (!this.tracer || !this.groups.length) return;
-      this.tracer.setScene(e.data.scene, this.groundBuffer);
+      this.tracer.setScene(e.data.scene, this.groundBuffer, this.cushion.height.createView());
       this.dirty = true;
     });
     return (this.sceneWorker = worker);

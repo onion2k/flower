@@ -45,6 +45,14 @@ class Frame {
     return this.format.startsWith('bgra') ? [p[i + 2], p[i + 1], p[i]] : [p[i], p[i + 1], p[i + 2]];
   }
   sum(x: number, y: number) { return this.at(x, y).reduce((a, b) => a + b); }
+  /** The mean colour of the block of pixels within `r` of a point: under the film's grain. */
+  mean(x: number, y: number, r = 6): [number, number, number] {
+    const acc = [0, 0, 0]; let n = 0;
+    for (let j = y - r; j <= y + r; j++) for (let i = x - r; i <= x + r; i++) {
+      const p = this.at(i, j); acc[0] += p[0]; acc[1] += p[1]; acc[2] += p[2]; n++;
+    }
+    return [acc[0] / n, acc[1] / n, acc[2] / n];
+  }
   get corner() { return this.at(2, 2); }
   get centre() { return this.at(SIZE / 2, SIZE / 2); }
   /** How many distinct colours the middle row holds: a flat fill has one. */
@@ -195,6 +203,27 @@ describe('the renderer, headless', () => {
     expect(renderer.traceSamples).toBeGreaterThan(0);
     await frame('traced');
     renderer.setQuality('draft');
+  });
+
+  it('traces the cushion under a piece on velvet', async () => {
+    renderer.setTable('velvet');
+    renderer.setQuality('traced');
+    renderer.setMoving(false);
+    for (let i = 0; i < 500 && renderer.traceSamples < 4; i++) {
+      renderer.requestRender();
+      renderer.render(view);
+      await new Promise((r) => setTimeout(r, 10));
+    }
+    expect(renderer.traceSamples).toBeGreaterThanOrEqual(4);
+    const f = await Frame.read(gpu, target);
+    await f.save('velvet-traced');
+    // beside the piece is the cushion: velvet, a deep blue, where the page's ground at the corner is neutral
+    const cloth = f.mean(Math.round(SIZE * 0.28), Math.round(SIZE * 0.6));
+    const page = f.mean(8, 8);
+    expect(cloth[2]).toBeGreaterThan(cloth[0] + 3);
+    expect(Math.abs(page[2] - page[0])).toBeLessThan(3);
+    renderer.setQuality('draft');
+    renderer.setTable('matte');
   });
 
   it('compiled every shader and raised no GPU error', async () => {

@@ -1543,12 +1543,12 @@ fn tableSurface(p: vec2f, foot: f32) -> Surface {
 }
 `;
 
-export const GROUND_WGSL = `
-${FRAME_STRUCT}
-${COMMON}
-${GROUND_STRUCT}
-@group(1) @binding(0) var<uniform> ground: Ground;
-@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+/**
+ * The cushion as a height field over the table's disc, read from the bake.
+ * Needs `ground` and `cushionHeight` declared by whoever includes it: the
+ * ground pass draws it, the tracer intersects it.
+ */
+export const CUSHION_FIELD = `
 /** The cushion's height at a point of the disc, bilinear over the baked map. */
 fn heightAt(uv: vec2f) -> f32 {
   let s = f32(textureDimensions(cushionHeight).x);
@@ -1571,6 +1571,15 @@ fn domeAt(local: vec2f) -> f32 {
   return ground.puff * shoulder * crown;
 }
 
+`;
+
+export const GROUND_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+${GROUND_STRUCT}
+@group(1) @binding(0) var<uniform> ground: Ground;
+@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+${CUSHION_FIELD}
 ${TABLE_SURFACES}
 @group(1) @binding(1) var shadow: texture_2d<f32>;
 

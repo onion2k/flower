@@ -186,7 +186,7 @@ export class CushionBake {
   /** `mmPerUnit`: millimetres in one world unit, for the sizes the bake fixes — how wide a footprint spreads, how high over the cloth a part stops pressing. */
   bake(encoder: GPUCommandEncoder, pieceDepth: GPUTextureView, centre: number[], radius: number, shape: CushionShape, mmPerUnit = 1) {
     const { device } = this.ctx;
-    const clearance = 0.25;
+    const clearance = 0.25 / mmPerUnit;
     const h = this.height, sc = this.scratch, pr = this.pressure;
     const sweeps: Array<{ dir: [number, number]; stage: number; from: GPUTexture; to: GPUTexture; aux?: GPUTexture }> = [
       // the collar: eight directions, alternating between the two scratch textures

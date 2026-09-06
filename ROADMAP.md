@@ -378,8 +378,6 @@ pixel wide, after the archvis lighting had left it a flat pale line.
 
 ### Open, from the second phase
 
-- The tracer's table is a plane: a velvet or silk cushion's dome is not
-  traced, so the traced and raster views of a cushioned piece differ.
 - The tracer reads the sky prefiltered at the lobe's centre, and blurred
   further after a matte bounce, for speed. Importance-sampling the
   environment (a CDF over its brightest texels) would let it read the sky
@@ -664,6 +662,22 @@ profile's own seam column, and, as it turned out, a slow drift of wear
 round the ring that had been there all along. Checked headless: a band
 with AMOR VINCIT OMNIA centred on the seam, in the lit view, the normals
 and the wear.
+
+## The cushion, traced
+
+The tracer's table was a plane, so a piece on velvet or silk sat on a
+flat cloth in the traced view and in a dome in the raster one. The
+tracer now reads the same baked height map the ground pass draws: a ray
+that reaches the table's slab is marched through it in forty-eight steps
+and the crossing bisected, and the hit takes the cushion's slope for its
+normal, the cloth's own normal laid over it, the fold where the piece
+has pressed the cloth down, and the dark matte table beyond the rim, as
+the raster shades them. A grazing ray may step over a collar narrower
+than its stride, which is the price of not tracing the bake's mesh. The
+height field's functions are one chunk now, included by both shaders.
+Checked headless: the rosette on velvet, raster against traced, the same
+dome under it in both. The cushion's clearance was a fixed quarter
+millimetre and goes through the unit now too.
 
 ## Open, from the first phase
 

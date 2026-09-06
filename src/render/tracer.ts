@@ -21,7 +21,7 @@
  * for a raster frame.
  */
 import { shader, type Gpu } from '../gpu/context';
-import { COMMON, FRAME_STRUCT, GROUND_STRUCT, MATERIAL_FIELDS, MATERIAL_STRUCT, TABLE_SURFACES } from './shaders';
+import { COMMON, CUSHION_FIELD, FRAME_STRUCT, GROUND_STRUCT, MATERIAL_FIELDS, MATERIAL_STRUCT, TABLE_SURFACES } from './shaders';
 import type { TracedScene } from './bvh';
 
 const TRACE_WGSL = `
@@ -39,7 +39,56 @@ var<private> material: Material;
 ${MATERIAL_FIELDS}
 ${GROUND_STRUCT}
 @group(2) @binding(7) var<uniform> ground: Ground;
+@group(2) @binding(11) var cushionHeight: texture_2d<f32>;
+${CUSHION_FIELD}
 ${TABLE_SURFACES}
+
+/** The cushion's height over the table at a point, 0 beyond the disc, where there is only table. */
+fn cushionAt(xy: vec2f) -> f32 {
+  let local = (xy - ground.centre.xy) / ground.radius;
+  if (max(abs(local.x), abs(local.y)) >= 1.0) { return 0.0; }
+  return heightAt(local * 0.5 + 0.5);
+}
+
+/**
+ * Where a ray meets the cushion: the height field marched through the thin
+ * slab it lives in, the crossing then bisected. The slab is a few
+ * millimetres, so the steps are fine along any ray that is not grazing; a
+ * grazing one may skip a collar narrower than its stride, which is the
+ * cost of not tracing the bake's mesh.
+ */
+fn cushionHit(o: vec3f, d: vec3f, tMax: f32) -> f32 {
+  let zLo = ground.centre.z - 0.3 * ground.puff;
+  let zHi = ground.centre.z + ground.puff;
+  if (abs(d.z) < 1e-6) { return 1e30; }
+  var tA = (zHi - o.z) / d.z;
+  var tB = (zLo - o.z) / d.z;
+  let tIn = max(min(tA, tB), 1e-4);
+  let tOut = min(max(tA, tB), tMax);
+  if (tIn >= tOut) { return 1e30; }
+  let steps = 48;
+  let dt = (tOut - tIn) / f32(steps);
+  var tPrev = tIn;
+  var p = o + d * tPrev;
+  var fPrev = p.z - ground.centre.z - cushionAt(p.xy);
+  if (fPrev <= 0.0) { return 1e30; }   // starting under the cloth: nothing to meet
+  for (var i = 1; i <= steps; i++) {
+    let t = tIn + dt * f32(i);
+    p = o + d * t;
+    let f = p.z - ground.centre.z - cushionAt(p.xy);
+    if (f <= 0.0) {
+      var a = tPrev; var b = t;
+      for (var k = 0; k < 6; k++) {
+        let m = 0.5 * (a + b);
+        let q = o + d * m;
+        if (q.z - ground.centre.z - cushionAt(q.xy) <= 0.0) { b = m; } else { a = m; }
+      }
+      return 0.5 * (a + b);
+    }
+    tPrev = t; fPrev = f;
+  }
+  return 1e30;
+}
 
 struct Node { min: vec3f, left: u32, max: vec3f, count: u32 };
 struct Tri { a: u32, b: u32, c: u32, group: u32 };
@@ -130,9 +179,10 @@ fn triHit(o: vec3f, d: vec3f, i: u32, tMax: f32) -> vec3f {
 fn trace(o: vec3f, d: vec3f, tMaxIn: f32) -> Hit {
   var hit: Hit;
   hit.t = tMaxIn; hit.tri = 0xffffffffu; hit.ground = false;
-  // the table first: a plane, so the rest of the walk can stop short of it
+  // the table first, so the rest of the walk can stop short of it: a plane,
+  // or the cushion's height field where there is one
   if (params.groundOn > 0.5 && abs(d.z) > 1e-6) {
-    let t = (ground.centre.z - o.z) / d.z;
+    let t = select((ground.centre.z - o.z) / d.z, cushionHit(o, d, hit.t), ground.puff > 0.0);
     if (t > 1e-4 && t < hit.t) { hit.t = t; hit.ground = true; }
   }
   if (params.triangles == 0u) { return hit; }
@@ -212,6 +262,23 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
     s.ng = vec3f(0.0, 0.0, 1.0);
     s.n = normalize(surface.normal);
     s.body = surface.albedo;
+    if (ground.puff > 0.0) {
+      // the cushion's normal from its height's slope, the cloth's own laid
+      // over it, and the fold where the piece has pressed the cloth down —
+      // as the ground pass shades it
+      let uv = local * 0.5 + 0.5;
+      let step = 1.0 / f32(textureDimensions(cushionHeight).x);
+      let run = 2.0 * ground.radius * step;
+      let dx = (heightAt(uv + vec2f(step, 0.0)) - heightAt(uv - vec2f(step, 0.0))) / (2.0 * run);
+      let dy = (heightAt(uv + vec2f(0.0, step)) - heightAt(uv - vec2f(0.0, step))) / (2.0 * run);
+      let slopeN = normalize(vec3f(-dx, -dy, 1.0));
+      s.ng = slopeN;
+      s.n = normalize(vec3f(slopeN.xy + s.n.xy * 0.6, slopeN.z));
+      let pressed = clamp((domeAt(local) - heightAt(uv)) / max(ground.puff, 0.1), 0.0, 1.0);
+      // beyond the cushion's rim there is only the dark matte table under it
+      let onCushion = smoothstep(0.0, 0.15, domeAt(local) / max(ground.puff, 0.1));
+      s.body = mix(vec3f(0.04, 0.04, 0.043), s.body * (1.0 - 0.45 * pressed), onCushion);
+    }
     s.f0 = vec3f(0.04);
     s.roughness = clamp(surface.roughness, 0.05, 1.0);
     return s;
@@ -787,6 +854,7 @@ export class PathTracer {
   maxSamples = 1024;
   bounces = 6;
   private groundBuffer: GPUBuffer | null = null;
+  private cushionView: GPUTextureView | null = null;
   triangleCount = 0;
 
   readonly layout: GPUBindGroupLayout;
@@ -818,6 +886,7 @@ export class PathTracer {
         { binding: 8, visibility: c, texture: { sampleType: 'unfilterable-float' } },
         { binding: 9, visibility: c, storageTexture: { format: 'rgba32float', access: 'write-only' } },
         { binding: 10, visibility: c, storageTexture: { format: 'rgba16float', access: 'write-only' } },
+        { binding: 11, visibility: c, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
     const module = shader(device, TRACE_WGSL, 'path tracer');
@@ -829,8 +898,8 @@ export class PathTracer {
     this.params = device.createBuffer({ label: 'trace params', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }
 
-  /** The scene to trace, with the table's record; rebuilt whenever the piece changes. */
-  setScene(scene: TracedScene, ground: GPUBuffer) {
+  /** The scene to trace, with the table's record and the cushion's baked height; rebuilt whenever the piece changes. */
+  setScene(scene: TracedScene, ground: GPUBuffer, cushion: GPUTextureView) {
     const { device } = this.ctx;
     for (const b of this.sceneBuffers) b.destroy();
     const upload = (data: ArrayBufferView, label: string, usage: GPUBufferUsageFlags, minSize = 16) => {
@@ -849,6 +918,7 @@ export class PathTracer {
       upload(scene.inverses, 'trace inverses', GPUBufferUsage.STORAGE),
     ];
     this.groundBuffer = ground;
+    this.cushionView = cushion;
     this.triangleCount = scene.triangleCount;
     this.reset();
   }
@@ -882,7 +952,7 @@ export class PathTracer {
    * never waits on more tracing than a frame's worth.
    */
   sample(encoder: GPUCommandEncoder, frameBind: GPUBindGroup, materialBind: GPUBindGroup, camera: TraceCamera, groundOn: boolean) {
-    if (!this.output || !this.groundBuffer || !this.accum.length || this.done) return;
+    if (!this.output || !this.groundBuffer || !this.cushionView || !this.accum.length || this.done) return;
     const { device } = this.ctx;
     const read = this.accum[0], write = this.accum[1];
     const rows = Math.max(8, Math.min(this.height - this.cursor, Math.ceil(this.bandBudget / this.width / 8) * 8));
@@ -907,6 +977,7 @@ export class PathTracer {
         { binding: 8, resource: read.createView() },
         { binding: 9, resource: write.createView() },
         { binding: 10, resource: this.output.createView() },
+        { binding: 11, resource: this.cushionView },
       ],
     });
     const pass = encoder.beginComputePass({ label: 'path trace' });
