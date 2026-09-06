@@ -297,14 +297,16 @@ describe('part builtins: identical calls share geometry, calls with a path do no
     expect(pa.part.mesh).not.toBe(pb.part.mesh);
   });
 
-  it('a wire, taking a path, is rebuilt rather than shared across identical declarations', () => {
+  it('a wire, taking a path, shares geometry across identical declarations: the path is keyed by the call that made it', () => {
     const sketch = build(`
       part a = wire(path: circle(radius: 5), radius: 1)
       part b = wire(path: circle(radius: 5), radius: 1)
-      form f { place a\n place b }
+      part c = wire(path: circle(radius: 6), radius: 1)
+      form f { place a\n place b\n place c }
     `);
-    const [pa, pb] = sketch.assembly.placements;
-    expect(pa.part.mesh).not.toBe(pb.part.mesh);
+    const [pa, pb, pc] = sketch.assembly.placements;
+    expect(pa.part.mesh).toBe(pb.part.mesh);
+    expect(pc.part.mesh).not.toBe(pa.part.mesh);
   });
 });
 

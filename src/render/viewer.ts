@@ -112,6 +112,7 @@ export class Viewer {
   setDebug(mode: number) { this.renderer.setDebug(mode); }
   setContact(v: number) { this.renderer.setContact(v); }
   setInstanced(groups: InstanceGroup[]) { this.renderer.setInstanced(groups); }
+  move(group: number, matrices: Float32Array) { this.renderer.move(group, matrices); }
   setMesh(data: PartMesh) { this.renderer.setMesh(data); }
   setSelection(selected: Array<Float32Array<ArrayBuffer>> | null) { this.renderer.setSelection(selected); }
   setAnchors(anchors: Anchor[], scale: number) { this.renderer.setAnchors(anchors, scale); }

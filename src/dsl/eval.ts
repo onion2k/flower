@@ -20,8 +20,16 @@ import { DslError, type Span } from './lexer';
 const partMemo = new Map<string, Part>();
 const PART_MEMO_LIMIT = 400;
 
+/**
+ * The key of the call that made a value, on values the memo could not key
+ * by content — a curve is functions — so a wire along a spiral is the same
+ * wire on the next compile, and its mesh stays where the renderer put it.
+ */
+const MADE_BY = Symbol('madeBy');
+
 function memoValue(value: unknown, depth: number): string | null {
   if (depth > 6) return null;
+  if (value && typeof value === 'object' && MADE_BY in value) return (value as Record<symbol, string>)[MADE_BY];
   if (typeof value === 'number' || typeof value === 'string' || typeof value === 'boolean') return JSON.stringify(value);
   if (Array.isArray(value)) {
     const parts: string[] = [];
@@ -55,6 +63,15 @@ function partMemoKey(callee: string, args: CallArg[]): string | null {
   // a part built at one detail is not the part at another
   return `${callee}@${detail()}(${parts.join(';')})`;
 }
+
+/**
+ * Fillets, like parts, outlive a compile: a fillet is keyed by its size and
+ * material alone, and detail, so the solder round a stud is the same mesh on
+ * the next keystroke, and the renderer keeps its bake. Emptied when it grows
+ * past the part memo's limit, or detail changes.
+ */
+const filletMemo: FilletCache = new Map();
+let filletDetail = detail();
 
 function rememberPart(key: string, part: Part) {
   if (partMemo.size >= PART_MEMO_LIMIT) {
@@ -161,6 +178,7 @@ function importSketch(name: string, span: Span, ctx: Context): Assembly {
 }
 
 function evaluateIn(program: Program, ctx: Context): Sketch {
+  if (filletDetail !== detail() || filletMemo.size > PART_MEMO_LIMIT) { filletMemo.clear(); filletDetail = detail(); }
   const scope = new Map<string, Value>();
   /** The sketch's seed: mixed into every rnd(), so "seed 7" reshuffles them all. */
   let seed = 0;
@@ -264,6 +282,11 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
         const result = builtin.fn(reader);
         reader.done();
         if (memoKey !== null && isPart(result)) rememberPart(memoKey, result);
+        else if (memoKey !== null && result && typeof result === 'object' && memoValue(result, 0) === null && !Object.isFrozen(result)) {
+          // keyed by its making only where its content cannot key it; the
+          // sketch's seed is part of the making, for anything that drew on it
+          Object.defineProperty(result, MADE_BY, { value: `${memoKey}#${seed}`, enumerable: false });
+        }
         return result;
       }
     }
@@ -376,7 +399,7 @@ function evaluateIn(program: Program, ctx: Context): Sketch {
 
   function runActions(assembly: Assembly, actions: Action[]) {
     const placed = new Map<string, Placed>();
-    const fillets: FilletCache = new Map();
+    const fillets = filletMemo;
 
     for (const action of actions) {
       if (action.kind === 'place') {

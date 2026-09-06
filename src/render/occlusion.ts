@@ -39,6 +39,8 @@ export interface OcclusionGroup {
   normal: GPUBuffer;
   instance: GPUBuffer;
   index: GPUBuffer;
+  /** Left out of the bake, casting nothing and receiving nothing: a part that moves. Its entries stay zero, which the shader reads as unoccluded. */
+  dynamic?: boolean;
 }
 
 export interface Occlusion {
@@ -364,6 +366,7 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
     depthPass.setPipeline(pipes.depth);
     depthPass.setBindGroup(0, dirBind, offset);
     for (const g of groups) {
+      if (g.dynamic) continue;
       depthPass.setVertexBuffer(0, g.position);
       depthPass.setVertexBuffer(1, g.instance);
       depthPass.setIndexBuffer(g.index, 'uint32');
@@ -382,6 +385,7 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
     compute.setPipeline(pipes.accumulate);
     compute.setBindGroup(0, accDirBind, offset);
     groups.forEach((g, k) => {
+      if (g.dynamic) return;
       compute.setBindGroup(1, groupBinds[k]);
       const count = (g.mesh.positions.length / 3) * (g.matrices.length / 16);
       const workgroups = Math.ceil(count / WORKGROUP);

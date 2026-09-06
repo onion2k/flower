@@ -30,7 +30,7 @@ import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey, type Rasteriser } from './glyphs';
 import { bakeEnvironment, filterCube, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
-import { bakeOcclusion, orthoFromDirection, worldBounds, type Occlusion } from './occlusion';
+import { bakeOcclusion, orthoFromDirection, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
 import { PathTracer } from './tracer';
 import type { SceneRequest, SceneResponse } from './scene.worker';
@@ -93,6 +93,23 @@ export interface InstanceGroup {
   /** A cut stone's facet planes, and its width. */
   gemPlanes?: Float32Array;
   gemSize?: number;
+  /**
+   * A group that moves. It is left out of the baked sky occlusion — casting
+   * none and receiving none, though the key's shadow, the rig's, the contact
+   * shadow and the cushion still follow it — so `move` on it restarts no bake.
+   */
+  dynamic?: boolean;
+}
+
+/** A mesh's vertex buffers, shared by every group that draws the mesh. */
+interface MeshBuffers {
+  position: GPUBuffer;
+  normal: GPUBuffer;
+  uv: GPUBuffer;
+  wear: GPUBuffer;
+  face: GPUBuffer;
+  engrave: GPUBuffer;
+  index: GPUBuffer;
 }
 
 interface GpuGroup {
@@ -883,35 +900,52 @@ export class Renderer {
   private quality: Quality = 'draft';
 
   /** One draw per distinct part mesh, however many times it is placed. */
+  /**
+   * The scene: every group to draw, in the order their indices will mean
+   * from here on. A mesh already on the GPU keeps its buffers, so a scene
+   * that changes in one part uploads one part; and a bake the change does
+   * not touch — the sky occlusion, when the static groups are as they were —
+   * is kept rather than begun again.
+   */
   setInstanced(groups: InstanceGroup[]) {
     const { device } = this.ctx;
-    if (groups.length) {
-      const b = worldBounds(groups.map((g) => ({ mesh: g.mesh, matrices: g.matrices })));
-      this.sceneCentre = [(b.min[0] + b.max[0]) / 2, (b.min[1] + b.max[1]) / 2, (b.min[2] + b.max[2]) / 2];
-      this.sceneTop = b.max[2];
-      // the table under the piece is in the shadow's view too, so it reaches out to the occlusion bake's ground radius
-      this.sceneRadius = Math.max(1e-3, Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2) * 1.9;
-    }
+    if (groups.length) this.updateSceneBounds(groups);
     this.shadowDirty = true;
-    for (const g of this.groups) {
-      for (const b of [g.position, g.normal, g.uv, g.wear, g.face, g.engrave, g.instance, g.selected, g.index]) b.destroy();
-    }
+    const previous = this.groups;
+    const occlusionKept = this.occlusion !== null && !this.fullBakeDue && sameOcclusionScene(previous.map((g) => g.source), groups);
+    for (const g of previous) { g.instance.destroy(); g.selected.destroy(); }
     const shared = GPUBufferUsage.VERTEX | GPUBufferUsage.STORAGE;
-    this.groups = groups.map((g) => ({
-      source: g,
-      position: bufferFrom(device, g.mesh.positions, shared, 'positions'),
-      normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
-      uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
-      wear: bufferFrom(device, wearOf(g.mesh, this.mm(0.6)), GPUBufferUsage.VERTEX, 'wear'),
-      face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
-      engrave: bufferFrom(device, engraveCoords(g.mesh), GPUBufferUsage.VERTEX, 'engrave'),
-      instance: bufferFrom(device, g.matrices, shared, 'instances'),
-      selected: emptyBuffer(device, (g.matrices.length / 16) * 4, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, 'selected'),
-      index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
-      indexCount: g.mesh.indices.length,
-      instanceCount: g.matrices.length / 16,
-      vertexCount: g.mesh.positions.length / 3,
-    }));
+    const wanted = new Set(groups.map((g) => g.mesh));
+    for (const [mesh, b] of this.meshBuffers) {
+      if (wanted.has(mesh)) continue;
+      for (const buffer of [b.position, b.normal, b.uv, b.wear, b.face, b.engrave, b.index]) buffer.destroy();
+      this.meshBuffers.delete(mesh);
+    }
+    this.groups = groups.map((g) => {
+      let b = this.meshBuffers.get(g.mesh);
+      if (!b) {
+        b = {
+          position: bufferFrom(device, g.mesh.positions, shared, 'positions'),
+          normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
+          uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
+          wear: bufferFrom(device, wearOf(g.mesh, this.mm(0.6)), GPUBufferUsage.VERTEX, 'wear'),
+          face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
+          engrave: bufferFrom(device, engraveCoords(g.mesh), GPUBufferUsage.VERTEX, 'engrave'),
+          index: bufferFrom(device, g.mesh.indices, GPUBufferUsage.INDEX, 'indices'),
+        };
+        this.meshBuffers.set(g.mesh, b);
+      }
+      return {
+        source: g,
+        ...b,
+        // written in place by move, so COPY_DST
+        instance: bufferFrom(device, g.matrices, shared | GPUBufferUsage.COPY_DST, 'instances'),
+        selected: emptyBuffer(device, (g.matrices.length / 16) * 4, GPUBufferUsage.VERTEX | GPUBufferUsage.COPY_DST, 'selected'),
+        indexCount: g.mesh.indices.length,
+        instanceCount: g.matrices.length / 16,
+        vertexCount: g.mesh.positions.length / 3,
+      };
+    });
 
     this.materialBuffer?.destroy();
     this.materialBuffer = device.createBuffer({
@@ -930,12 +964,71 @@ export class Renderer {
       ],
     });
 
-    if (this.envSamples) this.bakeOcclusion();
+    if (occlusionKept) {
+      // the same static scene under a moved or exchanged dynamic part: the
+      // bake stands, its bases still in place, and only what follows the
+      // moving part is redone
+      this.rebuildFrameBind();
+      this.writeMaterials();
+      this.cushionDirty = true;
+      this.invalidateProbe();
+      this.localShadowDirty = true;
+    } else if (this.envSamples) this.bakeOcclusion();
     else this.clearOcclusion();
     this.writeMaterials();
     this.traceMaterialBind = null;
     this.traceSceneStale = true;
     this.dirty = true;
+  }
+
+  /**
+   * Move one group's placements: the same count of matrices, written in
+   * place. What follows the placement is redone — the key's and the rig's
+   * shadows, the cushion, the probe, the piece's own lights, the traced
+   * scene — and the sky occlusion is baked again only for a static group;
+   * a dynamic one moves under the bake that stands.
+   */
+  move(group: number, matrices: Float32Array) {
+    const g = this.groups[group];
+    if (!g) throw new Error(`move: no group ${group}`);
+    if (matrices.length !== g.instanceCount * 16) throw new Error(`move: group ${group} has ${g.instanceCount} placements, not ${matrices.length / 16}`);
+    g.source.matrices.set(matrices);
+    this.ctx.device.queue.writeBuffer(g.instance, 0, g.source.matrices as Float32Array<ArrayBuffer>);
+    this.updateSceneBounds(this.groups.map((x) => x.source));
+    this.shadowDirty = true;
+    this.cushionDirty = true;
+    this.localShadowDirty = true;
+    this.writeLights();
+    this.invalidateProbe();
+    this.traceSceneStale = true;
+    if (!g.source.dynamic && this.envSamples) this.bakeOcclusion();
+    this.dirty = true;
+  }
+
+  /** Bakes of the sky occlusion begun, for measuring what a change costs. */
+  occlusionBakes = 0;
+
+  /** The mesh buffers on the GPU, by mesh, shared by the groups that draw it. */
+  private meshBuffers = new Map<PartMesh, MeshBuffers>();
+
+  /** The scene's centre, top and radius, from each placed mesh's box: what the shadows, probe and lights reach round. */
+  private updateSceneBounds(groups: InstanceGroup[]) {
+    const min: Vec3 = [Infinity, Infinity, Infinity], max: Vec3 = [-Infinity, -Infinity, -Infinity];
+    for (const g of groups) {
+      const b = boundsOf(g.mesh);
+      for (let i = 0; i < g.matrices.length; i += 16) {
+        const m = g.matrices.subarray(i, i + 16);
+        for (let c = 0; c < 8; c++) {
+          const p = transformPoint(m, [c & 1 ? b.max[0] : b.min[0], c & 2 ? b.max[1] : b.min[1], c & 4 ? b.max[2] : b.min[2]]);
+          for (let k = 0; k < 3; k++) { if (p[k] < min[k]) min[k] = p[k]; if (p[k] > max[k]) max[k] = p[k]; }
+        }
+      }
+    }
+    if (!Number.isFinite(min[0])) return;
+    this.sceneCentre = [(min[0] + max[0]) / 2, (min[1] + max[1]) / 2, (min[2] + max[2]) / 2];
+    this.sceneTop = max[2];
+    // the table under the piece is in the shadow's view too, so it reaches out to the occlusion bake's ground radius
+    this.sceneRadius = Math.max(1e-3, Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]) / 2) * 1.9;
   }
 
   // --- the path tracer: final quality, traced while the view is still ---
@@ -1151,6 +1244,10 @@ export class Renderer {
     this.post.dispose();
     this.sceneWorker?.terminate();
     this.sceneWorker = null;
+    for (const g of this.groups) { g.instance.destroy(); g.selected.destroy(); }
+    for (const b of this.meshBuffers.values()) for (const buffer of [b.position, b.normal, b.uv, b.wear, b.face, b.engrave, b.index]) buffer.destroy();
+    this.meshBuffers.clear();
+    this.groups = [];
   }
 
   // ---- internals ----
@@ -1836,10 +1933,11 @@ export class Renderer {
     // further change moves the due time on
     this.fullBakeDue = !full && this.quality !== 'draft' ? performance.now() + 350 : 0;
     const previous = this.occlusion;
+    this.occlusionBakes++;
     const occ = bakeOcclusion(
       this.ctx,
       this.groups.map((g) => ({
-        mesh: g.source.mesh, matrices: g.source.matrices,
+        mesh: g.source.mesh, matrices: g.source.matrices, dynamic: g.source.dynamic,
         position: g.position, normal: g.normal, instance: g.instance, index: g.index,
       })),
       {
@@ -1987,4 +2085,21 @@ function unitGrid(n: number) {
 function warmthColour(warmth: number): Vec3 {
   const w = Math.max(-1, Math.min(1, warmth));
   return w >= 0 ? [1, 1 - 0.28 * w, 1 - 0.62 * w] : [1 + 0.45 * w, 1 + 0.2 * w, 1];
+}
+
+/**
+ * Whether two scenes bake the same sky occlusion: the same meshes in the
+ * same order with the same placement counts — the lookup's layout — and
+ * every static group placed as it was. A dynamic group may move or be
+ * exchanged for another of the same mesh and count.
+ */
+function sameOcclusionScene(a: InstanceGroup[], b: InstanceGroup[]): boolean {
+  if (a.length !== b.length) return false;
+  for (let k = 0; k < a.length; k++) {
+    const x = a[k], y = b[k];
+    if (x.mesh !== y.mesh || x.matrices.length !== y.matrices.length || !!x.dynamic !== !!y.dynamic) return false;
+    if (y.dynamic) continue;
+    for (let i = 0; i < x.matrices.length; i++) if (x.matrices[i] !== y.matrices[i]) return false;
+  }
+  return true;
 }

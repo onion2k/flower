@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { server } from '@vitest/browser/context';
 import { createDevice, type Gpu } from '../../gpu/context';
-import { Renderer } from '../renderer';
+import { Renderer, type InstanceGroup } from '../renderer';
 import { compile } from '../../dsl/index';
 import { examples } from '../../dsl/examples';
 import { groupByMesh } from '../../assembly/groups';
@@ -179,6 +179,39 @@ describe('the renderer, headless', () => {
     expect(drew).toBe(true);
     expect(f.sum(SIZE / 2, SIZE / 2)).toBeGreaterThan(f.sum(2, 2) + 60);
     reference.baked = f;
+  });
+
+  it('moves a dynamic part under the bake that stands, and bakes again for a static one', async () => {
+    const groups: InstanceGroup[] = rosette().groups;
+    // the heart is the one part placed once; it will be the moving part
+    const heart = groups.findIndex((g) => g.matrices.length === 16);
+    expect(heart).toBeGreaterThanOrEqual(0);
+    groups[heart].dynamic = true;
+    const bakes0 = renderer.occlusionBakes;
+    renderer.setInstanced(groups);
+    expect(renderer.occlusionBakes).toBe(bakes0 + 1);
+    const before = await frame('dynamic-before');
+    const bakes1 = renderer.occlusionBakes;
+
+    // lift the heart: a frame, no bake
+    const lifted = new Float32Array(groups[heart].matrices);
+    lifted[14] += 6;
+    renderer.move(heart, lifted);
+    expect(renderer.occlusionBakes).toBe(bakes1);
+    const after = await frame('dynamic-after');
+    expect(after.drew).toBe(true);
+    expect(difference(before.frame, after.frame)).toBeGreaterThan(0.3);
+
+    // the same scene given again keeps its bake and reuses every mesh's buffers
+    renderer.setInstanced(groups.map((g) => ({ ...g })));
+    expect(renderer.occlusionBakes).toBe(bakes1);
+
+    // a static part moved is a new bake
+    const petal = groups.findIndex((g) => g.matrices.length > 16);
+    renderer.move(petal, groups[petal].matrices);
+    expect(renderer.occlusionBakes).toBe(bakes1 + 1);
+    expect((await frame('static-moved')).drew).toBe(true);
+    expect(() => renderer.move(heart, new Float32Array(32))).toThrow();
   });
 
   it('draws the debug views', async () => {

@@ -679,6 +679,32 @@ Checked headless: the rosette on velvet, raster against traced, the same
 dome under it in both. The cushion's clearance was a fixed quarter
 millimetre and goes through the unit now too.
 
+## The scene as an interface
+
+What the puzzle box asked for: parts that move without every bake
+starting over. The bakes were sorted by what they depend on. The key's
+shadow, the rig's and the piece's own lights are redrawn whenever
+anything moves, and cost a pass; the cushion and the probe are cheap
+bakes with a debounce; the traced scene rebuilds off the thread. Only the
+sky occlusion is dear, and it is the one bake a moving part must not
+restart. So a group may be marked dynamic: it is left out of that bake,
+casting nothing into it and receiving nothing from it, which the lookup
+already reads as unoccluded, while the key's shadow, the contact shadow
+and the cushion still follow it. `move` writes a group's matrices in
+place and redoes what follows them, and bakes the occlusion again only
+for a static group. `setInstanced` itself learned two things on the
+way: a mesh already on the GPU keeps its buffers, so a scene that
+changes in one part uploads one part — every keystroke in the editor
+had been uploading the whole piece, and a wire along a spiral was a new
+mesh every compile until curves learned to carry the key of the call
+that made them, and a solder fillet likewise until its cache outlived
+the compile — and a scene whose static groups
+are as they were keeps its bake, so a dynamic part may be moved or
+exchanged through the same call. Not done: a real scene graph, or a
+parent that carries its children; a caller composes matrices itself.
+The test lifts the rosette's heart as a dynamic part under a standing
+bake, then moves a petal and sees the bake begin again.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
