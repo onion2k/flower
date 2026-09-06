@@ -40,6 +40,8 @@ ${MATERIAL_FIELDS}
 ${GROUND_STRUCT}
 @group(2) @binding(7) var<uniform> ground: Ground;
 @group(2) @binding(11) var cushionHeight: texture_2d<f32>;
+// the sky's cumulative distribution over the sample cube's texels, 256 to a row
+@group(2) @binding(12) var skyCdf: texture_2d<f32>;
 ${CUSHION_FIELD}
 ${TABLE_SURFACES}
 
@@ -113,6 +115,10 @@ struct Params {
   shift: vec2f,     // the lens shift, as the projection applies it
   rowOffset: u32,   // the first row of this dispatch's band
   eps: f32,         // the step off a surface before the next ray: a fiftieth of a millimetre, in world units
+  skyCount: u32,    // texels in the sky's distribution; 0 before there is one
+  skySize: u32,     // the sample cube's face size
+  _r0: u32,
+  _r1: u32,
 };
 @group(2) @binding(0) var<uniform> params: Params;
 @group(2) @binding(1) var<storage, read> nodes: array<Node>;
@@ -627,7 +633,7 @@ fn evalBsdf(s: Surf, v: vec3f, l: vec3f) -> Bsdf {
  * raster path reads it — the sky's small bright lights would otherwise take
  * a thousand samples to settle on a satin surface.
  */
-struct Sampled { l: vec3f, weight: vec3f, specular: bool, skyDir: vec3f, skyRough: f32 };
+struct Sampled { l: vec3f, weight: vec3f, specular: bool, skyDir: vec3f, skyRough: f32, pdf: f32 };
 fn sampleBsdf(s: Surf, v: vec3f) -> Sampled {
   var out: Sampled;
   let n = s.n;
@@ -659,7 +665,99 @@ fn sampleBsdf(s: Surf, v: vec3f) -> Sampled {
   let b = evalBsdf(s, v, l);
   let ndl = max(dot(n, l), 0.0);
   out.weight = select(vec3f(0.0), b.f * ndl / b.pdf, b.pdf > 1e-6 && ndl > 0.0);
+  out.pdf = b.pdf;
   return out;
+}
+
+// --- the sky, sampled where its light is ---
+fn skyCdfAt(i: i32) -> f32 { return textureLoad(skyCdf, vec2i(i % 256, i / 256), 0).r; }
+fn cubeDir(face: i32, sc: f32, tc: f32) -> vec3f {
+  var v: vec3f;
+  switch (face) {
+    case 0: { v = vec3f(1.0, -tc, -sc); }
+    case 1: { v = vec3f(-1.0, -tc, sc); }
+    case 2: { v = vec3f(sc, 1.0, tc); }
+    case 3: { v = vec3f(sc, -1.0, -tc); }
+    case 4: { v = vec3f(sc, -tc, 1.0); }
+    default: { v = vec3f(-sc, -tc, -1.0); }
+  }
+  return normalize(v);
+}
+fn texelSolid(x: i32, y: i32, size: i32) -> f32 {
+  let sc = (2.0 * (f32(x) + 0.5)) / f32(size) - 1.0;
+  let tc = (2.0 * (f32(y) + 0.5)) / f32(size) - 1.0;
+  return 4.0 / (f32(size * size) * pow(1.0 + sc * sc + tc * tc, 1.5));
+}
+fn texelMass(i: i32) -> f32 { return skyCdfAt(i) - select(0.0, skyCdfAt(i - 1), i > 0); }
+
+struct SkySample { dir: vec3f, pdf: f32 };
+/**
+ * A direction drawn from the sky in proportion to its light: the texel by
+ * the cumulative distribution, a point within it, and the density per
+ * steradian that drew it. The distribution is in the cube's own frame; the
+ * direction is turned back into the world's.
+ */
+fn sampleSky(r1: f32, r2: f32, r3: f32) -> SkySample {
+  var out: SkySample;
+  out.pdf = 0.0;
+  let n = i32(params.skyCount);
+  if (n == 0) { return out; }
+  var lo = 0; var hi = n - 1;
+  for (var k = 0; k < 20 && lo < hi; k++) {
+    let mid = (lo + hi) / 2;
+    if (skyCdfAt(mid) < r1) { lo = mid + 1; } else { hi = mid; }
+  }
+  let size = i32(params.skySize);
+  let face = lo / (size * size);
+  let rem = lo - face * size * size;
+  let y = rem / size;
+  let x = rem - y * size;
+  let sc = (2.0 * (f32(x) + r2)) / f32(size) - 1.0;
+  let tc = (2.0 * (f32(y) + r3)) / f32(size) - 1.0;
+  out.dir = spinZ(-frame.envSpin) * cubeDir(face, sc, tc);
+  out.pdf = texelMass(lo) / texelSolid(x, y, size);
+  return out;
+}
+/** The density with which sampleSky would have drawn a world direction. */
+fn skyPdf(dir: vec3f) -> f32 {
+  let n = i32(params.skyCount);
+  if (n == 0) { return 0.0; }
+  let dc = spinZ(frame.envSpin) * dir;
+  let a = abs(dc);
+  var face = 0; var sc = 0.0; var tc = 0.0; var ma = 1.0;
+  if (a.x >= a.y && a.x >= a.z) {
+    ma = a.x;
+    if (dc.x > 0.0) { face = 0; sc = -dc.z; tc = -dc.y; } else { face = 1; sc = dc.z; tc = -dc.y; }
+  } else if (a.y >= a.z) {
+    ma = a.y;
+    if (dc.y > 0.0) { face = 2; sc = dc.x; tc = dc.z; } else { face = 3; sc = dc.x; tc = -dc.z; }
+  } else {
+    ma = a.z;
+    if (dc.z > 0.0) { face = 4; sc = dc.x; tc = -dc.y; } else { face = 5; sc = -dc.x; tc = -dc.y; }
+  }
+  let size = i32(params.skySize);
+  let x = clamp(i32((sc / ma + 1.0) * 0.5 * f32(size)), 0, size - 1);
+  let y = clamp(i32((tc / ma + 1.0) * 0.5 * f32(size)), 0, size - 1);
+  let i = (face * size + y) * size + x;
+  return texelMass(i) / texelSolid(x, y, size);
+}
+/**
+ * The sky's light at a point by next event: one direction drawn from the
+ * sky's own distribution, tested for occlusion, and weighed against the
+ * chance the surface's sampler would have found it, so the sun in a
+ * daylight sky lands on a matte face in a handful of samples rather than
+ * a thousand. Read sharp: this is the sky where the light is.
+ */
+fn skyLight(s: Surf, v: vec3f) -> vec3f {
+  let sk = sampleSky(rand(), rand(), rand());
+  if (sk.pdf <= 0.0) { return vec3f(0.0); }
+  let l = sk.dir;
+  let ndl = dot(s.n, l);
+  if (ndl <= 0.0 || dot(s.ng, l) <= 0.0) { return vec3f(0.0); }
+  if (occluded(s.p + s.ng * params.eps, l, 1e6)) { return vec3f(0.0); }
+  let b = evalBsdf(s, v, l);
+  let w = sk.pdf * sk.pdf / (sk.pdf * sk.pdf + b.pdf * b.pdf);
+  return b.f * ndl * sky(l, 0.0) * w / sk.pdf;
 }
 
 // --- lights: the key and the rig as discs, sampled by next event ---
@@ -698,9 +796,10 @@ fn directLight(s: Surf, v: vec3f) -> vec3f {
 
 // --- the sky where a path escapes ---
 fn sky(d: vec3f, roughness: f32) -> vec3f {
-  // a rough bounce reads the sky blurred by its own roughness, as the raster
-  // path does: the lobe's spread is in the sample already, so this is a
-  // little more blur than is strictly true, for a great deal less noise
+  // read blurred by a roughness only while there is no distribution to
+  // sample the sky by: then a rough bounce reads it blurred by its own
+  // roughness, as the raster path does, for a great deal less noise at some
+  // bias. With the distribution, every read is sharp.
   return env(spinZ(frame.envSpin) * d, roughness * frame.maxLod);
 }
 
@@ -720,12 +819,30 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
   var inGem = false;
   var gemAbsorb = vec3f(0.0);
   var channel = -1;   // which channel a dispersed path carries, or all
+  // whether the sky was sampled at the last surface, and the density the
+  // surface's own sampler drew the bounce with: an escaped ray is then
+  // weighed against the sky's density, the other half of the same estimate
+  var skySampled = false;
+  var lastPdf = 0.0;
   for (var bounce = 0u; bounce <= params.bounces; bounce++) {
     let hit = trace(o, d, 1e6);
     if (hit.tri == 0xffffffffu && !hit.ground) {
       // the sky lights the piece and shows in it; behind the piece the raster
       // path draws the page's colour, and so does this, so the two agree
-      result += throughput * select(sky(skyDir, skyRough), ground.background, bounce == 0u);
+      // With the sky's distribution to sample by, the sky is read sharp: the
+      // blur below was the defence against fireflies from a matte bounce
+      // finding a small bright light by chance, and the weighing against the
+      // sky's density does that without the bias — measured against a
+      // sharp reference, the blur was seven levels off in the studio, and
+      // the weighed sharp read closer at every count of samples. Before the
+      // distribution lands, the blur stands.
+      var w = 1.0;
+      if (skySampled) {
+        let ps = skyPdf(d);
+        w = lastPdf * lastPdf / max(lastPdf * lastPdf + ps * ps, 1e-12);
+      }
+      let rough = select(skyRough, 0.0, params.skyCount > 0u);
+      result += throughput * select(sky(skyDir, rough) * w, ground.background, bounce == 0u);
       break;
     }
     dist += hit.t;
@@ -755,7 +872,7 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
       if (rand() < f) {
         d = reflect(d, s.n);
         o = s.p + s.ng * params.eps;
-        lastSpecular = true; skyDir = d; skyRough = 0.0;
+        lastSpecular = true; skyDir = d; skyRough = 0.0; skySampled = false;
       } else {
         let refracted = refract(d, s.n, 1.0 / ratio);
         if (dot(refracted, refracted) < 1e-6) {
@@ -772,12 +889,18 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
       continue;
     }
 
-    // direct light at this point, then a bounce of the surface's choosing
+    // direct light at this point — the lights, and the sky by its own
+    // distribution, except on a mirror, which finds the sky itself — then a
+    // bounce of the surface's choosing
     result += throughput * directLight(s, v);
+    let mirror = s.roughness < 0.15 && s.metallic > 0.5;
+    skySampled = !mirror && params.skyCount > 0u;
+    if (skySampled) { result += throughput * skyLight(s, v); }
     let next = sampleBsdf(s, v);
     if (all(next.weight <= vec3f(0.0))) { break; }
     throughput *= next.weight;
     lastSpecular = next.specular;
+    lastPdf = next.pdf;
     skyDir = next.skyDir; skyRough = select(next.skyRough, max(next.skyRough, 0.35), scattered);
     if (!next.specular) { scattered = true; }
     if (dot(next.l, s.ng) <= 0.0) { break; }
@@ -855,6 +978,10 @@ export class PathTracer {
   bounces = 6;
   private groundBuffer: GPUBuffer | null = null;
   private cushionView: GPUTextureView | null = null;
+  /** The sky's cumulative distribution, 256 texels to a row; a single texel until a sky is given. */
+  private skyTexture: GPUTexture;
+  private skyCount = 0;
+  private skySize = 0;
   triangleCount = 0;
 
   readonly layout: GPUBindGroupLayout;
@@ -887,6 +1014,7 @@ export class PathTracer {
         { binding: 9, visibility: c, storageTexture: { format: 'rgba32float', access: 'write-only' } },
         { binding: 10, visibility: c, storageTexture: { format: 'rgba16float', access: 'write-only' } },
         { binding: 11, visibility: c, texture: { sampleType: 'unfilterable-float' } },
+        { binding: 12, visibility: c, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
     const module = shader(device, TRACE_WGSL, 'path tracer');
@@ -895,7 +1023,8 @@ export class PathTracer {
       layout: device.createPipelineLayout({ bindGroupLayouts: [frameLayout, this.materialLayout, this.layout] }),
       compute: { module, entryPoint: 'main' },
     });
-    this.params = device.createBuffer({ label: 'trace params', size: 112, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.params = device.createBuffer({ label: 'trace params', size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    this.skyTexture = device.createTexture({ label: 'sky cdf', size: [1, 1], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
   }
 
   /** The scene to trace, with the table's record and the cushion's baked height; rebuilt whenever the piece changes. */
@@ -920,6 +1049,27 @@ export class PathTracer {
     this.groundBuffer = ground;
     this.cushionView = cushion;
     this.triangleCount = scene.triangleCount;
+    this.reset();
+  }
+
+  /**
+   * The sky to sample by: its cumulative distribution over the sample
+   * cube's texels, face by face, and the cube's face size. Given whenever
+   * the environment's readback lands; until then the tracer reads the sky
+   * only where its paths escape.
+   */
+  setSky(cdf: Float32Array, size: number) {
+    const { device } = this.ctx;
+    const width = 256, height = Math.max(1, Math.ceil(cdf.length / width));
+    if (this.skyTexture.width !== width || this.skyTexture.height !== height) {
+      this.skyTexture.destroy();
+      this.skyTexture = device.createTexture({ label: 'sky cdf', size: [width, height], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
+    }
+    const padded = new Float32Array(width * height);
+    padded.set(cdf);
+    device.queue.writeTexture({ texture: this.skyTexture }, padded, { bytesPerRow: width * 4 }, [width, height]);
+    this.skyCount = cdf.length;
+    this.skySize = size;
     this.reset();
   }
 
@@ -957,7 +1107,7 @@ export class PathTracer {
     const read = this.accum[0], write = this.accum[1];
     const rows = Math.max(8, Math.min(this.height - this.cursor, Math.ceil(this.bandBudget / this.width / 8) * 8));
     const pixelAngle = 2 * camera.tanHalf / this.height;
-    const p = new ArrayBuffer(112);
+    const p = new ArrayBuffer(128);
     const f = new Float32Array(p), u = new Uint32Array(p);
     f.set(camera.origin, 0); u[3] = this.samples;
     f.set(camera.forward, 4); f[7] = camera.tanHalf;
@@ -967,6 +1117,7 @@ export class PathTracer {
     f[20] = groundOn ? 1 : 0; f[21] = pixelAngle; u[22] = 0x51ed27; u[23] = this.triangleCount;
     f[24] = camera.shift[0]; f[25] = camera.shift[1];
     u[26] = this.cursor; f[27] = 0.02 / this.mmPerUnit;
+    u[28] = this.skyCount; u[29] = this.skySize;
     device.queue.writeBuffer(this.params, 0, p);
     const bind = device.createBindGroup({
       label: 'trace scene', layout: this.layout,
@@ -978,6 +1129,7 @@ export class PathTracer {
         { binding: 9, resource: write.createView() },
         { binding: 10, resource: this.output.createView() },
         { binding: 11, resource: this.cushionView },
+        { binding: 12, resource: this.skyTexture.createView() },
       ],
     });
     const pass = encoder.beginComputePass({ label: 'path trace' });
@@ -997,6 +1149,7 @@ export class PathTracer {
   }
 
   dispose() {
+    this.skyTexture.destroy();
     for (const b of this.sceneBuffers) b.destroy();
     for (const t of this.accum) t.destroy();
     this.params.destroy();

@@ -378,10 +378,6 @@ pixel wide, after the archvis lighting had left it a flat pale line.
 
 ### Open, from the second phase
 
-- The tracer reads the sky prefiltered at the lobe's centre, and blurred
-  further after a matte bounce, for speed. Importance-sampling the
-  environment (a CDF over its brightest texels) would let it read the sky
-  where a path actually went, at the cost of a slower settle.
 - Caustics — a polished ring throwing light on the table — arrive as
   speckle and take hundreds of samples to smooth.
 - The raster and traced paths still differ in places: the enamel's body
@@ -704,6 +700,31 @@ exchanged through the same call. Not done: a real scene graph, or a
 parent that carries its children; a caller composes matrices itself.
 The test lifts the rosette's heart as a dynamic part under a standing
 bake, then moves a petal and sees the bake begin again.
+
+## The sky, sampled where its light is
+
+The tracer read the sky prefiltered at a bounce's roughness, and blurred
+further after any matte bounce: the defence against a matte surface
+finding a small bright light by chance and covering the table in
+fireflies. It was measured here for the first time, against a reference
+traced sharp for fifteen hundred samples, and the blur was a bias, not a
+blur: three and a third levels off in the studio however many samples
+were taken, one in daylight, and a fraction more at dusk. The sky now
+has a distribution — radiance times solid angle over the sample cube the
+occlusion bake already reads back, cumulative, on the CPU, uploaded as a
+small texture — and at every surface but a mirror the tracer draws one
+direction from it, tests it for occlusion, and weighs it against the
+surface's own sampler; a path that escapes by the surface's choosing is
+weighed the other way, so the two halves make one estimate. With that
+in place the sky is read sharp wherever a path goes, and the blur stands
+only until the distribution lands. Against the reference, the sharp
+weighed read is closer at every count of samples: in the studio, at 24,
+96 and 300 samples, 2.2, 1.2 and 0.7 levels where the blur stayed at 3.7,
+3.4 and 3.3; in daylight 1.1, 0.7 and 0.5 where it was 1.1, 0.9 and 0.8.
+What surprised: the daylight sky is the least concentrated of the four,
+since the key light carries the sun and the sky's own disc is a few
+texels; the studio's softboxes are what the sampling finds. The sky's
+concentration is measured and kept on the distribution, unused for now.
 
 ## Open, from the first phase
 

@@ -28,7 +28,7 @@ import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/t
 import { CushionBake, CUSHION_SIZE } from './cushion';
 import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey, type Rasteriser } from './glyphs';
-import { bakeEnvironment, filterCube, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
+import { bakeEnvironment, filterCube, skyDistribution, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
@@ -708,6 +708,7 @@ export class Renderer {
     env.samples.then((samples) => {
       if (this.environment !== env) return;
       this.envSamples = samples;
+      this.tracer?.setSky(skyDistribution(samples).cdf, samples.size);
       if (this.groups.length) this.bakeOcclusion();
       this.dirty = true;
     });
@@ -1005,6 +1006,9 @@ export class Renderer {
     this.dirty = true;
   }
 
+  /** The tracer's own settings, for a test or a tool: null until traced quality has been used. */
+  get pathTracer() { return this.tracer; }
+
   /** Bakes of the sky occlusion begun, for measuring what a change costs. */
   occlusionBakes = 0;
 
@@ -1046,7 +1050,10 @@ export class Renderer {
   get traceLimit() { return this.tracer?.maxSamples ?? 0; }
 
   private ensureTracer() {
-    if (!this.tracer) this.tracer = new PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
+    if (!this.tracer) {
+      this.tracer = new PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
+      if (this.envSamples) this.tracer.setSky(skyDistribution(this.envSamples).cdf, this.envSamples.size);
+    }
     if (this.traceSceneStale && this.groups.length) {
       this.traceSceneStale = false;
       const groups = this.groups.map((g) => ({ mesh: g.source.mesh, matrices: g.source.matrices, wear: wearOf(g.source.mesh, this.mm(0.6)) }));

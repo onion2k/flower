@@ -644,3 +644,69 @@ export function filterCube(
   }
   return { dispose() { basisBuffer.destroy(); } };
 }
+
+/**
+ * The sky as a distribution over the sample cube's texels: radiance times
+ * solid angle, cumulative and normalised, for a path tracer to draw
+ * directions from in proportion to how much light comes from them. A small
+ * floor keeps every texel drawable, so no direction has a density of zero.
+ * Texels run face by face, row by row, as the readback lays them.
+ */
+export interface SkyDistribution {
+  cdf: Float32Array;
+  /** How much of the sky's light the brightest hundredth of its texels carry: 1 a sun alone, near 0.01 an even sky. */
+  concentration: number;
+}
+export function skyDistribution(env: EnvSamples): SkyDistribution {
+  const { faces, size } = env;
+  const n = 6 * size * size;
+  const lum = (f: number, x: number, y: number) => {
+    const i = (y * size + x) * 4;
+    return 0.2126 * faces[f][i] + 0.7152 * faces[f][i + 1] + 0.0722 * faces[f][i + 2];
+  };
+  let mean = 0;
+  for (let f = 0; f < 6; f++) for (let y = 0; y < size; y++) for (let x = 0; x < size; x++) mean += lum(f, x, y);
+  mean /= Math.max(n, 1);
+  const floor = mean * 0.02 + 1e-6;
+  const cdf = new Float32Array(n);
+  let acc = 0;
+  for (let f = 0; f < 6; f++) {
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        acc += (lum(f, x, y) + floor) * texelSolidAngle(x, y, size);
+        cdf[(f * size + y) * size + x] = acc;
+      }
+    }
+  }
+  for (let i = 0; i < n; i++) cdf[i] /= acc;
+  if (n) cdf[n - 1] = 1;
+  // the mass of each texel, sorted, for how peaked the sky is
+  const mass = new Float64Array(n);
+  for (let i = 0; i < n; i++) mass[i] = cdf[i] - (i ? cdf[i - 1] : 0);
+  mass.sort();
+  let top = 0;
+  for (let i = n - Math.max(1, Math.round(n / 100)); i < n; i++) top += mass[i];
+  return { cdf, concentration: top };
+}
+
+/** The solid angle of a cube face's texel, from its centre. */
+export function texelSolidAngle(x: number, y: number, size: number): number {
+  const sc = (2 * (x + 0.5)) / size - 1;
+  const tc = (2 * (y + 0.5)) / size - 1;
+  return 4 / (size * size * Math.pow(1 + sc * sc + tc * tc, 1.5));
+}
+
+/** Cube face texel (sc, tc) to a unit direction, in GL's face convention. */
+export function cubeDirection(face: number, sc: number, tc: number): [number, number, number] {
+  let v: [number, number, number];
+  switch (face) {
+    case 0: v = [1, -tc, -sc]; break;
+    case 1: v = [-1, -tc, sc]; break;
+    case 2: v = [sc, 1, tc]; break;
+    case 3: v = [sc, -1, -tc]; break;
+    case 4: v = [sc, -tc, 1]; break;
+    default: v = [-sc, -tc, -1]; break;
+  }
+  const l = Math.hypot(v[0], v[1], v[2]);
+  return [v[0] / l, v[1] / l, v[2] / l];
+}

@@ -28,7 +28,7 @@
 
 import { bufferFrom, FULLSCREEN_VERT, shader, type Gpu } from '../gpu/context';
 import type { Mesh } from '../mesh/types';
-import type { EnvSamples } from './env';
+import { cubeDirection, type EnvSamples } from './env';
 
 export interface OcclusionGroup {
   mesh: Mesh;
@@ -548,21 +548,6 @@ function sampleEnvironment(env: EnvSamples, spin: number, count: number): Array<
     out.push([c * d[0] - s * d[1], s * d[0] + c * d[1], d[2]]);
   }
   return out;
-}
-
-/** Cube face texel (sc, tc) to a unit direction, in GL's face convention. */
-function cubeDirection(face: number, sc: number, tc: number): [number, number, number] {
-  let v: [number, number, number];
-  switch (face) {
-    case 0: v = [1, -tc, -sc]; break;
-    case 1: v = [-1, -tc, sc]; break;
-    case 2: v = [sc, 1, tc]; break;
-    case 3: v = [sc, -1, -tc]; break;
-    case 4: v = [sc, -tc, 1]; break;
-    default: v = [-sc, -tc, -1]; break;
-  }
-  const l = Math.hypot(v[0], v[1], v[2]);
-  return [v[0] / l, v[1] / l, v[2] / l];
 }
 
 function radicalInverse(i: number, base: number) {
