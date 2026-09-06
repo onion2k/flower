@@ -458,7 +458,7 @@ struct Material {
   glyphBase: u32,
   glyphCount: u32,
   letterSpread: f32,   // how far the atlas field reaches either side of an edge, in mm
-  _pad5: u32,
+  letterPeriod: f32,   // the surface's length round, where it is closed along x; 0 on an open face
   letter: vec4f,       // depth mm, angle, centre x, centre y
   emission: vec4f,     // radiance of a light, rgb; w is 1 for a light
   // a cut stone's facets, as planes in the part's own space, to trace through
@@ -651,7 +651,11 @@ fn letterDistance(p: vec2f) -> f32 {
  */
 fn letterHeight(e: vec2f) -> f32 {
   let a = material.letter.y;
-  let d = e - material.letter.zw;
+  var d = e - material.letter.zw;
+  // on a band the coordinate meets itself: take the way round that is nearest
+  // the line's centre, so a line across the seam is whole
+  let period = material.letterPeriod;
+  if (period > 0.0) { d.x -= period * round(d.x / period); }
   let local = vec2f(cos(a) * d.x + sin(a) * d.y, -sin(a) * d.x + cos(a) * d.y);
   let dist = letterDistance(local);
   // a narrow wall: wide enough to catch light, never so wide the letter reads as embossed

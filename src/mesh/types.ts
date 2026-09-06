@@ -30,6 +30,12 @@ export interface Mesh {
    * from uv and the mesh's extent.
    */
   engrave?: Float32Array;
+  /**
+   * For a surface closed along the first engraving coordinate — a band, a
+   * torus — its length round: the coordinate runs 0 to this and meets itself,
+   * so lettering can wrap across the seam. Absent on an open surface.
+   */
+  engravePeriod?: number;
 }
 
 /**
@@ -288,5 +294,8 @@ export function mergeMeshes(meshes: Mesh[]): Mesh {
   if (enamel) out.enamel = enamel;
   if (cap) out.cap = cap;
   if (engrave) out.engrave = engrave;
+  // one closed surface's period survives a merge only if every piece shares it
+  const period = meshes[0]?.engravePeriod;
+  if (period && meshes.every((m) => m.engravePeriod === period)) out.engravePeriod = period;
   return out;
 }

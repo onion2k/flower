@@ -526,7 +526,9 @@ part card   = plate(card(width: 30, height: 20, corner: 2), thickness: 1.4) engr
 part signet = disc(radius: 9, thickness: 2) in silver polished engraved runes("odin", size: 4.5, depth: 0.15)
 part tag    = plate(lozenge(length: 26, width: 14), thickness: 1.2) in platinum polished engraved text("永遠", size: 6, depth: 0.1)
 # a band's coordinates run along the ring and round its section; 2.8 across
-# is the middle of its outer face, and the line sits halfway round the ring
+# is the middle of its outer face, and the line sits halfway round the ring.
+# The ring meets itself, so a line may straddle the seam: at: (37.7, 2.8, 0)
+# would centre this one on it
 part band   = band(radius: 12, width: 4.5, thickness: 1) in rose gold polished engraved text("AMOR VINCIT OMNIA", size: 2.6, depth: 0.08, font: sans, at: (0, 2.8, 0))
 
 form sampler {

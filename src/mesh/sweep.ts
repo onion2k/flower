@@ -101,6 +101,10 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
   const base = 0;
   const uCoord = arcLengthParam(path);
   const pathLength = pathLengthOf(path);
+  // a closed path's last section steps back to its first: the way round is
+  // the path's length and that closing step
+  const first = path[0], end = path[path.length - 1];
+  const period = pathLength + (closed ? Math.hypot(first[0] - end[0], first[1] - end[1], first[2] - end[2]) : 0);
   const engrave: number[] = [];
 
   for (let s = 0; s < sections; s++) {
@@ -129,11 +133,25 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
   }
 
   if (closed) {
-    // stitch the last ring back onto the first
+    // The first ring again, at the far end of the way round, for the closing
+    // quads to stitch to: on the ring itself the surface coordinate would run
+    // back to nought across one quad, smearing a whole loop of pattern into
+    // it, and lettering could never cross the seam. Same positions, same
+    // normals, so nothing shows but the coordinate carrying on. u carries on
+    // past 1 by the same step: the shader's tangent frame is taken from uv,
+    // and a quad whose u ran from 1 to 1 would have none.
+    const seam = sections * cols;
+    const uSeam = pathLength > 0 ? period / pathLength : 1;
+    for (let c = 0; c < cols; c++) {
+      const o = c * 3;
+      const n = surfaceNormal(positions, edgeDirs, outward, fr, sections, cols, 0, c);
+      mb.vertex(positions[o], positions[o + 1], positions[o + 2], n[0], n[1], n[2], uSeam, vCoord[c]);
+      engrave.push(period, (0.5 - vCoord[c]) * perimeter[0]);
+    }
     const last = (sections - 1) * cols;
     for (let c = 0; c < cols - 1; c++) {
       if (layout.skip[c]) continue;
-      mb.quad(base + last + c, base + last + c + 1, base + c + 1, base + c);
+      mb.quad(base + last + c, base + last + c + 1, base + seam + c + 1, base + seam + c);
     }
   } else if (opts.caps ?? true) {
     capRing(mb, positions, cols, 0, fr[0], -1);
@@ -150,6 +168,7 @@ export function sweep(pathIn: Vec3[], opts: SweepOptions): Mesh {
     engraveAll[i + 1] = 0;
   }
   mesh.engrave = engraveAll;
+  if (closed) mesh.engravePeriod = period;
   return mesh;
 }
 

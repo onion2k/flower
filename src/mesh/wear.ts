@@ -58,6 +58,36 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
     if (c < a) edge(c, a);
   }
 
+  const buckets = positionGroups(p, count);
+
+  // --- one point, split: copies with the same normal pool their edges ---
+  // A generator splits a vertex where its surface meets itself — the seam
+  // ring of a closed sweep, a profile's seam column — and each copy then
+  // holds only its own side's edges: half the neighbours, and on a seam ring
+  // none along the profile at all, so the seam read as a stripe of different
+  // wear. Copies whose normals agree are one point of the surface, and see
+  // every edge that point has.
+  const samePoint: number[][] = [];
+  for (const group of buckets) {
+    const heads: number[] = [];
+    const members: number[][] = [];
+    for (const v of group) {
+      let placed = false;
+      for (let i = 0; i < heads.length && !placed; i++) {
+        const h = heads[i];
+        if (n[h * 3] * n[v * 3] + n[h * 3 + 1] * n[v * 3 + 1] + n[h * 3 + 2] * n[v * 3 + 2] > 0.94) { members[i].push(v); placed = true; }
+      }
+      if (!placed) { heads.push(v); members.push([v]); }
+    }
+    for (const m of members) {
+      if (m.length < 2) continue;
+      samePoint.push(m);
+      let ks = 0, kc = 0, nx = 0, ny = 0, nz = 0;
+      for (const v of m) { ks += kSum[v]; kc += kCount[v]; nx += nbSum[v * 3]; ny += nbSum[v * 3 + 1]; nz += nbSum[v * 3 + 2]; }
+      for (const v of m) { kSum[v] = ks; kCount[v] = kc; nbSum[v * 3] = nx; nbSum[v * 3 + 1] = ny; nbSum[v * 3 + 2] = nz; }
+    }
+  }
+
   const wear = new Float32Array(count);
   for (let v = 0; v < count; v++) {
     const k = kCount[v] ? kSum[v] / kCount[v] : 0;
@@ -69,7 +99,6 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
   // above never sees the crease at all: each copy only connects to its own face.
   // Find the copies and judge the crease by whether one face falls below the
   // other's tangent plane.
-  const buckets = positionGroups(p, count);
   const sharp = new Float32Array(count);
   for (const group of buckets) {
     for (const a of group) {
@@ -105,6 +134,12 @@ export function computeWear(mesh: Mesh, reference = REFERENCE_RADIUS): Float32Ar
       acc[a] += wear[b]; cnt[a]++;
       acc[b] += wear[a]; cnt[b]++;
     }
+  }
+  // the split copies of one point smooth over that point's whole neighbourhood
+  for (const m of samePoint) {
+    let a = 0, c = 0;
+    for (const v of m) { a += acc[v]; c += cnt[v]; }
+    for (const v of m) { acc[v] = a; cnt[v] = c; }
   }
   for (const group of buckets) {
     let s = 0;

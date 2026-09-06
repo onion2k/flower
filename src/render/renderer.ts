@@ -1602,6 +1602,7 @@ export class Renderer {
         const centre = ins.at ? [mid[0] + ins.at[0], mid[1] + ins.at[1]] : mid;
         // the atlas saturates `spread` px either side of the edge; in mm that is spread * size / fontPx
         f32[o + 54] = (CELL.spread * ins.size) / CELL.fontPx;
+        f32[o + 55] = g.source.mesh.engravePeriod ?? 0;
         f32.set([ins.depth, ins.angle, centre[0], centre[1]], o + 56);
       } else {
         f32[o + 54] = 1;

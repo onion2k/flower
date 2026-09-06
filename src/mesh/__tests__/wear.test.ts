@@ -1,4 +1,7 @@
 import { describe, expect, it } from 'vitest';
+import { sweep } from '../sweep';
+import * as profile from '../../geom/profile';
+import { samplePath } from '../../geom/curve';
 import { computeWear } from '../wear';
 import { MeshBuilder, type Mesh } from '../types';
 import { extrude } from '../extrude';
@@ -107,5 +110,25 @@ describe('computeWear: does not throw on a degenerate mesh', () => {
   it('an empty mesh returns an empty array', () => {
     const wear = computeWear(new MeshBuilder().build());
     expect(wear).toHaveLength(0);
+  });
+});
+
+describe('computeWear: a vertex split at a seam wears as one', () => {
+  it('a closed band\'s seam ring reads as its neighbours do, on both copies', () => {
+    const ring = samplePath({ at: (t) => [Math.cos(t * Math.PI * 2) * 12, Math.sin(t * Math.PI * 2) * 12, 0] }, 64);
+    const mesh = sweep(ring, { profile: profile.ribbon(4.5, 1, 4), closed: true, up: [0, 0, 1] });
+    const wear = computeWear(mesh);
+    const e = mesh.engrave!;
+    const period = mesh.engravePeriod!;
+    let cols = 0;
+    while (e[cols * 2] === 0) cols++;
+    const dup = mesh.positions.length / 3 - cols;
+    expect(Math.abs(e[dup * 2] - period)).toBeLessThan(1e-4);
+    // the flat of the band, away from its corners
+    for (let c = 3; c < cols - 3; c++) {
+      const inner = wear[2 * cols + c];
+      expect(Math.abs(wear[c] - inner)).toBeLessThan(0.05);
+      expect(Math.abs(wear[dup + c] - inner)).toBeLessThan(0.05);
+    }
   });
 });

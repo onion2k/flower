@@ -103,3 +103,43 @@ describe('sweep: geometry', () => {
     expect(spread(farRadii)).toBeGreaterThan(0.2);
   });
 });
+
+describe('sweep: a closed loop\'s engraving coordinate goes the whole way round', () => {
+  const ring = samplePath({ at: (t) => [Math.cos(t * Math.PI * 2) * 10, Math.sin(t * Math.PI * 2) * 10, 0] }, 24);
+
+  it('records the loop\'s length as the period, closing step included', () => {
+    const mesh = sweep(ring, { profile: profile.circle(1, 8), closed: true });
+    // 24 chords of a circle of radius 10, the last back to the first
+    const chord = 2 * 10 * Math.sin(Math.PI / 24);
+    expect(mesh.engravePeriod).toBeCloseTo(chord * 24, 6);
+  });
+
+  it('carries the seam ring twice, at nought and at the period, on the same positions', () => {
+    const mesh = sweep(ring, { profile: profile.circle(1, 8), closed: true });
+    const e = mesh.engrave!;
+    const period = mesh.engravePeriod!;
+    const atStart: number[] = [], atEnd: number[] = [];
+    for (let v = 0; v < e.length / 2; v++) {
+      if (e[v * 2] === 0) atStart.push(v);
+      if (Math.abs(e[v * 2] - period) < 1e-4) atEnd.push(v);
+    }
+    expect(atStart.length).toBeGreaterThan(0);
+    expect(atEnd.length).toBe(atStart.length);
+    for (let i = 0; i < atStart.length; i++) {
+      for (let k = 0; k < 3; k++) {
+        expect(mesh.positions[atEnd[i] * 3 + k]).toBeCloseTo(mesh.positions[atStart[i] * 3 + k], 9);
+        expect(mesh.normals[atEnd[i] * 3 + k]).toBeCloseTo(mesh.normals[atStart[i] * 3 + k], 9);
+      }
+    }
+    // no coordinate beyond the period, none below nought
+    for (let v = 0; v < e.length / 2; v++) expect(e[v * 2]).toBeGreaterThanOrEqual(0);
+    for (let v = 0; v < e.length / 2; v++) expect(e[v * 2]).toBeLessThanOrEqual(period + 1e-4);
+    expectWatertight(mesh);
+    expectWellFormed(mesh);
+  });
+
+  it('an open sweep has no period', () => {
+    const mesh = sweep(straight(), { profile: profile.circle(2, 10), caps: true });
+    expect(mesh.engravePeriod).toBeUndefined();
+  });
+});

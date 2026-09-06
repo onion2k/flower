@@ -642,11 +642,33 @@ trace in a second and a half. The next lever, if it is ever needed, is
 the hierarchy's leaf size: four triangles a leaf gives seven million
 nodes, and eight would halve the build for a little more work a ray.
 
+## Lettering round the seam
+
+The oldest open item from the first phase: on a band, a line of type at
+the seam was cut off, and the seam quad itself was a stripe. Both came
+from the same place. A closed sweep stitched its last ring back onto its
+first, so across that one quad the surface coordinate ran from the path's
+length back to nought — a whole loop of pattern squeezed into it, no
+lettering able to cross, and, since uv ran from 1 back to 1 as well, no
+tangent frame for the shading. The closed sweep now carries its first
+ring twice: the same positions and normals, at the far end of the way
+round, with the coordinate and u carrying on past the join, and the mesh
+records the loop's length as its engraving period. The material carries
+that period to the shader, which takes the way round nearest the line's
+centre before it looks up the glyphs, so a line straddling the seam is
+whole on both sides. The wear analysis saw the split ring too: each copy
+held only its own side's edges, and the seam ring read a third as worn as
+its neighbours. Copies that share a position and a normal now pool their
+edges before the curvature is averaged, which also evened out the
+profile's own seam column, and, as it turned out, a slow drift of wear
+round the ring that had been there all along. Checked headless: a band
+with AMOR VINCIT OMNIA centred on the seam, in the lit view, the normals
+and the wear.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
   and more sweep directions for its facets.
-- Lettering that wraps round a closed band's seam.
 - Shadow softness that grows with a light's size.
 - Per-placement geometry variation is not possible while placements share a
   mesh; size varies through shrink, shape does not.
