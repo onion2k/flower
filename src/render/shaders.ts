@@ -1653,7 +1653,18 @@ ${TABLE_LIT}
  */
 fn seen(dir: vec3f, lod: f32, p: vec3f) -> vec3f {
   let read = reflectionAt(dir, lod, p);
-  if (frame.probeOn < 0.5 || dir.z >= -1e-4) { return read; }
+  // The ray has to be a direction before anything is worked out from it, and
+  // the test is written so that one which is not fails rather than passes: a
+  // NaN compares false against everything, so asking whether it points up
+  // (dir.z >= -1e-4) lets it straight through. What follows would then
+  // intersect it with the table and ask the table what it looks like at a
+  // point that is not a point. Matte never reads that point, so it answered
+  // anyway; every other table does, and answers NaN. The answer goes into the
+  // light probe, the probe is prefiltered down a mip chain, and that chain is
+  // what every reflective surface in the frame reads — so a single ray that
+  // was never a direction turns the whole picture black, piece and table
+  // alike. Found on a chess set: silver on walnut, and nothing on the screen.
+  if (frame.probeOn < 0.5 || !(dir.z < -1e-4)) { return read; }
   let roughness = lod / max(frame.maxLod, 1.0);
   let sharp = 1.0 - smoothstep(0.3, 0.7, roughness);
   if (sharp <= 0.0) { return read; }

@@ -877,6 +877,44 @@ dark, no two neighbours alike — and that thirty-two men stand on the
 squares a game starts from, queens on the d file, white's on her own
 colour.
 
+## A ray that was never a direction, September 2026
+
+A chess set drawn by a game built on the renderer as a library came out
+black on every table but matte — the piece, the table and the light all
+gone, on oak, walnut, slate, linen, velvet and silk alike. Matte was the
+only one that worked, and it is the only surface that does not read the
+point it is asked about.
+
+That is the whole of it. `seen` runs a ray from a polished face down to
+the table and shades the table where it lands, so a mirror shows the
+table where it really is rather than where the probe's sphere put it.
+Its first test asked whether the ray points upward — `dir.z >= -1e-4` —
+and a NaN compares false against everything, so a ray that was not a
+direction at all passed the test rather than failing it. Everything
+after intersected it and asked the table what it looked like at a point
+that was not a point. Matte ignores the point and answered anyway;
+every other surface reads it and answered NaN. That went into the light
+probe; the probe is prefiltered down a mip chain, and the chain is what
+every reflective surface in the frame reads. One bad ray, and nothing
+on the screen.
+
+The fix is the test written the other way round, `!(dir.z < -1e-4)`, so
+a NaN fails it and the ray is dropped for the probe's own read. It is
+one line and it changes nothing that was finite before. Writing the same
+guard into the three tests that follow it — the distance, the disc's
+bounds — does change the picture: those NaN rays used to land inside
+the disc and take matte's colour, and rejecting them moved a shadow
+enough to fail `shadows.gpu`. So only the first test is guarded, which
+is where the ray should have been turned away.
+
+Two things this leaves open. Where the NaN direction comes from is not
+known — a shading normal out of a degenerate frame is the likely source,
+and it is common enough that guarding the later tests is visible in a
+shadow. And it has not been cornered into a small scene:
+`tables.gpu.test.ts` draws the chess set on all seven tables and checks
+none comes out blank, but it does not reproduce the failure, which
+needed the game's own scene. The note in that file says so.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
