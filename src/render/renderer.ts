@@ -1824,6 +1824,7 @@ export class Renderer {
       const pf = new Float32Array(frame);
       pf.set(viewProj, 0);
       pf.set(eye, 16);
+      pf[19] = 1;               // unexposed: the shader that reads the probe applies the frame's exposure itself
       pf[60] = again ? 1 : 0;   // the probe within the probe only on the second pass, reading the first
       pf[66] = 0;   // never the frame's contact occlusion, drawn for another view
       device.queue.writeBuffer(this.probeFrames[fi], 0, pf);

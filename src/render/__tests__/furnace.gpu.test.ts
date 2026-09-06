@@ -38,7 +38,7 @@ describe('the furnace', () => {
     gpu = await createDevice();
     renderer = new Renderer(gpu);
     target = gpu.device.createTexture({ size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
-    const r = compile('material silver satin\npart b = bead(radius: 6, point: 3)\nform f {\n  place b at (0, 0, 3)\n}\n');
+    const r = compile('part b = bead(radius: 6, point: 3) in silver satin\nform f {\n  place b at (0, 0, 3)\n}\n');
     renderer.setSize(SIZE, SIZE);
     renderer.setKeyLight({ elevation: 1, azimuth: 0, strength: 0, warmth: 0, size: 0.1 });
     renderer.setTable('linen');
@@ -93,7 +93,7 @@ describe('the furnace', () => {
   });
 
   it('a polished bead reflects the table where the tracer does', async () => {
-    const r = compile('material silver polished\npart b = bead(radius: 8, point: 0)\nform f {\n  place b at (0, 0, 8)\n}\n');
+    const r = compile('part b = bead(radius: 8, point: 0) in silver polished\nform f {\n  place b at (0, 0, 8)\n}\n');
     renderer.setEnvironmentImage(sky(1, () => false, 1), 1);
     renderer.setTable('matte');
     renderer.setInstanced(groupByMesh(r.sketch!.assembly));
@@ -106,8 +106,14 @@ describe('the furnace', () => {
     for (const y of [88, 104, 120, 152, 168, 184]) expect(Math.abs(column(a, y) - column(b, y)), `row ${y}`).toBeLessThan(14);
     expect(column(a, 104)).toBeGreaterThan(120);
     expect(column(a, 168)).toBeLessThan(60);
+    // and at twice the exposure the reflected table is exposed once, as the tracer exposes it: it read 193 against 170 while the probe was exposed twice
+    renderer.setTable('linen'); renderer.setExposure(2);
+    const a2 = await raster(), b2 = await traced(200);
+    for (const y of [152, 168]) expect(Math.abs(column(a2, y) - column(b2, y)), `row ${y} at exposure 2`).toBeLessThan(16);
+    renderer.setExposure(1);
     // and back to the table and bead the other cases use
-    const again = compile('material silver satin\npart b = bead(radius: 6, point: 3)\nform f {\n  place b at (0, 0, 3)\n}\n');
+    renderer.setTable('linen');
+    const again = compile('part b = bead(radius: 6, point: 3) in silver satin\nform f {\n  place b at (0, 0, 3)\n}\n');
     renderer.setTable('linen');
     renderer.setInstanced(groupByMesh(again.sketch!.assembly));
     renderer.frameBounds({ min: [-20, -20, 0], max: [20, 20, 10] });

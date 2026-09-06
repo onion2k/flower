@@ -791,6 +791,34 @@ applies it again, so at any exposure but one the piece's reflections of
 itself and of the table are exposed twice; the table met directly does
 the same, for consistency, until both are put right together.
 
+## Exposed once, and the metal measured
+
+The probe was drawn with the frame's exposure and read back through a
+shader that applied it again, and the table met directly did the same;
+at twice the exposure the furnace bead's reflected table read 193 where
+the tracer read 170, at half 60 against 100. The probe is drawn at an
+exposure of one now and the table's function takes the exposure to
+apply, the frame's for the eye and one for a reflection, and the
+reflected table reads 160 and 90 against the same 170 and 100 — the ten
+levels it is off by at exposure one, and no more. That is in the furnace.
+
+Then the metal, held to the tracer under a uniform sky and a band of
+light overhead, per finish, with the finish carried on the part (a
+sketch's material line sets the panel, not the part, which had every
+furnace bead gold polished until it was noticed). Under a uniform sky
+every finish reads the sky exactly in both paths: there is no metal gap.
+Under the band a mirror agrees down the whole bead. Satin and brushed
+differ on the bead's lower side, and the pictures say why: the tracer's
+reflection of the table is blurred by the lobe across the table's own
+shadow gradient, bright table further out bleeding into rows where the
+exact hit lands on dark, shadowed table. Two things were tried and
+measured and came out again — the prefiltered read taken at the lobe's
+dominant direction, and a soft horizon as wide as the lobe on the exact
+table — since neither moved those rows. What would is a filtered table
+reflection, the table shaded over the lobe's footprint rather than at
+a point, which is the next item if the satin gap is worth it; the mirror
+case, the common one for jewellery, is closed.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
@@ -801,5 +829,3 @@ the same, for consistency, until both are put right together.
 - The probe holds two bounces now but stands at one point; the piece
   reflected in the piece is still where the raster and the tracer differ
   most, with the metal's brightness under a studio's softboxes.
-- Reflections through the probe are exposed twice at any exposure but one:
-  the probe is drawn with the frame's exposure and read back under it.

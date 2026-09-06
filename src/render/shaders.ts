@@ -1493,9 +1493,10 @@ export const TABLE_LIT = `
  * table exactly where it is rather than where the probe's sphere put it.
  * v is the direction to whoever is looking, contact the screen-space
  * occlusion where there is one, foot the footprint in millimetres the
- * grain is drawn at.
+ * grain is drawn at, exposure the frame's where the table is drawn for
+ * the eye and one where it is drawn for a reflection to be exposed later.
  */
-fn tableLit(world: vec3f, local: vec2f, v: vec3f, contact: f32, foot: f32) -> vec3f {
+fn tableLit(world: vec3f, local: vec2f, v: vec3f, contact: f32, foot: f32, exposure: f32) -> vec3f {
   let acc = textureSampleLevel(shadow, linearSampler, local * 0.5 + 0.5, 0.0).rg;
   let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contact;
   // the table takes the background's colour, but never darker than a dark
@@ -1579,13 +1580,13 @@ fn tableLit(world: vec3f, local: vec2f, v: vec3f, contact: f32, foot: f32) -> ve
   }
   // the piece's own lights pool on the table under it
   let lamps = localLights(n, v, world, vec3f(0.04), rough, surface.albedo);
-  var lit = (diffuse * (1.0 - fresnel) + specular + lamps) * frame.exposure;
+  var lit = (diffuse * (1.0 - fresnel) + specular + lamps) * exposure;
   if (cushion < 1.0) {
     // the table the cushion sits on: a dark matte, lit as the matte table is
     let matte = max(ground.background, vec3f(0.04, 0.04, 0.043));
     var flatKey = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyLit;
     if (frame.rigCount > 0.0) { flatKey += rigAt(vec3f(0.0, 0.0, 1.0), v, world, vec3f(0.04), 1.0, vec3f(0.0, 0.0, 1.0)).diffuse; }
-    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), world) * ao + flatKey) * frame.exposure;
+    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), world) * ao + flatKey) * exposure;
     lit = mix(flat, lit, cushion);
   }
   let fade = 1.0 - smoothstep(0.3, 1.0, length(local));
@@ -1622,15 +1623,16 @@ fn seen(dir: vec3f, lod: f32, p: vec3f) -> vec3f {
   let roughness = lod / max(frame.maxLod, 1.0);
   let sharp = 1.0 - smoothstep(0.3, 0.7, roughness);
   if (sharp <= 0.0) { return read; }
-  var t = (ground.centre.z - p.z) / dir.z;
+  let down = dir;
+  var t = (ground.centre.z - p.z) / down.z;
   if (t <= 0.0) { return read; }
-  var hit = p + dir * t;
+  var hit = p + down * t;
   var local = (hit.xy - ground.centre.xy) / ground.radius;
   if (ground.puff > 0.0 && max(abs(local.x), abs(local.y)) < 1.0) {
     // once more onto the cushion's lift where the ray came down
-    t = (ground.centre.z + heightAt(local * 0.5 + 0.5) - p.z) / dir.z;
+    t = (ground.centre.z + heightAt(local * 0.5 + 0.5) - p.z) / down.z;
     if (t <= 0.0) { return read; }
-    hit = p + dir * t;
+    hit = p + down * t;
     local = (hit.xy - ground.centre.xy) / ground.radius;
   }
   // beyond the disc there is only the page, as the tracer sees it; the probe's
@@ -1638,7 +1640,8 @@ fn seen(dir: vec3f, lod: f32, p: vec3f) -> vec3f {
   if (max(abs(local.x), abs(local.y)) >= 1.0) { return mix(read, ground.background, sharp); }
   // the grain blurs with the reflection's spread over the distance to it
   let foot = (t * roughness * 0.5 + 0.02) * frame.unitMm;
-  let exact = tableLit(hit, local, -dir, 1.0, foot);
+  // unexposed: the shader reading this applies the frame's exposure once, to everything
+  let exact = tableLit(hit, local, -down, 1.0, foot, 1.0);
   return mix(read, exact, sharp);
 }
 @group(1) @binding(0) var<uniform> material: Material;
@@ -1754,7 +1757,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
 
 @fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
   let v = normalize(frame.cameraPos - in.world);
-  var colour = tableLit(in.world, in.local, v, contactAt(in.clip), length(fwidth(in.world.xy)) * frame.unitMm);
+  var colour = tableLit(in.world, in.local, v, contactAt(in.clip), length(fwidth(in.world.xy)) * frame.unitMm, frame.exposure);
   let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
   let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contactAt(in.clip);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
