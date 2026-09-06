@@ -63,7 +63,7 @@ struct Params {
   triangles: u32,
   shift: vec2f,     // the lens shift, as the projection applies it
   rowOffset: u32,   // the first row of this dispatch's band
-  _q: u32,
+  eps: f32,         // the step off a surface before the next ray: a fiftieth of a millimetre, in world units
 };
 @group(2) @binding(0) var<uniform> params: Params;
 @group(2) @binding(1) var<storage, read> nodes: array<Node>;
@@ -80,7 +80,6 @@ struct Groups { items: array<vec4u, 256> };
 
 const ATTR: u32 = 12u;
 const PI: f32 = 3.14159265;
-const EPS: f32 = 0.02;   // mm, the step off a surface before the next ray
 
 // --- randomness: a PCG stream per pixel and sample ---
 var<private> rng: u32;
@@ -205,11 +204,11 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
   s.emission = vec3f(0.0);
   s.coat = 0.0; s.gem = false; s.inside = false; s.fade = 1.0;
   s.metallic = 0.0; s.ior = 1.5; s.absorb = vec3f(0.0); s.dispersion = 0.0;
-  let foot = params.pixelAngle * dist;   // the pixel's footprint in mm here
+  let foot = params.pixelAngle * dist;   // the pixel's footprint here, in world units
   if (hit.ground) {
     let local = (s.p.xy - ground.centre.xy) / ground.radius;
     s.fade = 1.0 - smoothstep(0.3, 1.0, length(local));
-    let surface = tableSurface(s.p.xy, foot);
+    let surface = tableSurface(s.p.xy * frame.unitMm, foot * frame.unitMm);
     s.ng = vec3f(0.0, 0.0, 1.0);
     s.n = normalize(surface.normal);
     s.body = surface.albedo;
@@ -246,9 +245,12 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
   let object = (inv * vec4f(s.p, 1.0)).xyz;
   let plate = material.reliefSpan.xy + uv * material.reliefSpan.zw;
   let objectScale = length(inv[0].xyz);
-  let plateFootprint = max(0.75 * foot, 0.005);
-  let engraveFootprint = max(0.75 * foot, 0.005);
+  let plateFootprint = max(0.75 * foot, 0.005 / frame.unitMm);
+  let engraveFootprint = max(0.75 * foot, 0.005 / frame.unitMm);
   let objectFootprint = foot * objectScale;
+  // the part's own coordinates in millimetres, which the fine detail is sized in
+  let objMm = object * frame.unitMm;
+  let objectFootprintMm = objectFootprint * frame.unitMm;
 
   // tangent frames from the triangle's own edges, for uv and for the engraving coordinates
   let e1 = p1 - p0; let e2 = p2 - p0;
@@ -309,7 +311,7 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
   let worked = !nacre && !gemstone && !plastic && !wood && !light;
 
   if (material.hammer > 0.0 && worked) {
-    let p = object * 0.55;
+    let p = objMm * 0.55;
     let eps = 0.35;
     let h0 = planish(p);
     let hx = planish(p + tbn[0] * eps);
@@ -317,9 +319,9 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
     let bump = (tbn[0] * (hx - h0) + tbn[1] * (hy - h0)) / eps;
     n = normalize(n - bump * material.hammer * 0.22);
   }
-  let swirlFade = 1.0 - smoothstep(0.025, 0.08, objectFootprint);
+  let swirlFade = 1.0 - smoothstep(0.025, 0.08, objectFootprintMm);
   if (frame.detail > 0.0 && worked && material.roughness < 0.35 && enamel < 0.5) {
-    let q = object;
+    let q = objMm;
     let turn = noise3(q * 0.09) * 6.2831853;
     let ca = cos(turn); let sa = sin(turn);
     let s1 = q.x * ca + q.y * sa + q.z * 0.37;
@@ -333,14 +335,14 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
     n = normalize(n + tbn[0] * sx * amount * 0.012 * swirlFade);
   }
   if (material.patina > 0.0 && worked) {
-    let blotch = noise3(object * 0.32) * 0.65 + noise3(object * 0.9) * 0.35;
+    let blotch = noise3(objMm * 0.32) * 0.65 + noise3(objMm * 0.9) * 0.35;
     let mask = smoothstep(0.62 - material.patina * 0.55, 0.78 - material.patina * 0.3, blotch);
     metallic = mix(1.0, 0.0, mask * material.patina);
     f0 = mix(f0, vec3f(0.04), mask * material.patina);
     roughness = mix(roughness, min(roughness + 0.35, 0.95), mask * material.patina);
   }
   if (worked) {
-    let p = object;
+    let p = objMm;
     let smudge = noise3(p * 0.09 + vec3f(3.1, 7.7, 1.3)) - 0.5;
     let mottle = noise3(p * 0.7 + vec3f(11.0, 2.0, 5.0)) - 0.5;
     let fine = noise3(p * 3.0) - 0.5;
@@ -352,7 +354,7 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
   let wearOn = select(material.wear, 0.0, !worked);
   let edge = smoothstep(0.05, 0.8, wear) * wearOn;
   var crease = smoothstep(0.05, 0.8, -wear) * wearOn;
-  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(object * 1.7); }
+  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(objMm * 1.7); }
   roughness = mix(roughness, roughness * 0.45, edge);
   roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
   f0 = mix(f0, f0 * 0.55, crease * 0.8);
@@ -373,7 +375,7 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
     s.gem = true;
     s.ior = max(material.gemIor, 1.05);
     s.dispersion = material.gemDispersion;
-    let size = max(material.gemSize, 0.5);
+    let size = max(material.gemSize, 0.5 / frame.unitMm);
     s.absorb = -log(clamp(material.baseColour, vec3f(1e-3), vec3f(1.0))) / size;
     s.f0 = vec3f(pow((s.ior - 1.0) / (s.ior + 1.0), 2.0));
     s.metallic = 0.0; s.body = vec3f(0.0);
@@ -384,12 +386,12 @@ fn surfaceAt(hit: Hit, o: vec3f, d: vec3f, dist: f32) -> Surf {
   } else if (plastic || wood) {
     var body = material.baseColour;
     if (wood) {
-      let p = object;
+      let p = objMm;
       let wobble = noise3(vec3f(p.x * 0.35, p.y * 0.35, p.z * 0.03)) * 2.6
         + noise3(vec3f(p.x * 1.3, p.y * 1.3, p.z * 0.11)) * 0.6;
       let ringCoord = (p.x * 0.94 + p.y * 0.34) * 1.9 + wobble;
       let ph = fract(ringCoord);
-      let ringFoot = clamp(objectFootprint * 2.85, 0.02, 0.5);
+      let ringFoot = clamp(objectFootprintMm * 2.85, 0.02, 0.5);
       let late = smoothstep(0.42 - ringFoot, 0.62 + ringFoot, ph) * (1.0 - smoothstep(0.78 - ringFoot, 0.96 + ringFoot, ph));
       let fibre = noise3(vec3f(p.x * 5.5, p.y * 5.5, p.z * 0.4)) - 0.5;
       let strength = material.orient;
@@ -599,7 +601,7 @@ fn discLight(s: Surf, v: vec3f, dir: vec3f, size: f32, colour: vec3f, strength: 
   let l = coneDir(dir, max(size, 1e-3), rand(), rand());
   let ndl = dot(s.n, l);
   if (ndl <= 0.0 || dot(s.ng, l) <= 0.0) { return vec3f(0.0); }
-  if (occluded(s.p + s.ng * EPS, l, 1e6)) { return vec3f(0.0); }
+  if (occluded(s.p + s.ng * params.eps, l, 1e6)) { return vec3f(0.0); }
   let b = evalBsdf(s, v, l);
   // the disc's irradiance, 3 in sky units per unit of strength, as the raster shader's
   return b.f * ndl * colour * strength * 3.0;
@@ -620,7 +622,7 @@ fn directLight(s: Surf, v: vec3f) -> vec3f {
     let l = to / dist;
     let ndl = dot(s.n, l);
     if (ndl <= 0.0 || dot(s.ng, l) <= 0.0) { continue; }
-    if (occluded(s.p + s.ng * EPS, l, dist - light.radius)) { continue; }
+    if (occluded(s.p + s.ng * params.eps, l, dist - light.radius)) { continue; }
     let b = evalBsdf(s, v, l);
     sum += b.f * ndl * light.intensity / (dist * dist);
   }
@@ -685,16 +687,16 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
       let f = fresnelDielectric(cosI, ratio);
       if (rand() < f) {
         d = reflect(d, s.n);
-        o = s.p + s.ng * EPS;
+        o = s.p + s.ng * params.eps;
         lastSpecular = true; skyDir = d; skyRough = 0.0;
       } else {
         let refracted = refract(d, s.n, 1.0 / ratio);
         if (dot(refracted, refracted) < 1e-6) {
           d = reflect(d, s.n);
-          o = s.p + s.ng * EPS;
+          o = s.p + s.ng * params.eps;
         } else {
           d = normalize(refracted);
-          o = s.p - s.ng * EPS;
+          o = s.p - s.ng * params.eps;
           inGem = !s.inside;
           gemAbsorb = s.absorb;
         }
@@ -712,7 +714,7 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
     skyDir = next.skyDir; skyRough = select(next.skyRough, max(next.skyRough, 0.35), scattered);
     if (!next.specular) { scattered = true; }
     if (dot(next.l, s.ng) <= 0.0) { break; }
-    o = s.p + s.ng * EPS;
+    o = s.p + s.ng * params.eps;
     d = next.l;
     inGem = false;
     // Russian roulette once the path has paid for itself
@@ -790,7 +792,8 @@ export class PathTracer {
   readonly layout: GPUBindGroupLayout;
   readonly materialLayout: GPUBindGroupLayout;
 
-  constructor(private ctx: Gpu, frameLayout: GPUBindGroupLayout) {
+  /** `mmPerUnit`: millimetres in one world unit, for the step off a surface. */
+  constructor(private ctx: Gpu, frameLayout: GPUBindGroupLayout, private mmPerUnit = 1) {
     const { device } = ctx;
     const c = GPUShaderStage.COMPUTE;
     this.materialLayout = device.createBindGroupLayout({
@@ -890,7 +893,7 @@ export class PathTracer {
     f[16] = camera.focus; u[17] = this.bounces; u[18] = this.width; u[19] = this.height;
     f[20] = groundOn ? 1 : 0; f[21] = pixelAngle; u[22] = 0x51ed27; u[23] = this.triangleCount;
     f[24] = camera.shift[0]; f[25] = camera.shift[1];
-    u[26] = this.cursor;
+    u[26] = this.cursor; f[27] = 0.02 / this.mmPerUnit;
     device.queue.writeBuffer(this.params, 0, p);
     const bind = device.createBindGroup({
       label: 'trace scene', layout: this.layout,

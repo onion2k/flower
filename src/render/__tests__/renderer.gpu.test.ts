@@ -66,6 +66,16 @@ class Frame {
   }
 }
 
+/** Mean absolute difference per channel between two frames, 0..255. */
+function difference(a: Frame, b: Frame): number {
+  let sum = 0;
+  for (let y = 0; y < SIZE; y++) for (let x = 0; x < SIZE; x++) {
+    const pa = a.at(x, y), pb = b.at(x, y);
+    sum += Math.abs(pa[0] - pb[0]) + Math.abs(pa[1] - pb[1]) + Math.abs(pa[2] - pb[2]);
+  }
+  return sum / (SIZE * SIZE * 3);
+}
+
 /** The rosette as the page builds it: compiled, grouped for drawing, and its bounds. */
 function rosette() {
   const result = compile(examples.rosette);
@@ -87,6 +97,9 @@ function stage(renderer: Renderer, groups: ReturnType<typeof groupByMesh>, bound
   const distance = Math.hypot(position[0] - at[0], position[1] - at[1], position[2] - at[2]);
   renderer.setFocus(distance, distance);
 }
+
+/** The frames the millimetre renderer drew, for the other units to be held against. */
+const reference: { first?: Frame; baked?: Frame } = {};
 
 describe('the renderer, headless', () => {
   let gpu: Gpu;
@@ -141,6 +154,7 @@ describe('the renderer, headless', () => {
   it('puts the piece in the middle of the frame and the background at the edges', async () => {
     const f = await Frame.read(gpu, target);
     await f.save('first');
+    reference.first = f;
     // the page's own dark ground at the corner, never the magenta of a lost device
     for (const c of f.corner) expect(c).toBeLessThan(40);
     expect(f.sum(SIZE / 2, SIZE / 2)).toBeGreaterThan(f.sum(2, 2) + 60);
@@ -156,6 +170,7 @@ describe('the renderer, headless', () => {
     const { drew, frame: f } = await frame('baked');
     expect(drew).toBe(true);
     expect(f.sum(SIZE / 2, SIZE / 2)).toBeGreaterThan(f.sum(2, 2) + 60);
+    reference.baked = f;
   });
 
   it('draws the debug views', async () => {
@@ -188,3 +203,56 @@ describe('the renderer, headless', () => {
   });
 });
 
+describe('the renderer in other units', () => {
+  let gpu: Gpu;
+  let renderer: Renderer;
+  let target: GPUTexture;
+  const errors: string[] = [];
+  const consoleError = console.error;
+
+  beforeAll(async () => {
+    console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); consoleError(...args); };
+    gpu = await createDevice();
+    renderer = new Renderer(gpu, { mmPerUnit: 1000 });
+    target = gpu.device.createTexture({ label: 'metre target', size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
+  });
+
+  afterAll(() => {
+    console.error = consoleError;
+    renderer?.dispose();
+    target?.destroy();
+    gpu?.device.destroy();
+  });
+
+  it('draws the rosette modelled in metres as it drew it in millimetres', async () => {
+    const { groups, bounds } = rosette();
+    // the same piece a thousand times smaller in number: metres, told as such
+    const k = 1 / 1000;
+    const metres = groups.map((g) => {
+      const matrices = new Float32Array(g.matrices);
+      for (let i = 12; i < matrices.length; i += 16) { matrices[i] *= k; matrices[i + 1] *= k; matrices[i + 2] *= k; }
+      return { ...g, mesh: { ...g.mesh, positions: g.mesh.positions.map((v) => v * k) }, matrices };
+    });
+    const scaled = { min: bounds.min.map((v) => v * k) as typeof bounds.min, max: bounds.max.map((v) => v * k) as typeof bounds.max };
+    stage(renderer, metres, scaled);
+
+    expect(renderer.render(() => target.createView())).toBe(true);
+    await gpu.queue.onSubmittedWorkDone();
+    const first = await Frame.read(gpu, target);
+    await first.save('metres-first');
+    expect(reference.first).toBeDefined();
+    expect(difference(first, reference.first!)).toBeLessThan(2);
+
+    await renderer.setEnvironment('studio').samples;
+    expect(renderer.render(() => target.createView())).toBe(true);
+    await gpu.queue.onSubmittedWorkDone();
+    const baked = await Frame.read(gpu, target);
+    await baked.save('metres-baked');
+    expect(difference(baked, reference.baked!)).toBeLessThan(2);
+  });
+
+  it('raised no GPU error', async () => {
+    await new Promise((r) => setTimeout(r, 50));
+    expect(errors.filter((e) => /shader|WebGPU/.test(e))).toEqual([]);
+  });
+});

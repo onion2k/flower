@@ -130,10 +130,12 @@ function faceOf(mesh: PartMesh): Float32Array {
  * the surface and a radius that fits the part's cross-section.
  */
 interface EmitterSample { centre: [number, number, number]; radius: number; area: number }
-const emitterCache = new WeakMap<PartMesh, EmitterSample[]>();
-export function emitterSamples(mesh: PartMesh): EmitterSample[] {
-  let out = emitterCache.get(mesh);
-  if (out) return out;
+const emitterCache = new WeakMap<PartMesh, { mmPerUnit: number; samples: EmitterSample[] }>();
+/** `mmPerUnit`: millimetres in one of the mesh's units, for the spacing of the samples. */
+export function emitterSamples(mesh: PartMesh, mmPerUnit = 1): EmitterSample[] {
+  const cached = emitterCache.get(mesh);
+  if (cached && cached.mmPerUnit === mmPerUnit) return cached.samples;
+  let out: EmitterSample[];
   const p = mesh.positions;
   const min = [Infinity, Infinity, Infinity], max = [-Infinity, -Infinity, -Infinity];
   for (let i = 0; i < p.length; i += 3) {
@@ -143,7 +145,7 @@ export function emitterSamples(mesh: PartMesh): EmitterSample[] {
   const axis = extent.indexOf(Math.max(...extent));
   const across = Math.max(...extent.filter((_, k) => k !== axis));
   // a sample every 8 mm or so, up to six; a diode is one
-  const slices = Math.max(1, Math.min(6, Math.round(extent[axis] / 8)));
+  const slices = Math.max(1, Math.min(6, Math.round((extent[axis] * mmPerUnit) / 8)));
   let area = 0;
   const idx = mesh.indices;
   for (let i = 0; i < idx.length; i += 3) {
@@ -169,7 +171,7 @@ export function emitterSamples(mesh: PartMesh): EmitterSample[] {
       area: area / slices,
     });
   }
-  emitterCache.set(mesh, out);
+  emitterCache.set(mesh, { mmPerUnit, samples: out });
   return out;
 }
 
@@ -201,15 +203,15 @@ function extentOf(mesh: PartMesh): number {
   return e;
 }
 
-/** Wear belongs to the mesh, so it is computed once however often the mesh is placed. */
-const wearCache = new WeakMap<PartMesh, Float32Array>();
-function wearOf(mesh: PartMesh) {
+/** Wear belongs to the mesh, so it is computed once however often the mesh is placed; `reference` is the radius that counts as tight, in the mesh's units. */
+const wearCache = new WeakMap<PartMesh, { reference: number; wear: Float32Array }>();
+function wearOf(mesh: PartMesh, reference: number) {
   let w = wearCache.get(mesh);
-  if (!w) {
-    w = computeWear(mesh);
+  if (!w || w.reference !== reference) {
+    w = { reference, wear: computeWear(mesh, reference) };
     wearCache.set(mesh, w);
   }
-  return w;
+  return w.wear;
 }
 
 export type TableName = 'matte' | 'oak' | 'walnut' | 'slate' | 'linen' | 'velvet' | 'silk';
@@ -236,11 +238,23 @@ const TABLES: Record<TableName, { kind: number; roughness: number; scale: number
 export interface RendererOptions {
   /** Draws glyphs for the lettering atlas; a 2D canvas by default. */
   rasteriser?: Rasteriser;
+  /**
+   * Millimetres in one world unit; 1 by default, the catalogue's own. The
+   * meshes, matrices, camera and lights are all in world units, whatever
+   * they are; what the renderer fixes in real sizes — a polish swirl's
+   * pitch, a cloisonné wire's width, the table's grain, a cushion's
+   * spread, the reach of contact shadow, the step off a surface a traced
+   * ray takes — is scaled through this, so a sculpture modelled in metres
+   * passes 1000 and carries the same surface as a ring in millimetres.
+   */
+  mmPerUnit?: number;
 }
 
 export class Renderer {
   /** The camera, moved from outside: an orbit, a turntable, a script. */
   readonly camera = new Camera();
+  /** Millimetres in one world unit, as constructed. */
+  readonly mmPerUnit: number;
   bloom = 0.018;
 
   private ctx: Gpu;
@@ -336,6 +350,8 @@ export class Renderer {
   private frameData = new Float32Array(FRAME_SIZE / 4);
   /** Ask for a frame on the next render. */
   requestRender() { this.dirty = true; }
+  /** A length in millimetres, in world units. */
+  private mm(millimetres: number) { return millimetres / this.mmPerUnit; }
   /** Whether the next `render` would draw: something has changed, or the view is moving. */
   get pending() { return this.dirty || this.moving || this.fullBakeDue > 0; }
   /** The target's size in pixels, as last told. */
@@ -390,9 +406,11 @@ export class Renderer {
   constructor(ctx: Gpu, opts: RendererOptions = {}) {
     this.ctx = ctx;
     const { device } = ctx;
+    this.mmPerUnit = opts.mmPerUnit ?? 1;
     this.atlas = new GlyphAtlas(opts.rasteriser ?? new CanvasRasteriser());
     this.post = new PostChain(ctx);
     this.ao = new ContactOcclusion(ctx, this.post.depthFormat);
+    this.ao.radius = this.mm(2.5);
     const white = device.createTexture({ label: 'no contact occlusion', size: [1, 1], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     device.queue.writeTexture({ texture: white }, new Uint8Array([255]), { bytesPerRow: 1 }, [1, 1]);
     this.dummyAoView = white.createView();
@@ -820,7 +838,7 @@ export class Renderer {
     const t = TABLES[this.table];
     const c = t.cushion;
     this.ctx.device.queue.writeBuffer(this.groundBuffer, 48, new Float32Array([
-      t.kind, t.roughness, t.scale, c ? c.puff : 0,
+      t.kind, t.roughness, t.scale, c ? this.mm(c.puff) : 0,
       c ? c.size : 1, c ? c.slope : 0, 0, 0,
     ]));
     this.cushionDirty = true;
@@ -881,7 +899,7 @@ export class Renderer {
       position: bufferFrom(device, g.mesh.positions, shared, 'positions'),
       normal: bufferFrom(device, g.mesh.normals, shared, 'normals'),
       uv: bufferFrom(device, g.mesh.uvs, GPUBufferUsage.VERTEX, 'uvs'),
-      wear: bufferFrom(device, wearOf(g.mesh), GPUBufferUsage.VERTEX, 'wear'),
+      wear: bufferFrom(device, wearOf(g.mesh, this.mm(0.6)), GPUBufferUsage.VERTEX, 'wear'),
       face: bufferFrom(device, faceOf(g.mesh), GPUBufferUsage.VERTEX, 'face'),
       engrave: bufferFrom(device, engraveCoords(g.mesh), GPUBufferUsage.VERTEX, 'engrave'),
       instance: bufferFrom(device, g.matrices, shared, 'instances'),
@@ -927,7 +945,7 @@ export class Renderer {
   get traceLimit() { return this.tracer?.maxSamples ?? 0; }
 
   private ensureTracer() {
-    if (!this.tracer) this.tracer = new PathTracer(this.ctx, this.frameLayout);
+    if (!this.tracer) this.tracer = new PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
     if (this.traceSceneStale && this.groups.length) {
       const scene = buildScene(this.groups.map((g) => ({ mesh: g.source.mesh, matrices: g.source.matrices })));
       this.tracer.setScene(scene, this.groundBuffer);
@@ -1090,7 +1108,7 @@ export class Renderer {
     const dir: Vec3 = [0.42 + 0.2 * upright, 0.5 + 0.28 * upright, 0.9 - 0.8 * upright];
     const l = Math.hypot(dir[0], dir[1], dir[2]);
     this.camera.position = [cx + (dir[0] / l) * dist, cy + (dir[1] / l) * dist, cz + (dir[2] / l) * dist];
-    this.camera.near = Math.max(radius * 0.01, 0.01);
+    this.camera.near = Math.max(radius * 0.01, this.mm(0.01));
     this.camera.far = dist + radius * 12;
     this.camera.update();
     this.dirty = true;
@@ -1223,6 +1241,7 @@ export class Renderer {
     frame[60] = this.probeReady && this.groups.length ? 1 : 0;
     frame[61] = PROBE_MIPS - 1;
     frame[62] = this.detail;
+    frame[63] = this.mmPerUnit;
     frame[64] = this.post.renderWidth;
     frame[65] = this.post.renderHeight;
     frame[66] = this.contact > 0 && this.groups.length ? 1 : 0;
@@ -1311,7 +1330,7 @@ export class Renderer {
         downPass.drawIndexed(g.indexCount, g.instanceCount);
       }
       downPass.end();
-      this.cushion.bake(encoder, this.cushionDepthView, this.occlusion.groundCentre, this.occlusion.groundRadius, cushionShape);
+      this.cushion.bake(encoder, this.cushionDepthView, this.occlusion.groundCentre, this.occlusion.groundRadius, { ...cushionShape, puff: this.mm(cushionShape.puff) }, this.mmPerUnit);
     }
 
     if (this.probeDirty && performance.now() < this.probeDue) {
@@ -1585,7 +1604,7 @@ export class Renderer {
       if (m.model !== 'light' || count >= MAX_LIGHTS) return;
       const glow = (g.source.glow ?? m.glow ?? 1) * this.glowScale;
       if (glow <= 0) return;
-      const samples = emitterSamples(g.source.mesh);
+      const samples = emitterSamples(g.source.mesh, this.mmPerUnit);
       const c = m.colour ?? [1, 1, 1];
       const matrices = g.source.matrices;
       for (let k = 0; k < matrices.length / 16 && count < MAX_LIGHTS; k++) {
@@ -1624,7 +1643,7 @@ export class Renderer {
    */
   private bakeProbe(encoder: GPUCommandEncoder, frame: Float32Array) {
     const { device } = this.ctx;
-    const near = Math.max(this.sceneRadius * 0.01, 0.2), far = Math.max(this.sceneRadius * 6, 50);
+    const near = Math.max(this.sceneRadius * 0.01, this.mm(0.2)), far = Math.max(this.sceneRadius * 6, this.mm(50));
     const proj = new Float32Array(16);
     perspective(proj, Math.PI / 2, 1, near, far);
     const view = new Float32Array(16);
@@ -1728,7 +1747,7 @@ export class Renderer {
    */
   private bakeLocalShadows(encoder: GPUCommandEncoder, frame: Float32Array) {
     const { device } = this.ctx;
-    const near = 0.4, far = Math.max(this.sceneRadius * 4, 10);
+    const near = this.mm(0.4), far = Math.max(this.sceneRadius * 4, this.mm(10));
     const proj = new Float32Array(16);
     perspective(proj, Math.PI / 2, 1, near, far);
     const view = new Float32Array(16);

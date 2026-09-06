@@ -40,7 +40,9 @@ struct Frame {
   // how much of the small stuff a real piece carries is drawn: polish
   // swirls and smudges on metal, dust on cloth. 0 leaves everything pristine
   detail: f32,
-  _pad6: f32,
+  // millimetres in one world unit: a length times this is in millimetres,
+  // which is what every fixed size below — a swirl's pitch, a wire's width — is written in
+  unitMm: f32,
   // the frame's size in pixels, and whether the contact occlusion drawn at
   // half that size is to be read by pixel
   viewport: vec2f,
@@ -687,7 +689,7 @@ fn gemTraced(p: vec3f, v: vec3f, n: vec3f, side: vec3f, axis: vec3f, ior: f32, d
   let vo = normalize(transpose(toObject) * v);
   let no = normalize(transpose(toObject) * n);
   // colour as absorption per millimetre, from what survives the stone's width
-  let absorb = -log(max(tint, vec3f(1e-3))) / max(material.gemSize, 0.5);
+  let absorb = -log(max(tint, vec3f(1e-3))) / max(material.gemSize, 0.5 / frame.unitMm);
   let base = material.gemPlaneBase;
   let count = material.gemPlaneCount;
   var out = vec3f(0.0);
@@ -753,7 +755,7 @@ fn veinWire(x: f32, y: f32) -> f32 {
   let yy = y - spine;
   let ay = abs(yy);
   let side = select(1.0, -1.0, yy < 0.0);
-  let halfWire = 0.16;
+  let halfWire = 0.16 / frame.unitMm;
   // the midrib draws down along its length, as it does in the leaf
   var sdf = ay - halfWire * (1.0 - 0.45 * u);
   let veins = i32(material.reliefVeins);
@@ -881,13 +883,16 @@ const PBR_MAIN = `
 
   var tbn = tangentFrame(n, in.world, in.uv);
   // how much of the flat plate one pixel covers, for antialiasing anything drawn on it
-  let plateFootprint = max(0.75 * length(vec2f(dpdx(in.plate.x), dpdy(in.plate.x))), 0.005);
+  let plateFootprint = max(0.75 * length(vec2f(dpdx(in.plate.x), dpdy(in.plate.x))), 0.005 / frame.unitMm);
   // and of the engraving coordinates, taken here where every pixel takes them,
   // with the directions those coordinates run in on the surface
-  let engraveFootprint = max(0.75 * length(vec2f(dpdx(in.engrave.x), dpdy(in.engrave.x))), 0.005);
+  let engraveFootprint = max(0.75 * length(vec2f(dpdx(in.engrave.x), dpdy(in.engrave.x))), 0.005 / frame.unitMm);
   let engraveFrame = tangentFrame(n, in.world, in.engrave);
   // and how much of the part's own coordinates a pixel spans, for the finest detail
   let objectFootprint = length(fwidth(in.object));
+  // the part's own coordinates in millimetres, which the fine detail is sized in
+  let objMm = in.object * frame.unitMm;
+  let objectFootprintMm = objectFootprint * frame.unitMm;
 
   // --- chased relief: bend the normal by the height field's gradient, per pixel ---
   // The relief was applied as a shear along the flat plate's normal; the cup and
@@ -968,7 +973,7 @@ const PBR_MAIN = `
 
   // --- planishing: perturb the normal by the gradient of a height field ---
   if (material.hammer > 0.0 && worked) {
-    let p = in.object * 0.55;
+    let p = objMm * 0.55;
     let eps = 0.35;
     let h0 = planish(p);
     let hx = planish(p + tbn[0] * eps);
@@ -987,9 +992,9 @@ const PBR_MAIN = `
   // the swirls are a sixth of a millimetre apart, so where a pixel spans
   // more than a fraction of that they are let go before they can alias —
   // a moiré on a petal seen from across the room is worse than no swirls.
-  let swirlFade = 1.0 - smoothstep(0.025, 0.08, objectFootprint);
+  let swirlFade = 1.0 - smoothstep(0.025, 0.08, objectFootprintMm);
   if (frame.detail > 0.0 && worked && material.roughness < 0.35 && in.enamel < 0.5) {
-    let q = in.object;
+    let q = objMm;
     // swirls: two families of fine lines, each turned by a slow noise so the
     // rings of a buffing wheel wander across the surface
     let turn = noise3(q * 0.09) * 6.2831853;
@@ -1011,7 +1016,7 @@ const PBR_MAIN = `
 
   // --- patina: an oxide fraction that is not metal any more ---
   if (material.patina > 0.0 && worked) {
-    let blotch = noise3(in.object * 0.32) * 0.65 + noise3(in.object * 0.9) * 0.35;
+    let blotch = noise3(objMm * 0.32) * 0.65 + noise3(objMm * 0.9) * 0.35;
     let mask = smoothstep(0.62 - material.patina * 0.55, 0.78 - material.patina * 0.3, blotch);
     metallic = mix(1.0, 0.0, mask * material.patina);
     f0 = mix(f0, vec3f(0.04), mask * material.patina);
@@ -1026,7 +1031,7 @@ const PBR_MAIN = `
   // a little, a satin or brushed finish a good deal more, since its
   // roughness came from marks in the first place.
   if (worked) {
-    let p = in.object;
+    let p = objMm;
     let smudge = noise3(p * 0.09 + vec3f(3.1, 7.7, 1.3)) - 0.5;
     let mottle = noise3(p * 0.7 + vec3f(11.0, 2.0, 5.0)) - 0.5;
     let fine = noise3(p * 3.0) - 0.5;
@@ -1041,7 +1046,7 @@ const PBR_MAIN = `
   let edge = smoothstep(0.05, 0.8, in.wear) * wearOn;
   var crease = smoothstep(0.05, 0.8, -in.wear) * wearOn;
   // the grain only matters where there is a crease, and most of a surface has none
-  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(in.object * 1.7); }
+  if (crease > 0.0) { crease *= 0.7 + 0.6 * noise3(objMm * 1.7); }
   roughness = mix(roughness, roughness * 0.45, edge);
   roughness = mix(roughness, min(roughness + 0.3, 0.95), crease);
   f0 = mix(f0, f0 * 0.55, crease * 0.8);
@@ -1169,7 +1174,7 @@ const PBR_MAIN = `
       // rings, not concentric circles. Each ring is a sharp dark latewood
       // band on a paler earlywood ground, and a fine fibre texture runs the
       // length of Z through both, so the figure reads at every distance.
-      let p = in.object;
+      let p = objMm;
       let wobble = noise3(vec3f(p.x * 0.35, p.y * 0.35, p.z * 0.03)) * 2.6
         + noise3(vec3f(p.x * 1.3, p.y * 1.3, p.z * 0.11)) * 0.6;
       let ringCoord = (p.x * 0.94 + p.y * 0.34) * 1.9 + wobble;
@@ -1237,11 +1242,11 @@ const PBR_MAIN = `
           let t = normalize(tbn[0] - n * dot(tbn[0], n));
           let b = normalize(tbn[1] - n * dot(tbn[1], n));
           let across = gx * t + gy * b;
-          let bead = 0.14;
+          let bead = 0.14 / frame.unitMm;
           // a bead of that radius: level on the crown, falling to the edge,
           // but never quite on its side, and flattening as the wire nears a
           // pixel wide, where only the crown's reflection should be left
-          let flat = 1.0 - smoothstep(0.012, 0.05, plateFootprint);
+          let flat = 1.0 - smoothstep(0.012, 0.05, plateFootprint * frame.unitMm);
           let tilt = clamp(1.0 + sdf / bead, 0.0, 1.0) * 0.7 * flat;
           let wireN = normalize(n * sqrt(1.0 - tilt * tilt) + normalize(across + n * 1e-4) * tilt * select(1.0, -1.0, !frontFacing));
           // the bead's spread of normals does not go away when the bead is
@@ -1389,7 +1394,7 @@ ${MATERIAL_FIELDS}
 ${PBR_MAIN}
 `;
 
-/** The table's record and its surfaces, shared with the path tracer; foot is the world footprint of a pixel, mm. */
+/** The table's record and its surfaces, shared with the path tracer. The surfaces take a point and a pixel's footprint in millimetres. */
 export const GROUND_STRUCT = `
 struct Ground {
   centre: vec3f,
@@ -1401,7 +1406,7 @@ struct Ground {
   table: f32,          // which surface: 0 matte, 1 oak, 2 walnut, 3 slate, 4 linen, 5 velvet, 6 silk
   roughness: f32,
   scale: f32,          // pattern size, mm per feature
-  puff: f32,           // how proud a cushion stands, mm; 0 for anything hard and flat
+  puff: f32,           // how proud a cushion stands, world units; 0 for anything hard and flat
   cushionSize: f32,    // the cushion's half-side, as a fraction of the disc's radius
   slope: f32,
   _pad4: vec2f,
@@ -1585,7 +1590,8 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
   // matte table, and is lit by the sky and the key like anything else —
   // so on a black page there is still a pool of light with a shadow in
   // it, and on a pale one the table is that colour with a shadow in it
-  let surface = tableSurface(in.world.xy, length(fwidth(in.world.xy)));
+  // the table's grain is drawn in millimetres
+  let surface = tableSurface(in.world.xy * frame.unitMm, length(fwidth(in.world.xy)) * frame.unitMm);
   var n = surface.normal;
   var dipShade = 1.0;
   var cushion = 1.0;

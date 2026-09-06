@@ -33,13 +33,13 @@ const CONE_WGSL = `
 struct Params {
   centre: vec3f,
   radius: f32,     // of the ground disc: the map spans 2r
-  puff: f32,       // how proud the cushion stands, mm
-  slope: f32,      // how steeply the cloth drapes off a part, mm per mm
+  puff: f32,       // how proud the cushion stands, world units
+  slope: f32,      // how steeply the cloth drapes off a part, a ratio
   clearance: f32,  // the cloth stays this far under a part's underside
   size: f32,       // the cushion's half-side as a fraction of the radius
   dir: vec2i,      // the direction this pass sweeps
   stage: u32,      // 0 sweep from the depth map; 1 sweep from the height map; 2 finish; 3 blur the footprint; 4 blur again
-  _pad: u32,
+  unitMm: f32,     // millimetres in one world unit
 };
 @group(0) @binding(0) var<uniform> params: Params;
 @group(0) @binding(1) var pieceDepth: texture_depth_2d;
@@ -100,7 +100,7 @@ fn dome(p: vec2i) -> f32 {
     // how much of the cloth nearby is under the piece: a box blur of the
     // footprint, sixteen millimetres or so wide, one axis per pass — wide
     // enough that the inside of a ring is carried down with its band
-    let reach = max(1, i32(8.0 / texel));
+    let reach = max(1, i32(8.0 / (texel * params.unitMm)));
     // a tent rather than a box, so a ring's inside does not show the two axes
     var sum = 0.0;
     var n = 0.0;
@@ -113,7 +113,7 @@ fn dome(p: vec2i) -> f32 {
         // cushion carries no weight on it, its trunk does
         let underside = undersideAt(q);
         let top = params.centre.z + params.puff;
-        sum += w * (1.0 - smoothstep(top, top + 3.0, underside));
+        sum += w * (1.0 - smoothstep(top, top + 3.0 / params.unitMm, underside));
       }
       else { sum += w * textureLoad(src, q, 0).r; }
       n += w;
@@ -135,9 +135,9 @@ fn dome(p: vec2i) -> f32 {
 `;
 
 export interface CushionShape {
-  /** How proud the cushion stands, mm. */
+  /** How proud the cushion stands, in world units. */
   puff: number;
-  /** How steeply the cloth drapes away from a part, mm per mm. */
+  /** How steeply the cloth drapes away from a part, a ratio. */
   slope: number;
   /** The cushion's half-side, as a fraction of the ground radius. */
   size: number;
@@ -183,7 +183,8 @@ export class CushionBake {
    * Bake from a depth render of the piece seen straight down over the ground
    * disc (centre, radius). Records the passes on the encoder.
    */
-  bake(encoder: GPUCommandEncoder, pieceDepth: GPUTextureView, centre: number[], radius: number, shape: CushionShape) {
+  /** `mmPerUnit`: millimetres in one world unit, for the sizes the bake fixes — how wide a footprint spreads, how high over the cloth a part stops pressing. */
+  bake(encoder: GPUCommandEncoder, pieceDepth: GPUTextureView, centre: number[], radius: number, shape: CushionShape, mmPerUnit = 1) {
     const { device } = this.ctx;
     const clearance = 0.25;
     const h = this.height, sc = this.scratch, pr = this.pressure;
@@ -206,9 +207,10 @@ export class CushionBake {
     const data = new ArrayBuffer(256 * sweeps.length);
     sweeps.forEach((s, i) => {
       const f32 = new Float32Array(data, i * 256, 8);
-      const i32 = new Int32Array(data, i * 256 + 32, 4);
+      const i32 = new Int32Array(data, i * 256 + 32, 3);
       f32.set([centre[0], centre[1], centre[2], radius, shape.puff, shape.slope, clearance, shape.size]);
-      i32.set([s.dir[0], s.dir[1], s.stage, 0]);
+      i32.set([s.dir[0], s.dir[1], s.stage]);
+      new Float32Array(data, i * 256 + 44, 1)[0] = mmPerUnit;
     });
     device.queue.writeBuffer(this.params, 0, data);
     const groups = Math.ceil(CUSHION_SIZE / 8);

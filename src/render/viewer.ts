@@ -18,10 +18,10 @@ import type { Anchor } from '../parts/types';
 import type { Box3, Vec3 } from '../geom/types';
 import type { EnvPreset } from './env';
 import type { Film } from './post';
-import { Renderer, type InstanceGroup, type Quality, type RigLight, type TableName } from './renderer';
+import { Renderer, type InstanceGroup, type Quality, type RendererOptions, type RigLight, type TableName } from './renderer';
 
 export { MAX_RIG_LIGHTS, emitterSamples, tableNames } from './renderer';
-export type { InstanceGroup, Quality, RigLight, TableName } from './renderer';
+export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } from './renderer';
 
 export class Viewer {
   /** The renderer under the canvas, for whatever the forwarding surface leaves out. */
@@ -61,23 +61,26 @@ export class Viewer {
   private tickMs = 16.7;
   private lastTickAt = 0;
 
-  static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<Viewer> {
+  static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void, opts: RendererOptions = {}): Promise<Viewer> {
     const canvas = document.createElement('canvas');
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.display = 'block';
     const ctx = await createContext(canvas, onLost);
-    return new Viewer(ctx, host);
+    return new Viewer(ctx, host, opts);
   }
 
-  private constructor(ctx: GpuContext, host: HTMLElement) {
+  private constructor(ctx: GpuContext, host: HTMLElement, opts: RendererOptions) {
     this.ctx = ctx;
     this.host = host;
     host.appendChild(ctx.canvas);
-    this.renderer = new Renderer(ctx);
+    this.renderer = new Renderer(ctx, opts);
     this.camera = this.renderer.camera;
+    // the orbit's range starts as a jeweller's, six millimetres to just over a
+    // metre, and opens out to whatever is framed
+    const u = this.renderer.mmPerUnit;
     this.controls = new Orbit(this.camera, {
-      element: ctx.canvas, ease: 0.18, inertia: 0.72, minDistance: 6, maxDistance: 1200,
+      element: ctx.canvas, ease: 0.18, inertia: 0.72, minDistance: 6 / u, maxDistance: 1200 / u,
     });
     // the host, not the window: a pane that is laid out after load, or shown
     // after being hidden, changes size without a window resize event
@@ -170,6 +173,11 @@ export class Viewer {
 
   frameBounds(b: Box3) {
     this.renderer.frameBounds(b);
+    // a piece larger than the jeweller's range needs room to stand back from, and a tiny one to come close to
+    const radius = Math.hypot(b.max[0] - b.min[0], b.max[1] - b.min[1], b.max[2] - b.min[2]) / 2;
+    const u = this.renderer.mmPerUnit;
+    this.controls.minDistance = Math.min(6 / u, radius * 0.1);
+    this.controls.maxDistance = Math.max(1200 / u, radius * 40);
     this.controls.forcePosition();
     this.pushFocus();
   }

@@ -540,8 +540,8 @@ The applications considered, and the fit:
 
 - **Math-based sculptures.** The best fit, nearly a subset of what exists:
   parametric surfaces, wire on any curve, the mathematical paths, the
-  metals, the turntable. Needs a scale parameter and headroom for denser
-  meshes. Small.
+  metals, the turntable. Needs a scale parameter (done: `mmPerUnit`) and
+  headroom for denser meshes. Small.
 - **Archvis interiors.** The same intent as the realism phase at another
   scale; static scenes and still views, so the bake-then-look design holds.
   Needs metres, rooms as geometry in place of the table, several shadowed
@@ -599,6 +599,25 @@ centre. Its first run caught the one thing the split had left loose: an
 environment disposed while its sky was still being read back, face by
 face, submitted copies from a destroyed texture.
 
+The scale parameter followed, as `mmPerUnit` on the renderer's options: how
+many millimetres one world unit is, 1 for the catalogue. Nothing about the
+world changes — meshes, matrices, camera, lights and anchors are in whatever
+unit the caller has — but a survey found what the renderer fixes in real
+sizes, and each now goes through the one number: the polish swirls, hammer
+marks, patina and grain drawn from a part's own coordinates; a cloisonné
+wire's width and its bead; the floor under a stone's absorption; the
+table's grain and its cushion's height, spread and pressing; the reach of
+the contact shadow; the spacing of a glowing part's light samples; the
+wear analysis's notion of a tight radius; the near planes of the probe and
+the local shadows; and the step a traced ray takes off a surface. The frame
+uniform carries the unit so the shaders convert where they need
+millimetres, and the viewer's orbit opens its range to whatever is framed.
+The test draws the rosette a second time modelled in metres and told so,
+and holds the frame against the millimetre one: they differ by a tenth of
+a level in 255. Told nothing, the first frame differs by nearly four, most
+of the fixed sizes being under a pixel at that frame's size. What is not
+covered is the catalogue: its generators and chord tolerances are in
+millimetres and stay there, since a sculpture app brings its own.
 
 ## Open, from the first phase
 
