@@ -843,6 +843,40 @@ a few percent, so the enamel's response to a local light is the next
 thing to hold to the answer. Also seen: the tracer draws the diode's own
 mirror image on the glossy enamel and the raster does not.
 
+## A chess set
+
+Asked for at the end: a precious-metals chess set, one example a man,
+plus a board and the whole thing set up for a first move. Six pieces,
+each shown as a facing pair — the same shapes in silver with cobalt
+enamel and sapphires, and in gold with ruby enamel and rubies — on a
+stepped foot with an enamel roundel let into it. The board is sixty-four
+enamel squares on a gold ground with a millimetre of gold showing
+between them, a guilloche border, a dentil band and a sunburst with an
+onyx at each corner. `chess` brings the board in with `use` and stands
+both armies on it.
+
+Three things the set taught. A polished metal in a dark studio is a
+mirror of the dark: the first pieces came out black, and what saved
+them was fluting cut with `engraved hatch` — the flutes catch the key
+where a plain turned column has nothing to catch it with — over a satin
+body with polished collars. The flutes' angle differs by surface: a
+stem measures its millimetres up the shaft, a revolve round it, so the
+same fluting is angle 0 on one and 90 degrees on the other. And a
+`through` of two points is a spline whose parameter is not arc length,
+so eight squares walked along one came out unevenly spaced, in a
+visibly crooked board; a `bow` with no sag is a straight line evenly
+walked. The grid itself is made by doubling — a pair of squares to a
+file, two files to four, four to eight — since the language has no grid
+symmetry and `along` rotates its copies.
+
+The men cannot be brought in with `use` the way the board is: an
+imported sketch arrives whole and in the metal it was written in, and a
+part carries one material, so the two armies are declared twice in
+`chess`. A test checks the board's colours the way a player would — a1
+dark, no two neighbours alike — and that thirty-two men stand on the
+squares a game starts from, queens on the d file, white's on her own
+colour.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
