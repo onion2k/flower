@@ -591,6 +591,15 @@ frame, the way the probe already waited. The bakes and the post chain
 were only ever using the device and the format, so they now take `Gpu`
 and compile without a canvas in sight.
 
+The seam has a test on it, run headless in Chrome since node has no WebGPU
+(`npm run test:gpu`): a device with no canvas, a sketch from the catalogue
+grouped for drawing (`assembly/groups.ts`, moved out of the page for it), a
+frame into a texture, the pixels read back and the piece found at the
+centre. Its first run caught the one thing the split had left loose: an
+environment disposed while its sky was still being read back, face by
+face, submitted copies from a destroyed texture.
+
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

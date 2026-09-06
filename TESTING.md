@@ -4,6 +4,13 @@
 configured in `vitest.config.ts` to pick up `src/**/*.test.ts`. Tests live
 next to what they cover, in a `__tests__` directory alongside the module.
 
+`npm run test:gpu` runs the tests that need a WebGPU device — the
+`*.gpu.test.ts` files, excluded from the node run — in the machine's own
+Chrome, headless, through Vitest's browser mode and Playwright
+(`vitest.browser.config.ts`; nothing is downloaded, Chrome is launched with
+WebGPU enabled). `VITE_FRAME_DIR=/some/dir npm run test:gpu` writes the
+frames those tests draw out as PNGs, for looking at.
+
 ## What's covered
 
 Roughly bottom-up, from the math to the DOM:
@@ -45,12 +52,17 @@ Roughly bottom-up, from the math to the DOM:
 
 ## What's not covered, and why
 
-`src/render/renderer.ts`, `src/render/viewer.ts` and the WGSL shaders — the scene pass, materials,
-occlusion baking, picking, selection — have no automated coverage. Node has
-no WebGPU implementation, so there's nothing to run them against in a test
-process. Verifying that layer means opening the app and looking at it: the
-in-app browser preview, or a manual pass in a real browser. Treat a change
-there as unverified until it's actually been seen on screen.
+`src/render/viewer.ts` — the canvas, the orbit, the frame loop and the
+adaptive resolution — has no automated coverage. The renderer under it has
+one headless test (`src/render/__tests__/renderer.gpu.test.ts`, under
+`npm run test:gpu`): a device with no canvas, the rosette sketch, a frame
+into a texture, and its pixels read back — the piece is at the centre and
+gold, the background at the corners, the debug views draw, the tracer takes
+a sample, every shader compiles and no GPU error is raised. It says the
+renderer draws, not that it draws well: a material or lighting change still means
+opening the app and looking at it, in the in-app browser preview or a real
+browser. Treat a change there as unverified until it's actually been seen
+on screen.
 
 ## Gotchas for writing tests here
 

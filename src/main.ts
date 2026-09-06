@@ -6,8 +6,9 @@ import { metalNames, finishNames } from './render/materials';
 import type { EnvPreset } from './render/env';
 import { forms, formNames } from './spike/forms';
 import { Assembly } from './assembly/assembly';
+import { groupByMesh } from './assembly/groups';
 import { identity } from './geom/transform';
-import type { Anchor, Engraving, Inscription, Part, PlateRelief } from './parts/types';
+import type { Anchor, Part } from './parts/types';
 import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
@@ -607,44 +608,6 @@ filmSet.append(
 );
 
 controlsEl.append(subjectSet, materialSet, lightSet, keySet, cameraSet, filmSet, viewSet);
-
-/** Group placements by the mesh they share — that grouping is the draw call list. */
-function groupByMesh(assembly: Assembly) {
-  type Group = { mesh: Mesh; matrices: number[]; placements: Placement[]; metal?: string; finish?: string; enamel?: string; relief?: PlateRelief; veinMetal?: string; pavilionFacets?: number; engraving?: Engraving; inscription?: Inscription; glow?: number; gemPlanes?: Float32Array; gemSize?: number };
-  // Two parts made by the same call share a mesh, so the mesh alone is not
-  // the group: what is drawn on the surface has to match as well.
-  const byMesh = new Map<Mesh, Group[]>();
-  const sameSurface = (g: Group, part: Part) =>
-    g.metal === part.material?.metal && g.finish === part.material?.finish && g.enamel === part.enamel
-    && g.veinMetal === part.veinMetal && g.engraving === part.engraving && g.inscription === part.inscription && g.glow === part.glow;
-  for (const p of assembly.placements) {
-    let groups = byMesh.get(p.part.mesh);
-    if (!groups) { groups = []; byMesh.set(p.part.mesh, groups); }
-    let group = groups.find((g) => sameSurface(g, p.part));
-    if (!group) {
-      group = { mesh: p.part.mesh, matrices: [], placements: [], metal: p.part.material?.metal, finish: p.part.material?.finish, enamel: p.part.enamel, relief: p.part.relief, veinMetal: p.part.veinMetal, pavilionFacets: p.part.pavilionFacets, engraving: p.part.engraving, inscription: p.part.inscription, glow: p.part.glow, gemPlanes: p.part.gemPlanes, gemSize: p.part.gemSize };
-      groups.push(group);
-    }
-    for (let i = 0; i < 16; i++) group.matrices.push(p.matrix[i]);
-    group.placements.push(p);
-  }
-  return [...byMesh.values()].flat().map((g) => ({
-    mesh: g.mesh,
-    matrices: new Float32Array(g.matrices),
-    placements: g.placements,
-    metal: g.metal,
-    finish: g.finish,
-    enamel: g.enamel,
-    relief: g.relief,
-    veinMetal: g.veinMetal,
-    pavilionFacets: g.pavilionFacets,
-    engraving: g.engraving,
-    inscription: g.inscription,
-    glow: g.glow,
-    gemPlanes: g.gemPlanes,
-    gemSize: g.gemSize,
-  }));
-}
 
 /** The divider above the editor: drag to give the source or the viewport more room. */
 {

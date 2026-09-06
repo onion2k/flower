@@ -537,9 +537,13 @@ export function bakeEnvironment(
   // --- 4. a small mip of the background, read back for direction sampling ---
   const sampleLod = Math.max(0, Math.round(Math.log2(size / sampleSize)));
   const realSize = Math.max(1, size >> sampleLod);
+  // Six readbacks, one submit each, awaited in turn: an environment disposed
+  // while they are under way — the light moved again before the first bake's
+  // sky had been read — must not submit copies from a destroyed texture.
+  let disposed = false;
   const samples = (async () => {
     const faces: Float32Array[] = [];
-    for (let face = 0; face < 6; face++) {
+    for (let face = 0; face < 6 && !disposed; face++) {
       const raw = new Uint16Array(await readbackLayer(device, background, face, sampleLod, realSize, 8));
       const out = new Float32Array(raw.length);
       for (let i = 0; i < raw.length; i++) out[i] = halfToFloat(raw[i]);
@@ -557,6 +561,7 @@ export function bakeEnvironment(
     highDynamicRange: true,
     samples,
     dispose() {
+      disposed = true;
       background.destroy();
       specular.destroy();
       brdf.destroy();
