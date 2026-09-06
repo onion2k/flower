@@ -729,7 +729,7 @@ fn gemTraced(p: vec3f, v: vec3f, n: vec3f, side: vec3f, axis: vec3f, ior: f32, d
         let outDir = refract(dir, -nHit, eta);
         if (dot(outDir, outDir) > 1e-6) {
           let world = normalize(toObject * outDir);
-          gathered += throughput * (1.0 - f) * dot(reflectionAt(world, 0.0, worldP), vec3f(f32(c == 0), f32(c == 1), f32(c == 2)));
+          gathered += throughput * (1.0 - f) * dot(seen(world, 0.0, worldP), vec3f(f32(c == 0), f32(c == 1), f32(c == 2)));
         }
       }
       throughput *= f;
@@ -818,7 +818,7 @@ fn gemInterior(v: vec3f, n: vec3f, axis: vec3f, lateral: vec3f, ior: f32, disper
     if (dot(ray, ray) < 1e-6) { ray = reflect(-v, n); }
     ray = reflect(ray, axis * slope + lateral * reach);
     ray = reflect(ray, axis * slope - lateral * reach);
-    let sample = reflectionAt(ray, 0.0, p);
+    let sample = seen(ray, 0.0, p);
     out += sample * vec3f(f32(c == 0), f32(c == 1), f32(c == 2));
   }
   return out * CROWN_RETURN;
@@ -1100,7 +1100,7 @@ const PBR_MAIN = `
   let footprint = max(length(dpdx(r)), length(dpdy(r)));
   let footLod = clamp(sqrt(footprint), 0.0, 1.0) * frame.maxLod;
   let lod = max(roughness * frame.maxLod, footLod);
-  let prefiltered = reflectionAt(r, lod, in.world);
+  let prefiltered = seen(r, lod, in.world);
   let ab = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, roughness), 0.0).rg;
 
   // Lagarde's specular occlusion: a mirror keeps more of its reflection than
@@ -1215,7 +1215,7 @@ const PBR_MAIN = `
     if (enamelled) {
       let eRough = ENAMEL_ROUGHNESS;
       let eLod = max(eRough * frame.maxLod, footLod);
-      let ePrefiltered = reflectionAt(reflect(-v, n), eLod, in.world);
+      let ePrefiltered = seen(reflect(-v, n), eLod, in.world);
       let eOcclusion = clamp(pow(ndv + ao, exp2(-16.0 * eRough - 1.0)) - 1.0 + ao, 0.0, 1.0);
       let eReflected = ePrefiltered * eOcclusion;
       let eAb = textureSampleLevel(envBrdf, linearSampler, vec2f(ndv, eRough), 0.0).rg;
@@ -1260,7 +1260,7 @@ const PBR_MAIN = `
           let wireNdv = max(dot(wireN, v), 1e-4);
           let wireLod = max(wireRough * frame.maxLod, footLod);
           let wireAb = textureSampleLevel(envBrdf, linearSampler, vec2f(wireNdv, wireRough), 0.0).rg;
-          let wireReflected = reflectionAt(reflect(-v, wireN), wireLod, in.world) * mix(ao, 1.0, 0.5);
+          let wireReflected = seen(reflect(-v, wireN), wireLod, in.world) * mix(ao, 1.0, 0.5);
           let wireColour = wireReflected * (material.veinF0 * wireAb.x + wireAb.y) * frame.exposure;
           enamel = mix(enamel, wireColour, wire);
           // and the key and the piece's lights see the bead, in its own metal
@@ -1307,96 +1307,6 @@ const PBR_MAIN = `
 }
 `;
 
-export const PBR_WGSL = `
-${FRAME_STRUCT}
-${COMMON}
-${MATERIAL_STRUCT}
-@group(1) @binding(0) var<uniform> material: Material;
-@group(1) @binding(3) var<storage, read> gemPlanes: array<vec4f>;
-@group(1) @binding(1) var<storage, read> glyphs: array<Glyph>;
-@group(1) @binding(2) var atlas: texture_2d<f32>;
-
-struct VsIn {
-  @location(0) position: vec3f,
-  @location(1) normal: vec3f,
-  @location(2) uv: vec2f,
-  @location(3) wear: f32,
-  @location(4) im0: vec4f,
-  @location(5) im1: vec4f,
-  @location(6) im2: vec4f,
-  @location(7) im3: vec4f,
-  @location(8) face: vec2f,     // enamel, cap
-  @location(9) selected: f32,
-  @location(10) engrave: vec2f,  // surface millimetres, for engraving
-  @builtin(vertex_index) vid: u32,
-  @builtin(instance_index) iid: u32,
-};
-
-struct VsOut {
-  // invariant, so the depth prepass and this pass agree to the bit
-  @builtin(position) @invariant clip: vec4f,
-  @location(0) normal: vec3f,
-  @location(1) world: vec3f,
-  @location(2) object: vec3f,
-  @location(3) uv: vec2f,
-  @location(4) ao: f32,
-  @location(5) wear: f32,
-  @location(6) enamel: f32,
-  // which cap, and the flat plate's coordinates there; linear in uv, so exact
-  @location(7) cap: f32,
-  @location(8) plate: vec2f,
-  // the part's own up and across, in world space: which way a stone is standing
-  @location(9) axis: vec3f,
-  @location(10) side: vec3f,
-  @location(11) @interpolate(flat) selected: f32,
-  @location(12) engrave: vec2f,
-};
-
-@vertex fn vsMain(in: VsIn) -> VsOut {
-  let inst = mat4x4f(in.im0, in.im1, in.im2, in.im3);
-  let world = inst * vec4f(in.position, 1.0);
-
-  // baked visibility, one pair of fixed-point sums per (placement, vertex)
-  let index = material.occlusionBase + in.iid * material.vertexCount + in.vid;
-  let r = f32(occlusion[2u * index]);
-  let g = f32(occlusion[2u * index + 1u]);
-  let ao = select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
-
-  var out: VsOut;
-  out.clip = frame.viewProj * world;
-  out.selected = in.selected;
-  // placements are rigid with uniform scale, so rotating the normal is exact
-  out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
-  out.world = world.xyz;
-  out.object = in.position;
-  out.uv = in.uv;
-  out.ao = mix(1.0, ao, frame.occlusionOn);
-  out.wear = in.wear;
-  out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
-  out.cap = in.face.y;
-  out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
-  out.engrave = in.engrave;
-  let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
-  out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
-  out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
-  return out;
-}
-
-// Tangent frame from screen-space derivatives: u runs along a sweep and around
-// a revolve, so dP/du is the brush direction of a finish.
-fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
-  let dp1 = dpdx(p); let dp2 = dpdy(p);
-  let duv1 = dpdx(uv); let duv2 = dpdy(uv);
-  let dp2perp = cross(dp2, n);
-  let dp1perp = cross(n, dp1);
-  let t = dp2perp * duv1.x + dp1perp * duv2.x;
-  let b = dp2perp * duv1.y + dp1perp * duv2.y;
-  let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
-  return mat3x3f(t * inv, b * inv, n);
-}
-${MATERIAL_FIELDS}
-${PBR_MAIN}
-`;
 
 /** The table's record and its surfaces, shared with the path tracer. The surfaces take a point and a pixel's footprint in millimetres. */
 export const GROUND_STRUCT = `
@@ -1573,38 +1483,27 @@ fn domeAt(local: vec2f) -> f32 {
 
 `;
 
-export const GROUND_WGSL = `
-${FRAME_STRUCT}
-${COMMON}
-${GROUND_STRUCT}
-@group(1) @binding(0) var<uniform> ground: Ground;
-@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
-${CUSHION_FIELD}
-${TABLE_SURFACES}
-@group(1) @binding(1) var shadow: texture_2d<f32>;
-
-struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
-
-@vertex fn vsMain(@location(0) position: vec3f) -> VsOut {
-  var out: VsOut;
-  out.local = position.xy;
-  // a cushion rises out of the disc by its baked height
-  let lift = select(0.0, heightAt(position.xy * 0.5 + 0.5), ground.puff > 0.0);
-  let world = ground.centre + vec3f(position.xy * ground.radius, lift);
-  out.world = world;
-  out.clip = frame.viewProj * vec4f(world, 1.0);
-  return out;
-}
-
-@fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
-  let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
-  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contactAt(in.clip);
+export const TABLE_LIT = `
+/**
+ * The table, lit, at a point of the disc: its surface, the cushion's shape
+ * and fold, the sky's light under the baked occlusion, the key and the rig
+ * with their shadows, the sheen, the piece's own lights, and the fade to
+ * the page at the rim. The ground pass draws it; the piece's shader calls
+ * it where a reflection ray meets the table, so a polished face shows the
+ * table exactly where it is rather than where the probe's sphere put it.
+ * v is the direction to whoever is looking, contact the screen-space
+ * occlusion where there is one, foot the footprint in millimetres the
+ * grain is drawn at.
+ */
+fn tableLit(world: vec3f, local: vec2f, v: vec3f, contact: f32, foot: f32) -> vec3f {
+  let acc = textureSampleLevel(shadow, linearSampler, local * 0.5 + 0.5, 0.0).rg;
+  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contact;
   // the table takes the background's colour, but never darker than a dark
   // matte table, and is lit by the sky and the key like anything else —
   // so on a black page there is still a pool of light with a shadow in
   // it, and on a pale one the table is that colour with a shadow in it
   // the table's grain is drawn in millimetres
-  let surface = tableSurface(in.world.xy * frame.unitMm, length(fwidth(in.world.xy)) * frame.unitMm);
+  let surface = tableSurface(world.xy * frame.unitMm, foot);
   var n = surface.normal;
   var dipShade = 1.0;
   var cushion = 1.0;
@@ -1612,40 +1511,39 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
     // the cushion's normal from its height's slope, and the cloth's own
     // fine normal laid over it; where the piece has pressed the cloth down
     // out of its dome it sits in a fold, and shades itself
-    let uv = in.local * 0.5 + 0.5;
+    let uv = local * 0.5 + 0.5;
     let step = 1.0 / f32(textureDimensions(cushionHeight).x);
     let mm = 2.0 * ground.radius * step;
     let dx = (heightAt(uv + vec2f(step, 0.0)) - heightAt(uv - vec2f(step, 0.0))) / (2.0 * mm);
     let dy = (heightAt(uv + vec2f(0.0, step)) - heightAt(uv - vec2f(0.0, step))) / (2.0 * mm);
     let slopeN = normalize(vec3f(-dx, -dy, 1.0));
     n = normalize(vec3f(slopeN.xy + n.xy * 0.6, slopeN.z));
-    let pressed = clamp((domeAt(in.local) - heightAt(uv)) / max(ground.puff, 0.1), 0.0, 1.0);
+    let pressed = clamp((domeAt(local) - heightAt(uv)) / max(ground.puff, 0.1), 0.0, 1.0);
     dipShade = 1.0 - 0.45 * pressed;
     // beyond the cushion's rim there is only the table under it
-    cushion = smoothstep(0.0, 0.15, domeAt(in.local) / max(ground.puff, 0.1));
+    cushion = smoothstep(0.0, 0.15, domeAt(local) / max(ground.puff, 0.1));
   }
-  let v = normalize(frame.cameraPos - in.world);
   let ndv = max(dot(n, v), 1e-3);
   let spin = spinZ(frame.envSpin);
-  let irradiance = irradianceAt(n, in.world);
+  let irradiance = irradianceAt(n, world);
   // each light carries its own shadow: the sky's the baked occlusion, the
   // key's its shadow map — the key doesn't darken where the sky can't reach
-  let keyLit = keyShadowAt(in.world, vec3f(0.0, 0.0, 1.0));
+  let keyLit = keyShadowAt(world, vec3f(0.0, 0.0, 1.0));
   var key = keyDiffuse(n) * frame.keyColour * keyLit;
   var rig: RigLit;
   rig.diffuse = vec3f(0.0);
   rig.specular = vec3f(0.0);
   if (frame.rigCount > 0.0) {
-    rig = rigAt(n, v, in.world, vec3f(0.04), clamp(surface.roughness, 0.05, 1.0), vec3f(0.0, 0.0, 1.0));
+    rig = rigAt(n, v, world, vec3f(0.04), clamp(surface.roughness, 0.05, 1.0), vec3f(0.0, 0.0, 1.0));
     key += rig.diffuse;
   }
   // dust: a cloth on a bench gathers it, a sparse scatter of pale flecks that
   // catch the light where the pile is dark
   var dust = 0.0;
   if (frame.detail > 0.0 && any(surface.sheen > vec3f(0.0))) {
-    let cell = floor(in.world.xy * 3.0);
+    let cell = floor(world.xy * 3.0);
     let h = hash13(vec3f(cell, 4.0));
-    let inCell = fract(in.world.xy * 3.0) - vec2f(hash13(vec3f(cell, 5.0)), hash13(vec3f(cell, 6.0)));
+    let inCell = fract(world.xy * 3.0) - vec2f(hash13(vec3f(cell, 5.0)), hash13(vec3f(cell, 6.0)));
     let fleck = smoothstep(0.08, 0.03, length(inCell)) * step(0.82, h);
     dust = fleck * frame.detail * (0.5 + 0.5 * hash13(vec3f(cell, 7.0)));
   }
@@ -1664,7 +1562,7 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
     let anisoT = cross(weave, v);
     reflectN = normalize(mix(n, cross(anisoT, weave), surface.aniso * (1.0 - rough * 0.4)));
   }
-  let reflected = reflectionAt(reflect(-v, reflectN), rough * frame.maxLod, in.world) * mix(ao, 1.0, 0.3);
+  let reflected = reflectionAt(reflect(-v, reflectN), rough * frame.maxLod, world) * mix(ao, 1.0, 0.3);
   var specular = reflected * fresnel + keySpecular(reflectN, v, vec3f(0.04), rough) * keyLit + rig.specular;
   // a cloth's sheen: light coming back off the fibre tips, most at grazing
   // angles, in the fuzz's own colour — the velvet glow at the edge of a fold
@@ -1680,18 +1578,185 @@ struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @locat
     specular += surface.sheen * (irradiance * ao * (0.006 + 0.6 * rim * rim) + keySheen);
   }
   // the piece's own lights pool on the table under it
-  let local = localLights(n, v, in.world, vec3f(0.04), rough, surface.albedo);
-  var lit = (diffuse * (1.0 - fresnel) + specular + local) * frame.exposure;
+  let lamps = localLights(n, v, world, vec3f(0.04), rough, surface.albedo);
+  var lit = (diffuse * (1.0 - fresnel) + specular + lamps) * frame.exposure;
   if (cushion < 1.0) {
     // the table the cushion sits on: a dark matte, lit as the matte table is
     let matte = max(ground.background, vec3f(0.04, 0.04, 0.043));
     var flatKey = keyDiffuse(vec3f(0.0, 0.0, 1.0)) * frame.keyColour * keyLit;
-    if (frame.rigCount > 0.0) { flatKey += rigAt(vec3f(0.0, 0.0, 1.0), v, in.world, vec3f(0.04), 1.0, vec3f(0.0, 0.0, 1.0)).diffuse; }
-    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), in.world) * ao + flatKey) * frame.exposure;
+    if (frame.rigCount > 0.0) { flatKey += rigAt(vec3f(0.0, 0.0, 1.0), v, world, vec3f(0.04), 1.0, vec3f(0.0, 0.0, 1.0)).diffuse; }
+    let flat = matte * (irradianceAt(vec3f(0.0, 0.0, 1.0), world) * ao + flatKey) * frame.exposure;
     lit = mix(flat, lit, cushion);
   }
-  let fade = 1.0 - smoothstep(0.3, 1.0, length(in.local));
+  let fade = 1.0 - smoothstep(0.3, 1.0, length(local));
   var colour = mix(ground.background, lit, fade);
+  return colour;
+}
+`;
+
+export const PBR_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+${MATERIAL_STRUCT}
+${GROUND_STRUCT}
+// the table, for reflections to meet: its record, its baked shadow, its cushion
+@group(0) @binding(12) var<uniform> ground: Ground;
+@group(0) @binding(13) var shadow: texture_2d<f32>;
+@group(0) @binding(14) var cushionHeight: texture_2d<f32>;
+${CUSHION_FIELD}
+${TABLE_SURFACES}
+${TABLE_LIT}
+
+/**
+ * What is seen in direction dir from p, with the table met exactly. The
+ * probe holds the piece and the table as one cube from one point, corrected
+ * for parallax against a sphere, and for the table — a plane, or a cushion's
+ * lift over one — that correction puts its edge far from where it is. So a
+ * reflection ray is run to the table itself, and where it lands within the
+ * disc the table is shaded there, sharp for a polished face and given back
+ * to the probe's blurred read as the face roughens.
+ */
+fn seen(dir: vec3f, lod: f32, p: vec3f) -> vec3f {
+  let read = reflectionAt(dir, lod, p);
+  if (frame.probeOn < 0.5 || dir.z >= -1e-4) { return read; }
+  let roughness = lod / max(frame.maxLod, 1.0);
+  let sharp = 1.0 - smoothstep(0.3, 0.7, roughness);
+  if (sharp <= 0.0) { return read; }
+  var t = (ground.centre.z - p.z) / dir.z;
+  if (t <= 0.0) { return read; }
+  var hit = p + dir * t;
+  var local = (hit.xy - ground.centre.xy) / ground.radius;
+  if (ground.puff > 0.0 && max(abs(local.x), abs(local.y)) < 1.0) {
+    // once more onto the cushion's lift where the ray came down
+    t = (ground.centre.z + heightAt(local * 0.5 + 0.5) - p.z) / dir.z;
+    if (t <= 0.0) { return read; }
+    hit = p + dir * t;
+    local = (hit.xy - ground.centre.xy) / ground.radius;
+  }
+  // beyond the disc there is only the page, as the tracer sees it; the probe's
+  // table would reach there through its parallax, scalloped, and wrongly
+  if (max(abs(local.x), abs(local.y)) >= 1.0) { return mix(read, ground.background, sharp); }
+  // the grain blurs with the reflection's spread over the distance to it
+  let foot = (t * roughness * 0.5 + 0.02) * frame.unitMm;
+  let exact = tableLit(hit, local, -dir, 1.0, foot);
+  return mix(read, exact, sharp);
+}
+@group(1) @binding(0) var<uniform> material: Material;
+@group(1) @binding(3) var<storage, read> gemPlanes: array<vec4f>;
+@group(1) @binding(1) var<storage, read> glyphs: array<Glyph>;
+@group(1) @binding(2) var atlas: texture_2d<f32>;
+
+struct VsIn {
+  @location(0) position: vec3f,
+  @location(1) normal: vec3f,
+  @location(2) uv: vec2f,
+  @location(3) wear: f32,
+  @location(4) im0: vec4f,
+  @location(5) im1: vec4f,
+  @location(6) im2: vec4f,
+  @location(7) im3: vec4f,
+  @location(8) face: vec2f,     // enamel, cap
+  @location(9) selected: f32,
+  @location(10) engrave: vec2f,  // surface millimetres, for engraving
+  @builtin(vertex_index) vid: u32,
+  @builtin(instance_index) iid: u32,
+};
+
+struct VsOut {
+  // invariant, so the depth prepass and this pass agree to the bit
+  @builtin(position) @invariant clip: vec4f,
+  @location(0) normal: vec3f,
+  @location(1) world: vec3f,
+  @location(2) object: vec3f,
+  @location(3) uv: vec2f,
+  @location(4) ao: f32,
+  @location(5) wear: f32,
+  @location(6) enamel: f32,
+  // which cap, and the flat plate's coordinates there; linear in uv, so exact
+  @location(7) cap: f32,
+  @location(8) plate: vec2f,
+  // the part's own up and across, in world space: which way a stone is standing
+  @location(9) axis: vec3f,
+  @location(10) side: vec3f,
+  @location(11) @interpolate(flat) selected: f32,
+  @location(12) engrave: vec2f,
+};
+
+@vertex fn vsMain(in: VsIn) -> VsOut {
+  let inst = mat4x4f(in.im0, in.im1, in.im2, in.im3);
+  let world = inst * vec4f(in.position, 1.0);
+
+  // baked visibility, one pair of fixed-point sums per (placement, vertex)
+  let index = material.occlusionBase + in.iid * material.vertexCount + in.vid;
+  let r = f32(occlusion[2u * index]);
+  let g = f32(occlusion[2u * index + 1u]);
+  let ao = select(1.0, clamp(r / g, 0.0, 1.0), g > 0.0);
+
+  var out: VsOut;
+  out.clip = frame.viewProj * world;
+  out.selected = in.selected;
+  // placements are rigid with uniform scale, so rotating the normal is exact
+  out.normal = normalize(mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz) * in.normal);
+  out.world = world.xyz;
+  out.object = in.position;
+  out.uv = in.uv;
+  out.ao = mix(1.0, ao, frame.occlusionOn);
+  out.wear = in.wear;
+  out.enamel = in.face.x * select(0.0, 1.0, material.enamelOpacity > 0.0);
+  out.cap = in.face.y;
+  out.plate = material.reliefSpan.xy + in.uv * material.reliefSpan.zw;
+  out.engrave = in.engrave;
+  let frame3 = mat3x3f(inst[0].xyz, inst[1].xyz, inst[2].xyz);
+  out.axis = normalize(frame3 * vec3f(0.0, 0.0, 1.0));
+  out.side = normalize(frame3 * vec3f(1.0, 0.0, 0.0));
+  return out;
+}
+
+// Tangent frame from screen-space derivatives: u runs along a sweep and around
+// a revolve, so dP/du is the brush direction of a finish.
+fn tangentFrame(n: vec3f, p: vec3f, uv: vec2f) -> mat3x3f {
+  let dp1 = dpdx(p); let dp2 = dpdy(p);
+  let duv1 = dpdx(uv); let duv2 = dpdy(uv);
+  let dp2perp = cross(dp2, n);
+  let dp1perp = cross(n, dp1);
+  let t = dp2perp * duv1.x + dp1perp * duv2.x;
+  let b = dp2perp * duv1.y + dp1perp * duv2.y;
+  let inv = inverseSqrt(max(dot(t, t), dot(b, b)) + 1e-12);
+  return mat3x3f(t * inv, b * inv, n);
+}
+${MATERIAL_FIELDS}
+${PBR_MAIN}
+`;
+
+export const GROUND_WGSL = `
+${FRAME_STRUCT}
+${COMMON}
+${GROUND_STRUCT}
+@group(1) @binding(0) var<uniform> ground: Ground;
+@group(1) @binding(2) var cushionHeight: texture_2d<f32>;
+${CUSHION_FIELD}
+${TABLE_SURFACES}
+@group(1) @binding(1) var shadow: texture_2d<f32>;
+${TABLE_LIT}
+
+struct VsOut { @builtin(position) clip: vec4f, @location(0) local: vec2f, @location(1) world: vec3f };
+
+@vertex fn vsMain(@location(0) position: vec3f) -> VsOut {
+  var out: VsOut;
+  out.local = position.xy;
+  // a cushion rises out of the disc by its baked height
+  let lift = select(0.0, heightAt(position.xy * 0.5 + 0.5), ground.puff > 0.0);
+  let world = ground.centre + vec3f(position.xy * ground.radius, lift);
+  out.world = world;
+  out.clip = frame.viewProj * vec4f(world, 1.0);
+  return out;
+}
+
+@fragment fn fsMain(in: VsOut) -> @location(0) vec4f {
+  let v = normalize(frame.cameraPos - in.world);
+  var colour = tableLit(in.world, in.local, v, contactAt(in.clip), length(fwidth(in.world.xy)) * frame.unitMm);
+  let acc = textureSample(shadow, linearSampler, in.local * 0.5 + 0.5).rg;
+  let ao = select(1.0, clamp(acc.r / acc.g, 0.0, 1.0), acc.g > 0.0) * contactAt(in.clip);
   if (frame.debug > 5.5 && frame.debug < 6.5) { colour = vec3f(ao); }
   else if (frame.debug > 0.5) { colour = ground.background; }
   // distance to the eye for the depth of field pass, negated: the table

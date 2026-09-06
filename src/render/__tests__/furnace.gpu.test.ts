@@ -92,6 +92,28 @@ describe('the furnace', () => {
     expect(Math.abs(a - b)).toBeLessThan(2.5);
   });
 
+  it('a polished bead reflects the table where the tracer does', async () => {
+    const r = compile('material silver polished\npart b = bead(radius: 8, point: 0)\nform f {\n  place b at (0, 0, 8)\n}\n');
+    renderer.setEnvironmentImage(sky(1, () => false, 1), 1);
+    renderer.setTable('matte');
+    renderer.setInstanced(groupByMesh(r.sketch!.assembly));
+    renderer.camera.target = [0, 0, 8]; renderer.camera.position = [0, -60, 40]; renderer.camera.near = 1; renderer.camera.far = 300;
+    renderer.setFocus(70, 70);
+    await renderer.setEnvironment('image').samples;
+    const a = await raster(), b = await traced(200);
+    // red down the bead's centre line: the sky above, the dark table reflected below, the same rows in both
+    const column = (px: Uint8Array, y: number) => { let s = 0; for (let x = 124; x < 132; x++) s += px[(y * SIZE + x) * 4 + 2]; return s / 8; };
+    for (const y of [88, 104, 120, 152, 168, 184]) expect(Math.abs(column(a, y) - column(b, y)), `row ${y}`).toBeLessThan(14);
+    expect(column(a, 104)).toBeGreaterThan(120);
+    expect(column(a, 168)).toBeLessThan(60);
+    // and back to the table and bead the other cases use
+    const again = compile('material silver satin\npart b = bead(radius: 6, point: 3)\nform f {\n  place b at (0, 0, 3)\n}\n');
+    renderer.setTable('linen');
+    renderer.setInstanced(groupByMesh(again.sketch!.assembly));
+    renderer.frameBounds({ min: [-20, -20, 0], max: [20, 20, 10] });
+    renderer.setFocus(60, 60);
+  });
+
   it('under a band of light overhead both land by the cosine integral, which a uniform sky of the same value calibrates', async () => {
     // the calibrating sky: uniform, at the irradiance the band will give
     const band = sky(0.02, (row) => row < 6, 4);

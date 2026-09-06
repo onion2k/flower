@@ -432,6 +432,8 @@ export class Renderer {
     const white = device.createTexture({ label: 'no contact occlusion', size: [1, 1], format: 'r8unorm', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
     device.queue.writeTexture({ texture: white }, new Uint8Array([255]), { bytesPerRow: 1 }, [1, 1]);
     this.dummyAoView = white.createView();
+    const noGround = device.createTexture({ label: 'no ground shadow', size: [1, 1], format: 'rg16float', usage: GPUTextureUsage.TEXTURE_BINDING });
+    this.dummyGroundView = noGround.createView();
     // the scene is linear HDR until the composite, so clear to what tonemaps to the page colour
     this.background = inverseTonemap(BACKGROUND, this.film.tonemap);
 
@@ -458,6 +460,10 @@ export class Renderer {
         { binding: 9, visibility: both, texture: { viewDimension: 'cube' } },
         { binding: 10, visibility: both, texture: {} },
         { binding: 11, visibility: both, texture: { sampleType: 'depth', viewDimension: '2d-array' } },
+        // the table, for the piece's reflections to meet: its record, its baked shadow, its cushion
+        { binding: 12, visibility: both, buffer: { type: 'uniform' } },
+        { binding: 13, visibility: both, texture: {} },
+        { binding: 14, visibility: both, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
     this.materialLayout = device.createBindGroupLayout({
@@ -1603,6 +1609,9 @@ export class Renderer {
       { binding: 9, resource: probe },
       { binding: 10, resource: ao },
       { binding: 11, resource: rig },
+      { binding: 12, resource: { buffer: this.groundBuffer } },
+      { binding: 13, resource: this.occlusion?.ground.createView() ?? this.dummyGroundView },
+      { binding: 14, resource: this.cushion.height.createView() },
     ];
     this.frameBind = this.ctx.device.createBindGroup({ label: 'frame', layout: this.frameLayout, entries: entries(this.frameBuffer, this.shadowView) });
     const none = this.dummyRigShadowView;
@@ -1866,6 +1875,7 @@ export class Renderer {
   /** Contact occlusion, per pixel, from the frame's own depth. */
   private ao: ContactOcclusion;
   private dummyAoView: GPUTextureView;
+  private dummyGroundView: GPUTextureView;
   private contact = 1;
   setContact(v: number) { this.contact = v; this.ao.strength = v; this.dirty = true; }
 

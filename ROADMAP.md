@@ -768,6 +768,29 @@ Beside it, from the furnace: a satin metal's brightness in the raster is
 some way above the tracer's under an even sky as well, once the table
 is accounted for, and wants the same held-to-the-answer treatment.
 
+## The table, met exactly
+
+The table's shading is one function now, the ground pass and the piece's
+shader both calling it, and the piece's reflection reads go through a
+wrapper that runs the reflection ray to the table — a plane, with one
+step more onto a cushion's lift — and shades the table where it lands,
+sharp for a polished face and given back to the probe's blurred read as
+the face roughens past a third. The frame's bind group carries the
+table's record, its baked shadow and its cushion for that. The furnace
+bead is the proof: down its centre line the raster now reads the sky
+then the dark table at the same rows the tracer does, where before the
+table began five rows lower. On the four scenes held against the tracer
+the error on a lit pixel came down a little everywhere — the ring in
+the studio from 8.1 to 7.6 levels, the rosette 8.2 to 8.0, the armillary
+5.7 to 5.7, the ring in daylight 4.4 to 4.1 — which says the table's
+edge was a real gap and not the largest. What is left is in the metal
+itself under the softboxes and in the piece reflected in the piece,
+which the probe still holds from one point. Noted on the way: the probe
+is drawn with the frame's exposure and read back through a shader that
+applies it again, so at any exposure but one the piece's reflections of
+itself and of the table are exposed twice; the table met directly does
+the same, for consistency, until both are put right together.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
@@ -775,5 +798,8 @@ is accounted for, and wants the same held-to-the-answer treatment.
 - Shadow softness that grows with a light's size.
 - Per-placement geometry variation is not possible while placements share a
   mesh; size varies through shrink, shape does not.
-- The probe holds one bounce and stands at one point; a second probe, or a
-  second bounce, would close the gap to a path tracer further.
+- The probe holds two bounces now but stands at one point; the piece
+  reflected in the piece is still where the raster and the tracer differ
+  most, with the metal's brightness under a studio's softboxes.
+- Reflections through the probe are exposed twice at any exposure but one:
+  the probe is drawn with the frame's exposure and read back under it.

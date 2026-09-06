@@ -28,6 +28,8 @@ const TRACE_WGSL = `
 ${FRAME_STRUCT}
 ${COMMON}
 ${MATERIAL_STRUCT}
+// the material code reads reflections through this; the tracer traces the table itself
+fn seen(dir: vec3f, lod: f32, p: vec3f) -> vec3f { return reflectionAt(dir, lod, p); }
 // the raster shader's records, all of them at once: a slot is one record at its stride
 struct MaterialSlot { m: Material, pad: array<vec4f, 15> };
 @group(1) @binding(0) var<storage, read> materials: array<MaterialSlot>;
