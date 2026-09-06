@@ -915,6 +915,37 @@ shadow. And it has not been cornered into a small scene:
 none comes out blank, but it does not reproduce the failure, which
 needed the game's own scene. The note in that file says so.
 
+## A pool of instances, and one change for many groups, September 2026
+
+Both of these came from a chess game built on the renderer as a library,
+and both are worth having for anything whose subject is a pool of parts
+rather than one still piece.
+
+`InstanceGroup` takes a `count`: how many of its placements to draw, from
+the first. A group's instance count is fixed once its buffers are made, so
+a program whose subject changes — a chess set that can hold nine queens
+and stands one — allocates for the worst case and hides the rest. It was
+hiding them at zero scale, which draws them all the same: no pixels, but
+every vertex, every frame, in every pass. With a count the game submits
+186k triangles a frame where it submitted 1.31M. Every pass honours it —
+the scene, the prepass, the key's shadow, the rig's, the cushion, the
+probe, the contact depth — as do `pick`, the scene's bounds and the scene
+handed to the tracer, so nothing beyond the live end is drawn, hit,
+measured or traced.
+
+`moveAll` writes several groups' matrices and then does what follows a
+placement once: the bounds, the lights, the probe, the shadows, the traced
+scene, and the occlusion bake only if a static group moved. A thing made
+of a dozen meshes that moves together — a man lifted off a board — cost a
+dozen re-measurements of the whole scene for one movement of the pointer,
+15 ms a pointermove; it costs 1.3 ms now. `move` is `moveAll` of one, and
+takes a count beside the matrices.
+
+`renderer.gpu.test.ts` covers both: a group drawn at half its pool and at
+none of it changes the picture and narrows what `pick` will return, a
+count past either end clamps, and two static groups moved in one call bake
+once where two calls baked twice.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

@@ -214,6 +214,96 @@ describe('the renderer, headless', () => {
     expect(() => renderer.move(heart, new Float32Array(32))).toThrow();
   });
 
+  it('draws only the live end of a group, and picks only there', async () => {
+    const groups: InstanceGroup[] = rosette().groups;
+    // the petals: the one part placed many times, so it has a pool to cut
+    const petal = groups.findIndex((g) => g.matrices.length > 16 * 4);
+    expect(petal).toBeGreaterThanOrEqual(0);
+    const room = groups[petal].matrices.length / 16;
+    renderer.setInstanced(groups);
+    const all = (await frame('count-all')).frame;
+
+    // half of them, and the picture must change by more than the film's grain
+    renderer.move(petal, groups[petal].matrices, room / 2);
+    const half = await frame('count-half');
+    expect(half.drew).toBe(true);
+    expect(difference(all, half.frame)).toBeGreaterThan(0.3);
+
+    // nothing beyond the live end is picked, wherever the ray is cast
+    for (let y = -0.9; y <= 0.9; y += 0.3) {
+      for (let x = -0.9; x <= 0.9; x += 0.3) {
+        const hit = renderer.pick(x, y);
+        if (hit?.group === petal) expect(hit.instance).toBeLessThan(room / 2);
+      }
+    }
+
+    // none at all: the part goes, and the frame with it
+    renderer.move(petal, groups[petal].matrices, 0);
+    const none = await frame('count-none');
+    expect(difference(half.frame, none.frame)).toBeGreaterThan(0.3);
+    for (let y = -0.9; y <= 0.9; y += 0.3) {
+      for (let x = -0.9; x <= 0.9; x += 0.3) {
+        expect(renderer.pick(x, y)?.group).not.toBe(petal);
+      }
+    }
+
+    // and back, which is the same picture it started as
+    renderer.move(petal, groups[petal].matrices, room);
+    const again = (await frame('count-again')).frame;
+    expect(difference(all, again)).toBeLessThan(2);
+  });
+
+  it('counts past the ends the way a caller would hope', async () => {
+    const groups: InstanceGroup[] = rosette().groups;
+    const petal = groups.findIndex((g) => g.matrices.length > 16 * 4);
+    const room = groups[petal].matrices.length / 16;
+    renderer.setInstanced(groups);
+    // more than there is room for is all of it; fewer than none is none
+    renderer.move(petal, groups[petal].matrices, room + 50);
+    expect((await frame('count-over')).drew).toBe(true);
+    const over = await Frame.read(gpu, target);
+    renderer.move(petal, groups[petal].matrices, -5);
+    expect((await frame('count-under')).drew).toBe(true);
+    const under = await Frame.read(gpu, target);
+    expect(difference(over, under)).toBeGreaterThan(0.3);
+
+    renderer.move(petal, groups[petal].matrices, room);
+    const all = await frame('count-restored');
+    expect(difference(over, all.frame)).toBeLessThan(2);
+  });
+
+  it('moves several groups as one change, and bakes once for the lot', async () => {
+    const groups: InstanceGroup[] = rosette().groups.map((g) => ({ ...g, dynamic: false }));
+    renderer.setInstanced(groups);
+    await frame('moveall-before');
+    const bakes = renderer.occlusionBakes;
+
+    // two static groups in one call: one bake, not two
+    const lift = (g: InstanceGroup) => {
+      const m = new Float32Array(g.matrices);
+      for (let i = 0; i < m.length; i += 16) m[i + 14] += 1.5;
+      return m;
+    };
+    renderer.moveAll([
+      { group: 0, matrices: lift(groups[0]) },
+      { group: 1, matrices: lift(groups[1]) },
+    ]);
+    expect(renderer.occlusionBakes).toBe(bakes + 1);
+    expect((await frame('moveall-after')).drew).toBe(true);
+
+    // dynamic groups move under the bake that stands, however many of them
+    renderer.setInstanced(groups.map((g) => ({ ...g, dynamic: true })));
+    const bakes2 = renderer.occlusionBakes;
+    renderer.moveAll([
+      { group: 0, matrices: lift(groups[0]) },
+      { group: 1, matrices: lift(groups[1]) },
+    ]);
+    expect(renderer.occlusionBakes).toBe(bakes2);
+    expect(() => renderer.moveAll([{ group: 99, matrices: new Float32Array(16) }])).toThrow();
+    renderer.setInstanced(rosette().groups);
+    await frame('moveall-restored');
+  });
+
   it('draws the debug views', async () => {
     for (const mode of [1, 2, 3]) {
       renderer.setDebug(mode);
