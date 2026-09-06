@@ -1017,6 +1017,8 @@ export class Renderer {
 
   /** Bakes of the sky occlusion begun, for measuring what a change costs. */
   occlusionBakes = 0;
+  /** Bakes of the piece's own lights' shadow cubes. */
+  localShadowBakes = 0;
 
   /** The mesh buffers on the GPU, by mesh, shared by the groups that draw it. */
   private meshBuffers = new Map<PartMesh, MeshBuffers>();
@@ -1447,6 +1449,7 @@ export class Renderer {
     }
     if (this.localShadowDirty && this.lightList.length && this.faceBinds.length) {
       this.localShadowDirty = false;
+      this.localShadowBakes++;
       this.bakeLocalShadows(encoder, frame);
     }
 
@@ -1773,8 +1776,9 @@ export class Renderer {
       }
     });
     u32[0] = count;
-    out[1] = 0.4;
-    out[2] = Math.max(this.sceneRadius * 4, 10);
+    // the cubes' near and far, as bakeLocalShadows projects them
+    out[1] = this.mm(0.4);
+    out[2] = Math.max(this.sceneRadius * 4, this.mm(10));
     this.ctx.device.queue.writeBuffer(this.lightsBuffer, 0, out);
     // a light that moved, or a piece that changed, needs its shadows again;
     // a change of brightness alone does not

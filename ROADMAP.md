@@ -44,8 +44,9 @@ the code.
   viewpoint presets, sliders that follow a drag, and focus peaking to show
   what is sharp.
 - **The table is geometry.** A 256² grid, flat for the hard surfaces and
-  displaced by a baked height map for the cloth cushions. The tracer takes
-  it as a plane.
+  displaced by a baked height map for the cloth cushions; the tracer
+  marches the same height map, and the piece's reflections meet it
+  exactly.
 - **Three qualities.** Draft for working (a laptop screen's worth of pixels,
   a light bake), final for looking (a larger budget, supersampled once the
   view is still), traced for the honest answer (a sample per frame in
@@ -819,11 +820,36 @@ reflection, the table shaded over the lobe's footprint rather than at
 a point, which is the next item if the satin gap is worth it; the mirror
 case, the common one for jewellery, is closed.
 
+## Shadows as soft as their light is large
+
+The key's shadow and the rig's already took their penumbra from the
+light's size; the piece's own lights — the diodes and neons — did not: a
+five-tap cross over the cube map, the same edge whatever the sphere's
+size or the blocker's distance. The cube lookup does what the disc
+lookup does now: a search over the map for what lies between the point
+and the light, the mean of its distances, and a filter widened by the
+sphere's radius over the gap, so a fin standing high under a diode
+throws a broad faint shadow on the plate below and one nearly touching
+the plate a tight dark one. The tracer, the reference, sampled these
+lights as points and so had hard shadows of its own; it samples a point
+on the sphere now. On the fin scene, held to the tracer, the error on a
+lit pixel fell from 28.6 to 19.6 levels with the fin high and 28.3 to
+19.1 with it low, and a test measures the two edges' widths. Found on the
+way: the cubes' near and far planes were told to the shader in
+millimetres while the bake converted them through the unit, fixed; and
+an ivory enamel under a diode reads some sixty percent brighter in the
+raster than in the tracer where a sandblasted silver plate agrees within
+a few percent, so the enamel's response to a local light is the next
+thing to hold to the answer. Also seen: the tracer draws the diode's own
+mirror image on the glossy enamel and the raster does not.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
   and more sweep directions for its facets.
-- Shadow softness that grows with a light's size.
+- An enamel's response to a local light: sixty percent over the tracer
+  under a diode, where bare metal agrees; and a glowing part's mirror
+  image in glossy enamel, which the raster lacks.
 - Per-placement geometry variation is not possible while placements share a
   mesh; size varies through shrink, shape does not.
 - The probe holds two bounces now but stands at one point; the piece

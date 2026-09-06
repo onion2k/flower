@@ -103,6 +103,17 @@ const FACE_UP = array<vec3f, 6>(
  * The cube's faces were rendered with one perspective, so the depth to
  * compare is that of the point along whichever axis the face looks down.
  */
+// a fixed rotation per point for the taps' pattern; this chunk stands alone in the depth passes, so its own hash
+fn shadowPhase(p: vec3f) -> f32 {
+  let q = floor(p * 23.0);
+  return fract(sin(dot(q, vec3f(12.9898, 78.233, 37.719))) * 43758.5453) * 6.2831853;
+}
+// a point in a disc: Vogel's spiral, evenly spread at any count
+fn shadowTap(i: i32, count: i32, phase: f32) -> vec2f {
+  let r = sqrt((f32(i) + 0.5) / f32(count));
+  let a = f32(i) * 2.3999632 + phase;
+  return vec2f(cos(a), sin(a)) * r;
+}
 fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
   if (light.shadow < 0.0) { return 1.0; }
   let layer = i32(light.shadow);
@@ -135,13 +146,36 @@ fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
   let depth = far / (far - near) - (far * near) / ((far - near) * major);
   let slice = layer * 6 + face;
   let test = depth - 0.0008;
-  // a five-tap cross over the hardware's own 2x2, for an edge a texel or two soft
-  var lit = textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test) * 2.0;
-  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(1, 0));
-  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(-1, 0));
-  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(0, 1));
-  lit += textureSampleCompareLevel(localShadows, shadowSampler, uv, slice, test, vec2i(0, -1));
-  return lit / 6.0;
+  // The penumbra is the sphere's own size seen from what blocks it: a search
+  // over the map finds how far in front of the point the blockers sit, and
+  // the filter widens with the gap, so a fin's shadow under a diode is crisp
+  // where the fin nearly touches and soft where it stands off — as the key's
+  // and the rig's are. The face spans twice its distance across, so a width
+  // on the receiver's plane is half that over the distance in uv.
+  let texelUv = 1.0 / size;
+  let phase = shadowPhase(p);
+  // the blockers could be anywhere between here and the light; look as wide
+  // as the sphere would throw a penumbra from a blocker a fifth of the way in
+  let nearest = max(near, 0.2 * major);
+  let search = clamp(0.5 * light.radius * (major - nearest) / (nearest * major), texelUv * 2.0, 0.25);
+  var blockers = 0.0;
+  var blockerMajor = 0.0;
+  for (var i = 0; i < 12; i++) {
+    let at = clamp(uv + shadowTap(i, 12, phase) * search, vec2f(0.0), vec2f(1.0));
+    let stored = textureLoad(localShadows, vec2i(at * (size - 1.0)), slice, 0);
+    if (stored < test) {
+      blockers += 1.0;
+      blockerMajor += far * near / (far - stored * (far - near));
+    }
+  }
+  if (blockers == 0.0) { return 1.0; }
+  let mb = blockerMajor / blockers;
+  let radius = max(0.5 * light.radius * (major - mb) / (mb * major), texelUv * 1.5);
+  var lit = 0.0;
+  for (var i = 0; i < 16; i++) {
+    lit += textureSampleCompareLevel(localShadows, shadowSampler, uv + shadowTap(i, 16, phase) * radius, slice, test);
+  }
+  return lit / 16.0;
 }
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
 @group(0) @binding(2) var envBrdf: texture_2d<f32>;

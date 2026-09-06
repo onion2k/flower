@@ -786,7 +786,10 @@ fn directLight(s: Surf, v: vec3f) -> vec3f {
     let to = light.position - s.p;
     let dist = length(to);
     if (dist <= light.radius * 1.5) { continue; }
-    let l = to / dist;
+    // a point on the sphere rather than its centre, so its shadow has the
+    // penumbra its size gives it, as the raster's does
+    let size = asin(min(light.radius / dist, 1.0));
+    let l = coneDir(to / dist, size, rand(), rand());
     let ndl = dot(s.n, l);
     if (ndl <= 0.0 || dot(s.ng, l) <= 0.0) { continue; }
     if (occluded(s.p + s.ng * params.eps, l, dist - light.radius)) { continue; }
