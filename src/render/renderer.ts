@@ -1612,6 +1612,8 @@ export class Renderer {
     this.faceBinds = this.faceFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `light face ${i}`, layout: this.frameLayout, entries: entries(b, this.dummyShadowView, this.dummyLocalShadowView, this.probeView, this.dummyAoView, none) }));
     // the probe's own faces see the key's shadow and the local shadows, but not the probe: it is what they are drawing
     this.probeBinds = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i}`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.dummyProbeView, this.dummyAoView) }));
+    // the second bounce: the same faces, reading the probe the first drew
+    this.probeBindsAgain = this.probeFrames.map((b, i) => this.ctx.device.createBindGroup({ label: `probe face ${i} again`, layout: this.frameLayout, entries: entries(b, this.shadowView, this.localShadowView, this.probeView, this.dummyAoView) }));
   }
 
   /** All the stones' facet planes in one buffer, each group's run remembered for its material record. */
@@ -1776,10 +1778,25 @@ export class Renderer {
    * The reflection probe: the lit piece and its table, seen from the scene's
    * centre in six directions, then filtered by roughness the way the sky is.
    * Everything the frame has already baked — the key's shadow, the lights'
-   * shadows, the cushion — is in it; the probe itself is not, so it holds one
-   * bounce. Alpha is left at zero where a face saw only sky.
+   * shadows, the cushion — is in it. Drawn twice: the first time with no
+   * probe, so it holds one bounce; the second reading the first, so a band's
+   * inside shows in its outside and the table in the piece in the table.
+   * Alpha is left at zero where a face saw only sky.
    */
   private bakeProbe(encoder: GPUCommandEncoder, frame: Float32Array) {
+    // the last bake's filter buffers have been submitted by now; this bake's are kept until the next
+    for (const f of this.probeFilters) f.dispose();
+    this.probeFilters = [];
+    this.drawProbe(encoder, frame, false);
+    if (this.probeBounces > 1) this.drawProbe(encoder, frame, true);
+  }
+
+  /** Bounces the probe holds: 1 draws the piece under the sky and its lights alone, 2 draws it again with the first in view. */
+  probeBounces = 2;
+
+  private probeBindsAgain: GPUBindGroup[] = [];
+
+  private drawProbe(encoder: GPUCommandEncoder, frame: Float32Array, again: boolean) {
     const { device } = this.ctx;
     const near = Math.max(this.sceneRadius * 0.01, this.mm(0.2)), far = Math.max(this.sceneRadius * 6, this.mm(50));
     const proj = new Float32Array(16);
@@ -1798,8 +1815,8 @@ export class Renderer {
       const pf = new Float32Array(frame);
       pf.set(viewProj, 0);
       pf.set(eye, 16);
-      pf[60] = 0;   // no probe within the probe
-      pf[66] = 0;   // nor the frame's contact occlusion, drawn for another view
+      pf[60] = again ? 1 : 0;   // the probe within the probe only on the second pass, reading the first
+      pf[66] = 0;   // never the frame's contact occlusion, drawn for another view
       device.queue.writeBuffer(this.probeFrames[fi], 0, pf);
       const pass = encoder.beginRenderPass({
         label: `probe face ${fi}`,
@@ -1809,7 +1826,7 @@ export class Renderer {
         }],
         depthStencilAttachment: { view: this.probeDepth.createView(), depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'discard' },
       });
-      pass.setBindGroup(0, this.probeBinds[fi]);
+      pass.setBindGroup(0, again ? this.probeBindsAgain[fi] : this.probeBinds[fi]);
       pass.setPipeline(this.prepassProbePipeline);
       for (const g of this.groups) {
         pass.setVertexBuffer(0, g.position);
@@ -1842,11 +1859,10 @@ export class Renderer {
       }
       pass.end();
     });
-    this.probeFilter?.dispose();
-    this.probeFilter = filterCube(this.ctx, encoder, this.probeRaw, this.probeBackground, this.probeSpecular, PROBE_SIZE, PROBE_MIPS);
+    this.probeFilters.push(filterCube(this.ctx, encoder, this.probeRaw, this.probeBackground, this.probeSpecular, PROBE_SIZE, PROBE_MIPS));
   }
-  /** The filter's own buffer, kept until its encoder has been submitted. */
-  private probeFilter: { dispose(): void } | null = null;
+  /** The filters' own buffers, kept until their encoder has been submitted. */
+  private probeFilters: Array<{ dispose(): void }> = [];
   /** Contact occlusion, per pixel, from the frame's own depth. */
   private ao: ContactOcclusion;
   private dummyAoView: GPUTextureView;

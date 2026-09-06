@@ -836,13 +836,19 @@ fn radiance(o0: vec3f, d0: vec3f) -> vec3f {
       // sharp reference, the blur was seven levels off in the studio, and
       // the weighed sharp read closer at every count of samples. Before the
       // distribution lands, the blur stands.
+      // The sharp read is along the ray itself. The blurred one is at the
+      // lobe's centre — the normal for a matte bounce — which is the blur's
+      // whole idea, and under an overhead light a sharp read there counts
+      // the light twice over: measured in a furnace, a table under a band
+      // of sky came out double before this was seen.
       var w = 1.0;
       if (skySampled) {
         let ps = skyPdf(d);
         w = lastPdf * lastPdf / max(lastPdf * lastPdf + ps * ps, 1e-12);
       }
-      let rough = select(skyRough, 0.0, params.skyCount > 0u);
-      result += throughput * select(sky(skyDir, rough) * w, ground.background, bounce == 0u);
+      let sharp = params.skyCount > 0u;
+      let read = select(sky(skyDir, skyRough), sky(d, 0.0), sharp);
+      result += throughput * select(read * w, ground.background, bounce == 0u);
       break;
     }
     dist += hit.t;

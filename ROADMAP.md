@@ -706,25 +706,67 @@ bake, then moves a petal and sees the bake begin again.
 The tracer read the sky prefiltered at a bounce's roughness, and blurred
 further after any matte bounce: the defence against a matte surface
 finding a small bright light by chance and covering the table in
-fireflies. It was measured here for the first time, against a reference
-traced sharp for fifteen hundred samples, and the blur was a bias, not a
-blur: three and a third levels off in the studio however many samples
-were taken, one in daylight, and a fraction more at dusk. The sky now
-has a distribution — radiance times solid angle over the sample cube the
-occlusion bake already reads back, cumulative, on the CPU, uploaded as a
-small texture — and at every surface but a mirror the tracer draws one
-direction from it, tests it for occlusion, and weighs it against the
-surface's own sampler; a path that escapes by the surface's choosing is
-weighed the other way, so the two halves make one estimate. With that
-in place the sky is read sharp wherever a path goes, and the blur stands
-only until the distribution lands. Against the reference, the sharp
-weighed read is closer at every count of samples: in the studio, at 24,
-96 and 300 samples, 2.2, 1.2 and 0.7 levels where the blur stayed at 3.7,
-3.4 and 3.3; in daylight 1.1, 0.7 and 0.5 where it was 1.1, 0.9 and 0.8.
-What surprised: the daylight sky is the least concentrated of the four,
-since the key light carries the sun and the sky's own disc is a few
-texels; the studio's softboxes are what the sampling finds. The sky's
-concentration is measured and kept on the distribution, unused for now.
+fireflies. The sky now has a distribution — radiance times solid angle
+over the sample cube the occlusion bake already reads back, cumulative,
+on the CPU, uploaded as a small texture — and at every surface but a
+mirror the tracer draws one direction from it, tests it for occlusion,
+and weighs it against the surface's own sampler; a path that escapes by
+the surface's choosing is weighed the other way, so the two halves make
+one estimate. With that in place the sky is read sharp wherever a path
+goes, and the blur stands only until the distribution lands.
+
+Getting the measurement right took two tries, and the record should say
+so. The first reference was traced sharp but read the sky at the lobe's
+centre — the normal, for a matte bounce — which is what the blur had
+always done and is right only for a blur. Against a uniform sky no
+harm; under an overhead light every matte escape read the bright band,
+and a furnace (below) caught it: a table under a band of sky came out
+double. The read is along the ray now, and the reference was traced
+again. Against that reference, error in levels at 24, 96 and 300
+samples: the studio 2.3, 1.2 and 0.7 where the blur gave 2.1, 1.9 and
+1.7 and stops there; daylight 1.1, 0.7 and 0.5 where the blur gave 1.0,
+0.7 and 0.6; dusk 1.1, 0.8 and 0.6 where the blur gave 1.2, 1.0 and
+0.8. So the blur is the smoother start, wrong in the limit by a level
+and three quarters in the studio; the sampled sky is right in the limit
+and ahead from a few dozen samples on. The daylight sky turned out the
+least concentrated of the four, since the key light carries the sun and
+the sky's own disc is a few texels; the studio's softboxes are what the
+sampling finds.
+
+## The furnace
+
+A test that holds both paths to a known answer. A Lambertian table
+under a sky gives off its albedo times the sky's cosine-weighted
+irradiance over pi; the sample cube lets that integral be taken on the
+CPU, and a uniform sky of the same value gives the pixel it maps to
+through the film. Under a uniform sky the raster and the tracer agree on
+the table to a level. Under a band of light overhead both land by the
+integral — the raster four percent under, the tracer five over. This is
+what caught the tracer's doubled sky, and it is in the GPU suite now.
+
+## The probe's second bounce, and what the measurement found instead
+
+The probe is drawn twice now, the second pass reading the first, so a
+band's inside shows in its outside. It works — a ring's band changes by
+up to ninety levels in places — and it is cheap. But held against the
+tracer on four scenes it moves the error by nothing: the raster is eight
+levels from the tracer on a lit pixel in the studio, with or without it.
+The furnace says where the rest is. On the table, nothing. On a satin
+silver bead under a uniform sky, the raster reads the sky's own colour
+down most of the bead, the tracer reads the dark table over its lower
+half, and the tracer is right: from the camera's height a sphere
+reflects the table over that much of itself. The raster's reflection of
+the table comes from the probe, one cube from one point over the piece,
+corrected for parallax against a sphere, and that correction puts the
+table's edge far too low on the bead, with the probe's faceting for an
+edge. So the gap that matters is not a bounce; it is the table's
+reflection, and the table is a plane, or a height field, with a
+procedural surface — a reflection ray from any point can meet it exactly
+in the fragment shader and shade it with the ground's own code, leaving
+the probe to hold the piece alone. That is the next raster item.
+Beside it, from the furnace: a satin metal's brightness in the raster is
+some way above the tracer's under an even sky as well, once the table
+is accounted for, and wants the same held-to-the-answer treatment.
 
 ## Open, from the first phase
 
