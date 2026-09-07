@@ -1,0 +1,38 @@
+# Tests and a build on every push and pull request.
+#
+# There is nothing to deploy here — the page is run locally — so this only
+# says whether the project is still sound. It is worth having for one reason
+# above the others: the renderer is a dependency now, pinned to a tag of
+# artshape-render, and `npm ci` fetches it. So this also checks that the tag
+# a release pinned is one that still builds what depends on it, and that the
+# lockfile and package.json agree — which is exactly what went wrong when the
+# renderer first moved out, and was caught only because the chess game had a
+# workflow and this did not.
+#
+# Nothing here needs a GPU. The renderer's own suites, node and headless
+# Chrome, live in its repository and run there.
+name: Check
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+concurrency:
+  group: check-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      # `build` typechecks before it bundles, so this covers both
+      - run: npm run build

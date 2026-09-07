@@ -12,6 +12,13 @@ including everything that needs a real WebGPU device. Run those in the
 library's own checkout; before a rendering change is committed here, they
 are what must pass.
 
+Every push and pull request runs `npm ci`, `npm test` and `npm run build`
+on GitHub (`.github/workflows/check.yml`). The `npm ci` matters as much as
+the tests: the renderer is a dependency pinned to a tag, so the run says
+both that the tag still builds what depends on it and that the lockfile
+and `package.json` agree — the second of which went wrong, silently, the
+day the renderer moved out.
+
 ## What's covered here
 
 - **The editor** (`src/editor/__tests__`) — number-scrubbing and
