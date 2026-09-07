@@ -67,6 +67,13 @@
       #diagnostic.bad { color: #e07a5f; }
       /* absolute so the canvas cannot push the grid cell it is measured against */
       #stage canvas { display: block; position: absolute; top: 0; left: 0; }
+      /* the wait for the first frame: the device, the piece built, the shaders compiled */
+      #loading { position: absolute; inset: 0; display: flex; flex-direction: column; align-items: center; justify-content: center;
+        gap: 14px; color: var(--dim); font-size: 12px; background: var(--bg); pointer-events: none; transition: opacity 0.4s; z-index: 2; }
+      #loading.done { opacity: 0; }
+      #loading .ring { width: 28px; height: 28px; border-radius: 50%; border: 2px solid var(--line); border-top-color: var(--accent);
+        animation: turn 0.9s linear infinite; }
+      @keyframes turn { to { transform: rotate(360deg); } }
       #labels { position: absolute; inset: 0; pointer-events: none; overflow: hidden; }
       #labels .label { position: absolute; left: 0; top: 0; pointer-events: auto; cursor: pointer;
         font-size: 10px; line-height: 1; padding: 2px 4px; margin: -18px 0 0 6px; border-radius: 2px;
@@ -106,7 +113,7 @@
   </head>
   <body>
     <div id="app">
-      <div id="stage"></div>
+      <div id="stage"><div id="loading"><div class="ring"></div><div class="what">Starting the graphics device…</div></div></div>
       <div id="editor">
         <div id="splitter" title="drag to resize the editor"></div>
         <div id="palette"></div>

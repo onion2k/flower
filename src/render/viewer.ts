@@ -26,6 +26,17 @@ export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } fro
 export { Ladder, RUNGS, TIERS, tierFor, type Economy, type Rung, type Tier, type Verdict } from './calibrate';
 export type { AdapterInfo } from '../gpu/context';
 
+/**
+ * The page's own marks, as one line: what each stage of getting to the first
+ * frame took, from the page's start. A page marks its own stages beside the
+ * viewer's — the scene it built, the moment it was ready.
+ */
+function startupLine(): string {
+  const marks = performance.getEntriesByType('mark').filter((m) => /^(viewer|artshape|chess):/.test(m.name));
+  if (!marks.length) return 'no marks';
+  return marks.map((m) => `${m.name.replace(/^.*:/, '')} ${(m.startTime / 1000).toFixed(2)}s`).join(', ');
+}
+
 export class Viewer {
   /** The renderer under the canvas, for whatever the forwarding surface leaves out. */
   readonly renderer: Renderer;
@@ -98,8 +109,14 @@ export class Viewer {
     canvas.style.width = '100%';
     canvas.style.height = '100%';
     canvas.style.display = 'block';
+    performance.mark('viewer:start');
     const ctx = await createContext(canvas, onLost);
-    return new Viewer(ctx, host, opts);
+    performance.mark('viewer:device');
+    const viewer = new Viewer(ctx, host, opts);
+    // the pipelines are asked for by now; on some drivers they compile
+    // only when first drawn with, which the first frame's fence will show
+    performance.mark('viewer:pipelines');
+    return viewer;
   }
 
   private constructor(ctx: GpuContext, host: HTMLElement, opts: RendererOptions) {
@@ -387,9 +404,43 @@ export class Viewer {
     const drew = this.renderer.render(() => this.ctx.context.getCurrentTexture().createView());
     if (!drew) return;
     this.frameCount++;
-    if (!this.pace()) this.fenceStill();
+    if (this.frameCount === 1) this.fenceFirst();
+    else if (!this.pace()) this.fenceStill();
     this.onFrame?.();
   };
+
+  /**
+   * The first frame is fenced but never judged: it carries every bake and,
+   * on a driver that compiles a pipeline when it is first drawn with, every
+   * shader — seconds on a Windows laptop, and nothing to do with what a
+   * frame costs after. It is written down, since that wait is what a page
+   * shows a spinner for, and `onFirstFrame` fires when it has landed.
+   */
+  onFirstFrame: ((ms: number) => void) | null = null;
+  private fenceFirst() {
+    this.fence().then((ms) => {
+      performance.mark('viewer:first-frame');
+      this.note(`first frame landed: ${ms.toFixed(0)} ms after its submit (bakes and, on some drivers, the shaders)`);
+      this.onFirstFrame?.(ms);
+    }, () => {});
+  }
+
+  /** Queue four bytes behind what is submitted and resolve, with the time taken, when the GPU has done it. */
+  private fence(): Promise<number> {
+    const { device } = this.ctx;
+    this.fenceSrc ??= device.createBuffer({ label: 'still fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
+    this.fenceDst ??= device.createBuffer({ label: 'still fence dst', size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    this.fenceBusy = true;
+    const t0 = performance.now();
+    const encoder = device.createCommandEncoder({ label: 'still fence' });
+    encoder.copyBufferToBuffer(this.fenceSrc, 0, this.fenceDst, 0, 4);
+    device.queue.submit([encoder.finish()]);
+    return this.fenceDst.mapAsync(GPUMapMode.READ).then(() => {
+      this.fenceDst?.unmap();
+      this.fenceBusy = false;
+      return performance.now() - t0;
+    }, (err) => { this.fenceBusy = false; throw err; });
+  }
 
   /**
    * Time consecutive frames by their gaps and move the ladder to keep up
@@ -437,18 +488,7 @@ export class Viewer {
   private fenceStill() {
     // a hidden page's timers are throttled, and would time the throttle, not the frame
     if (this.fenceBusy || this.calibrating || document.hidden) return;
-    const { device } = this.ctx;
-    this.fenceSrc ??= device.createBuffer({ label: 'still fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
-    this.fenceDst ??= device.createBuffer({ label: 'still fence dst', size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
-    this.fenceBusy = true;
-    const t0 = performance.now();
-    const encoder = device.createCommandEncoder({ label: 'still fence' });
-    encoder.copyBufferToBuffer(this.fenceSrc, 0, this.fenceDst, 0, 4);
-    device.queue.submit([encoder.finish()]);
-    this.fenceDst.mapAsync(GPUMapMode.READ).then(() => {
-      this.fenceDst?.unmap();
-      this.fenceBusy = false;
-      const ms = performance.now() - t0;
+    this.fence().then((ms) => {
       const now = performance.now();
       // a fence from before a calibration resolves in the middle of it: it
       // must not move the scale under the frames being measured
@@ -458,7 +498,7 @@ export class Viewer {
       if (now - this.lastScaleStep < 300) return;
       const budget = Viewer.STILL_BUDGET;
       if (ms > budget && this.ladder.slower(now, ms / budget)) this.stepped(now, `still frame ${ms.toFixed(0)} ms over ${budget}`);
-    }, () => { this.fenceBusy = false; });
+    }, () => {});
   }
 
   /** What a frame at rest may take before the ladder comes down for it. */
@@ -492,6 +532,7 @@ export class Viewer {
       `frames in runs — ${summary(this.runFrames)}`,
       `still frames fenced — ${summary(this.stillFrames)}`,
       `drawn: ${this.frameCount}`,
+      `startup: ${startupLine()}`,
       'journal:',
       ...this.journal.map((l) => `  ${l}`),
     ].join('\n');

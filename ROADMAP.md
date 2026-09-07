@@ -1070,6 +1070,23 @@ it, whose chunks are sized to a fixed triangle budget. On a machine ten
 times slower than the desktop that is a second or two; the bakes'
 budgets should follow the verdict, once one says how far off that is.
 
+### The wait for the first frame
+
+On the Windows laptop the pages ran well enough once running; what
+they did badly was start. The panel appears, then nothing, while the
+device comes up, the piece is built, and — on a driver that compiles a
+pipeline when it is first drawn with, which D3D12 is — every shader
+compiles behind the first frame. Both pages now show a ring over the
+stage that says which of those it is waiting on, gone when the first
+frame lands; the viewer fences that frame, never judging it (a
+compile is not a frame cost, and the ladder must not step for it),
+and the report's `startup:` line gives the page's marks — device,
+built, first frame — with how long the first frame took after its
+submit. On the Mac the whole of it is 0.26 s; on SwiftShader the
+first frame lands 4 s after its submit. Deferring the probe to the
+second frame was tried and moved that by nothing, so it was not
+kept; what the laptop's report says will decide what is next.
+
 ### The report
 
 `viewer.report()` is everything the viewer knows about the machine, as

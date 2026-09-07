@@ -35,6 +35,10 @@ diagnosticHint.textContent = navigator.platform.startsWith('Mac')
   : 'alt drag a number to scrub · alt↑↓ nudge · shift coarser · ctrl finer';
 diagnosticEl.append(diagnosticText, diagnosticHint);
 
+/** The wait for the first frame, told what it is waiting on; gone once a frame has landed. */
+const loading = document.getElementById('loading') as HTMLElement;
+const waitingOn = (what: string) => { loading.querySelector('.what')!.textContent = what; };
+
 let viewer: Viewer;
 try {
   viewer = await Viewer.create(stage, (info) => {
@@ -44,8 +48,16 @@ try {
 } catch (err) {
   diagnosticText.textContent = `renderer unavailable: ${(err as Error).message}`;
   diagnosticEl.classList.add('bad');
+  waitingOn(`The renderer is unavailable: ${(err as Error).message}`);
+  loading.querySelector('.ring')?.remove();
   throw err;
 }
+viewer.onFirstFrame = (ms) => {
+  performance.mark('artshape:first-frame');
+  loading.classList.add('done');
+  setTimeout(() => loading.remove(), 500);
+  console.info(`first frame ${ms.toFixed(0)} ms after submit; ${(performance.now() / 1000).toFixed(2)} s from the page's start`);
+};
 
 /**
  * The studio rig, as presets set round the key: each takes the key's
@@ -963,7 +975,11 @@ statsEl.addEventListener('click', (e) => {
 });
 
 viewer.setMaterial(state.metal, state.finish);
+waitingOn('Building the piece…');
+performance.mark('artshape:building');
 build();
+performance.mark('artshape:built');
+waitingOn('Compiling the shaders…');
 // the first piece is on screen: time it, and open at a size this machine can
 // draw. A page that opens without a size to draw at — hidden, or not yet laid
 // out — measures nothing, and is measured once it is shown.
