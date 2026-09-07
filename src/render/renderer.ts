@@ -390,8 +390,14 @@ export class Renderer {
   requestRender() { this.dirty = true; }
   /** A length in millimetres, in world units. */
   private mm(millimetres: number) { return millimetres / this.mmPerUnit; }
-  /** Whether the next `render` would draw: something has changed, or the view is moving. */
-  get pending() { return this.dirty || this.moving || this.fullBakeDue > 0; }
+  /**
+   * Whether there is more to draw: something has changed, the view is
+   * moving, a full bake is due, or a bake is landing in chunks — between two
+   * of which nothing is dirty, though the next will mark a frame due.
+   */
+  get pending() { return this.dirty || this.moving || this.fullBakeDue > 0 || this.baking > 0; }
+  /** Occlusion bakes still landing; a superseded one counts until it stops at its next chunk. */
+  private baking = 0;
   /** Pixels a frame is drawn at, supersampling included: what a frame's time is a cost per. */
   get renderPixels() { return this.post.renderWidth * this.post.renderHeight; }
   /** Whether there is anything to draw, so a measurement is of a scene rather than a background. */
@@ -2055,7 +2061,11 @@ export class Renderer {
     this.occlusion = occ;
     // a superseded bake stops at its next chunk; this one redraws as each chunk lands
     previous?.dispose();
-    if (occ) occ.onProgress = () => { this.invalidateProbe(); };
+    if (occ) {
+      occ.onProgress = () => { this.invalidateProbe(); };
+      this.baking++;
+      occ.done.finally(() => { this.baking--; });
+    }
     this.rebuildFrameBind();
     this.writeMaterials();
     if (!occ) { this.groundBind = null; return; }

@@ -73,7 +73,9 @@ describe('the furnace', () => {
   }
   async function raster(): Promise<Uint8Array> {
     renderer.setQuality('final'); renderer.setMoving(false);
-    for (let i = 0; i < 300; i++) { renderer.render(view); await new Promise((r) => setTimeout(r, 10)); if (i > 60 && !renderer.pending) break; }
+    // until the renderer has nothing more to do — bakes between chunks included — not for a guessed number of frames
+    const deadline = performance.now() + 20_000;
+    do { renderer.render(view); await new Promise((r) => setTimeout(r, 10)); } while (renderer.pending && performance.now() < deadline);
     renderer.requestRender(); renderer.render(view);
     return pixels();
   }

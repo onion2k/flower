@@ -60,7 +60,13 @@ form f {
     renderer.setFocus(50, 50);
     await renderer.setEnvironment('dusk').samples;
     renderer.setQuality('final'); renderer.setMoving(false);
-    for (let i = 0; i < 300; i++) { renderer.render(view); await new Promise((res) => setTimeout(res, 10)); if (i > 60 && !renderer.pending) break; }
+    // draw until the renderer has nothing more to do: the draft bake, the
+    // full one 350 ms on, its chunks, and the probe after the last of them.
+    // `pending` covers a bake between chunks, so this is the renderer's own
+    // word and not a guess at how long it takes on a busy GPU
+    const deadline = performance.now() + 20_000;
+    do { renderer.render(view); await new Promise((res) => setTimeout(res, 10)); } while (renderer.pending && performance.now() < deadline);
+    expect(renderer.pending).toBe(false);
     renderer.requestRender(); renderer.render(view);
     const px = await pixels();
     const out: number[] = [];

@@ -50,6 +50,14 @@ Roughly bottom-up, from the math to the DOM:
   the localStorage-backed sketch store; and `createEditor` itself under
   jsdom.
 
+A GPU test that reads a frame back waits on `renderer.pending`, not on
+a count of frames: an occlusion bake lands in chunks with a gap between
+each in which nothing is dirty, and `pending` now covers a bake still
+landing, so a loop that stops when it goes false has the whole bake and
+the probe after it. The shadows test used to stop after sixty frames if
+nothing was pending at that moment, which on a busy GPU was the middle
+of the full bake — it failed about half of full runs and never alone.
+
 ## What's not covered, and why
 
 `src/render/viewer.ts` — the canvas, the orbit, the frame loop and the
