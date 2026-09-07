@@ -7,26 +7,23 @@ describe a piece in a jeweller's own vocabulary — parts, joins,
 symmetries, metals and finishes — and it is drawn at once as a
 photograph would show it, on a table, in light you can move.
 
-    # A rosette: eight pierced leaves, studded, with a curl between each
     material gold polished
 
-    part petal = leaf(length: 34, width: 15, thickness: 1.1, piercings: 3, boss: 2.4)
-    part stud  = rivet(head: 3.6, height: 1.2, shank: 2.2, grip: 1.1) in rose gold polished
-    part curl  = wire(path: spiral(start: 1.1, turns: 1.25, growth: 3), radius: 1, tip: 0.15, sections: 120)
-    part heart = bead(radius: 7.2, point: 5.5) in rose gold satin
+    part band  = shank(size: 17, width: 2.6, thickness: 1.8, shoulder: 0.55)
+    part mount = setting(width: 7, style: claw, claws: 6, height: 3.2)
+    part stone = gem(cut: brilliant, width: 7) in diamond
 
-    unit sector {
-      place petal
-      fasten stud to petal.boss
-      place curl at (9, -5.5, 1.4) turn -29deg
+    form ring {
+      place band
+      fasten mount to band.crown
+      fasten stone to mount.seat
     }
 
-    form rosette {
-      repeat sector around ring(8, radius: 5.5)
-      place heart at (0, 0, 1.9)
-    }
-
-That is the `rosette` example, whole, as the picker opens it.
+That is the `ring` example, less the comment it opens with. `size` on a
+shank is the inner diameter — the finger it has to fit round, which is the
+one measurement a ring actually answers for — and the rest is built
+outward from it. `fasten` puts a part on a named anchor of another: the
+setting on the band's crown, the stone on the setting's seat.
 
 The drawing is [artshape-render](https://github.com/onion2k/artshape-render),
 a dependency: the parts, the assembly, the language and the renderer over
@@ -80,11 +77,11 @@ back. An edit to a built-in example is kept as a draft beside it, and
 
 ## How it is put together
 
-    src/main.ts    the page: the panels, the pointer, the stats
-    src/editor/    CodeMirror, the scrubbing, the help strip, the palette
-    src/examples.ts   the sketches the picker offers
-    src/spike/     the forms and the parts catalogue, and scripts for
-                   looking at an assembly by hand
+    src/main.ts     the page: the panels, the pointer, the stats
+    src/editor/     CodeMirror, scrubbing, the help strip, the palette
+    src/examples.ts the sketches the picker offers
+    src/spike/      the forms, the parts catalogue, and scripts for
+                    looking at an assembly by hand
 
 The renderer is not here. A change to the language, the parts, the
 assembly or the drawing belongs in `artshape-render`, and is held to a
@@ -109,8 +106,8 @@ happened. TESTING.md says how the suites run and what they cover.
 
 ## Checking it
 
-    npm test        the editor, the examples, the chess set as a chess set
-    npm run build   typechecks, then bundles
+    npm test       the editor, the examples, the chess set as a chess set
+    npm run build  typechecks, then bundles
 
 Both run on every push. The renderer's own suites — 880 in node and 28 in
 headless Chrome against a real device — live in its repository and run
