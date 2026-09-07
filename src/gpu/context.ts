@@ -17,6 +17,31 @@ export interface Gpu {
   device: GPUDevice;
   queue: GPUQueue;
   format: GPUTextureFormat;
+  /** What the browser will say about the adapter, which is little, but enough to tell one machine's verdict from another's. */
+  adapter: AdapterInfo;
+}
+
+/**
+ * The adapter, as far as the browser tells. Vendor and architecture are
+ * normalised words (`intel`, `gen-12lp`); `description` is the driver's own
+ * string when there is one; `fallback` is a software renderer, which is the
+ * slowest thing there is. `key` joins them, for keeping a verdict against.
+ */
+export interface AdapterInfo {
+  vendor: string;
+  architecture: string;
+  device: string;
+  description: string;
+  fallback: boolean;
+  key: string;
+}
+
+export function adapterInfo(adapter: GPUAdapter): AdapterInfo {
+  const info = adapter.info;
+  const vendor = info?.vendor ?? '', architecture = info?.architecture ?? '', device = info?.device ?? '', description = info?.description ?? '';
+  const fallback = !!(info?.isFallbackAdapter ?? (adapter as { isFallbackAdapter?: boolean }).isFallbackAdapter);
+  const key = [vendor, architecture, device, description, fallback ? 'fallback' : ''].filter(Boolean).join('/') || 'unknown';
+  return { vendor, architecture, device, description, fallback, key };
 }
 
 /** The same, presented on a canvas: what the viewer adds for the page. */
@@ -47,7 +72,7 @@ export async function createDevice(onLost?: (info: GPUDeviceLostInfo) => void, f
     console.error(`WebGPU device lost (${info.reason}): ${info.message}`);
     onLost?.(info);
   });
-  return { device, queue: device.queue, format: format ?? navigator.gpu.getPreferredCanvasFormat() };
+  return { device, queue: device.queue, format: format ?? navigator.gpu.getPreferredCanvasFormat(), adapter: adapterInfo(adapter) };
 }
 
 export async function createContext(canvas: HTMLCanvasElement, onLost?: (info: GPUDeviceLostInfo) => void): Promise<GpuContext> {

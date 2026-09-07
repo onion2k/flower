@@ -389,6 +389,10 @@ export class Renderer {
   private mm(millimetres: number) { return millimetres / this.mmPerUnit; }
   /** Whether the next `render` would draw: something has changed, or the view is moving. */
   get pending() { return this.dirty || this.moving || this.fullBakeDue > 0; }
+  /** Pixels a frame is drawn at, supersampling included: what a frame's time is a cost per. */
+  get renderPixels() { return this.post.renderWidth * this.post.renderHeight; }
+  /** Whether there is anything to draw, so a measurement is of a scene rather than a background. */
+  get hasScene() { return this.groups.length > 0; }
   /** The target's size in pixels, as last told. */
   private width = 1;
   private height = 1;

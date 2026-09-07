@@ -946,6 +946,60 @@ none of it changes the picture and narrows what `pick` will return, a
 count past either end clamps, and two static groups moved in one call bake
 once where two calls baked twice.
 
+## Measured, not assumed: the GPU calibrated, September 2026
+
+Every budget in the renderer was a constant chosen on one desktop — the
+pixel budgets, the shadow and probe sizes, the supersample — and the one
+adaptive thing, the frame pacer in `viewer.ts`, moved only the internal
+scale, only while the camera moved, and forgot what it had learned on
+reload. On a Windows laptop with an integrated GPU both artshape and the
+chess game opened at full size, drew their first frames at a tenth of the
+speed, and learned nothing from it until the next orbit. Nothing looked at
+the adapter at all.
+
+Three things now, the first slice of a governor:
+
+- **The adapter is named.** `createDevice` reads `adapter.info` — vendor,
+  architecture, whether it is a software fallback — into `Gpu.adapter`,
+  with a key to keep a verdict against.
+- **The first scene is timed.** `Viewer.calibrate()` draws a warm frame
+  and three more at full scale, each fenced with a four-byte readback
+  rather than timed round the submit, and takes the median as a cost per
+  megapixel (`render/calibrate.ts`). From that comes the internal scale to
+  open at — the size that brings a frame inside the pacer's own budget of
+  a tick and a half — and a word, `fast` above 40 ms/Mpx and `balanced`
+  below, for a page to offer as its default. A frame under 0.2 Mpx is not
+  measured: a frame has a cost before its first pixel, and a pane not yet
+  laid out would put that down to its pixels — which is exactly what
+  happened in the hidden in-app browser, at 2×2, before the guard:
+  700,000 ms/Mpx. Nor is an animation frame waited on between frames,
+  since a page opened in a background tab never gets one.
+- **The verdict is kept.** In localStorage against the adapter's key, with
+  the scale the pacer later settles on, for thirty days; the next visit
+  opens at that scale before its first frame and measures again, cheaply.
+
+Measured on the Mac mini at 1643×1095: the chess sketch in artshape 16–17
+ms/Mpx, four frames in 220 ms; the chess game's own scene 8–11 ms/Mpx in
+110 ms — and 25 ms/Mpx when a verdict was taken in final by mistake, which
+is why the game drops back to draft before it measures. A planted verdict
+of 90 ms/Mpx at a scale of 0.6 opened the page at 985×657 and, measured
+honestly, climbed straight back to 1.
+
+The chess game has a picker for it — `auto`, `fast`, `balanced`, `fine` —
+where it had `draft` and a detail of 0.5 written in and no lever at all:
+`fast` is draft at a detail of 0.35 and 70% of the pixels (43.6k unique
+triangles against 58.9k), `fine` is final at full detail (112k), `auto`
+is whichever the machine measures itself into. A change of detail casts
+every man again.
+
+Not yet done, and the rest of the plan: the pacer still runs only while
+the camera moves, and moves only pixels. A still frame that takes a second
+steps nothing down, and final's supersample at rest is gated on the pixel
+budget alone. The next slice is a ladder under the pacer — supersample,
+the contact pass, the rig's shadows, the probe's and the key's sizes, the
+local shadow count, and last the detail — with hysteresis, and a floor
+below 0.5 for a machine that needs it.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

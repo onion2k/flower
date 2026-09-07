@@ -19,9 +19,12 @@ import type { Box3, Vec3 } from '../geom/types';
 import type { EnvPreset } from './env';
 import type { Film } from './post';
 import { Renderer, type InstanceGroup, type Quality, type RendererOptions, type RigLight, type TableName } from './renderer';
+import { median, startingScale, verdicts, type Verdict } from './calibrate';
 
 export { MAX_RIG_LIGHTS, emitterSamples, tableNames } from './renderer';
 export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } from './renderer';
+export { TIERS, tierFor, type Tier, type Verdict } from './calibrate';
+export type { AdapterInfo } from '../gpu/context';
 
 export class Viewer {
   /** The renderer under the canvas, for whatever the forwarding surface leaves out. */
@@ -60,6 +63,12 @@ export class Viewer {
    */
   private tickMs = 16.7;
   private lastTickAt = 0;
+  /** A frame smaller than this is not measured: its fixed cost would pass for a cost per pixel. */
+  static readonly MIN_CALIBRATION_PIXELS = 200_000;
+  /** What was measured of this GPU, here or on an earlier visit; null until either. */
+  verdict: Verdict | null = null;
+  /** While frames are being timed, the loop stands aside. */
+  private calibrating = false;
 
   static async create(host: HTMLElement, onLost?: (info: GPUDeviceLostInfo) => void, opts: RendererOptions = {}): Promise<Viewer> {
     const canvas = document.createElement('canvas');
@@ -86,8 +95,75 @@ export class Viewer {
     // after being hidden, changes size without a window resize event
     this.observer = new ResizeObserver(() => this.resize());
     this.observer.observe(host);
+    // a machine measured slow on an earlier visit opens at the size it settled
+    // on then, not at full size and a stall
+    this.verdict = verdicts.load(ctx.adapter.key);
+    if (this.verdict) this.autoScale = Math.min(1, Math.max(0.5, this.verdict.scale));
     this.resize();
     this.loop();
+  }
+
+  /** The adapter, as far as the browser says. */
+  get adapter() { return this.ctx.adapter; }
+
+  /**
+   * Time a few frames of the scene on screen and set the internal scale from
+   * the cost. Call once the first scene is set; a background alone measures
+   * nothing and is not measured. The first frame carries the bakes and shader
+   * warm-up and is drawn but not counted; the median of the rest is the
+   * verdict, kept against the adapter for the next visit.
+   *
+   * Each frame is fenced with a readback rather than timed on the main
+   * thread, since a submit returns long before the GPU has drawn anything.
+   */
+  async calibrate(frames = 3): Promise<Verdict | null> {
+    // a frame has a cost of its own before its first pixel, so a canvas that
+    // has no size yet — a pane not laid out, a tab not shown — would measure
+    // the overhead and call it the cost per pixel; say nothing until there is one
+    if (this.calibrating || !this.renderer.hasScene || this.renderer.renderPixels < Viewer.MIN_CALIBRATION_PIXELS) return this.verdict;
+    this.calibrating = true;
+    // measured at full scale, whatever the scale was opened at, so one visit's
+    // verdict is the same frame as the next's; a frame has a cost before its
+    // first pixel, and a small frame would put that down to its pixels
+    const opened = this.autoScale;
+    this.autoScale = 1;
+    this.resize();
+    const { device } = this.ctx;
+    const src = device.createBuffer({ label: 'fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
+    const dst = device.createBuffer({ label: 'fence dst', size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    const timings: number[] = [];
+    try {
+      for (let i = 0; i <= frames; i++) {
+        this.renderer.requestRender();
+        const t0 = performance.now();
+        const drew = this.renderer.render(() => this.ctx.context.getCurrentTexture().createView());
+        const encoder = device.createCommandEncoder({ label: 'fence' });
+        encoder.copyBufferToBuffer(src, 0, dst, 0, 4);
+        device.queue.submit([encoder.finish()]);
+        await dst.mapAsync(GPUMapMode.READ);
+        dst.unmap();
+        if (drew && i > 0) timings.push(performance.now() - t0);
+        // no animation frame is waited on between: a page opened in a
+        // background tab gets none, and would never finish measuring
+      }
+    } finally {
+      src.destroy();
+      dst.destroy();
+      this.calibrating = false;
+    }
+    if (!timings.length) {
+      this.autoScale = opened;
+      this.resize();
+      return this.verdict;
+    }
+    const mpx = this.renderer.renderPixels / 1e6;
+    const msPerMpx = median(timings) / mpx;
+    this.autoScale = startingScale(msPerMpx, mpx, this.tickMs);
+    this.verdict = { key: this.ctx.adapter.key, msPerMpx, scale: this.autoScale, at: Date.now() };
+    verdicts.save(this.verdict);
+    this.resize();
+    this.renderer.requestRender();
+    return this.verdict;
   }
 
   // --- the renderer's surface, forwarded ---
@@ -231,6 +307,7 @@ export class Viewer {
 
   private loop = () => {
     this.raf = requestAnimationFrame(this.loop);
+    if (this.calibrating) return;
     const tickNow = performance.now();
     const sinceTick = tickNow - this.lastTickAt;
     this.lastTickAt = tickNow;
@@ -281,14 +358,21 @@ export class Viewer {
     if (this.frameMs > missing && this.autoScale > 0.5) {
       // step by how far over budget the frame is, so a very slow frame drops straight to the floor
       this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(missing / this.frameMs)));
-      this.frameMs = this.tickMs;
-      this.lastScaleStep = now;
-      this.resize();
+      this.stepped(now);
     } else if (this.frameMs < keepingUp && this.autoScale < 1) {
       this.autoScale = Math.min(1, this.autoScale / 0.85);
-      this.frameMs = this.tickMs;
-      this.lastScaleStep = now;
-      this.resize();
+      this.stepped(now);
+    }
+  }
+
+  /** After a step: new targets, and the scale written down so the next visit opens at it. */
+  private stepped(now: number) {
+    this.frameMs = this.tickMs;
+    this.lastScaleStep = now;
+    this.resize();
+    if (this.verdict) {
+      this.verdict = { ...this.verdict, scale: this.autoScale, at: Date.now() };
+      verdicts.save(this.verdict);
     }
   }
 }

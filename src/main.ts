@@ -12,7 +12,7 @@ import type { Anchor, Part } from './parts/types';
 import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
-import { Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
+import { tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
 import { detail, setDetail } from './mesh/detail';
 import { meanRadiance, parseHdr } from './render/hdr';
 import { createEditor } from './editor/index';
@@ -898,11 +898,12 @@ function report(assembly: Assembly, ms: number, span: number) {
     ['bodies', '…'],
   ];
   const draw = () => {
-    statsEl.innerHTML = rows
+    statsEl.innerHTML = [...rows, gpuRow()]
       .map(([k, v, cls]) => `<tr><td>${k}</td><td class="${cls ?? ''}">${v}</td></tr>`)
       .join('');
   };
   draw();
+  redrawStats = draw;
 
   const token = ++connectivityToken;
   onConnectivity = ({ token: answered, bodies, floating }) => {
@@ -922,8 +923,33 @@ function report(assembly: Assembly, ms: number, span: number) {
     `${s.instances} placements built from ${s.uniqueTriangles.toLocaleString()} triangles of real geometry`;
 }
 
+/**
+ * What was measured of the GPU, as a row of the stats: its cost per megapixel
+ * and the scale the viewer opens at. Measured once the first piece is on
+ * screen; before that, and where a verdict was kept from an earlier visit,
+ * what the browser says of the adapter.
+ */
+let redrawStats: () => void = () => {};
+function gpuRow(): [string, string, string?] {
+  const v = viewer.verdict;
+  const a = viewer.adapter;
+  const name = [a.vendor, a.architecture].filter(Boolean).join(' ') || 'unknown';
+  if (!v) return ['gpu', a.fallback ? `${name}, software` : name];
+  const slow = tierFor(v.msPerMpx) === 'fast';
+  const scale = v.scale < 1 ? `, drawn at ${Math.round(v.scale * 100)}%` : '';
+  return ['gpu', `${name}: ${v.msPerMpx.toFixed(0)} ms/Mpx${scale}`, slow ? 'warn' : 'hi'];
+}
+
 viewer.setMaterial(state.metal, state.finish);
 build();
+// the first piece is on screen: time it, and open at a size this machine can
+// draw. A page that opens without a size to draw at — hidden, or not yet laid
+// out — measures nothing, and is measured once it is shown.
+const calibrate = () => viewer.calibrate().then((v) => {
+  redrawStats();
+  if (!v) document.addEventListener('visibilitychange', () => { if (!document.hidden) calibrate(); }, { once: true });
+}, (err) => console.warn('calibration failed:', err));
+calibrate();
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 (window as any).artshape = { state, build, select, viewer, editor, formNames, catalogueNames };
