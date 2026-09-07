@@ -1044,6 +1044,44 @@ Watched on the Mac mini with the still budget forced to nothing: scale
 scale reset to 0.7 and brought back to the floor by the next frame; and
 with frames driven at 10 ms, back up the same way, a rung every 2.4 s.
 
+### Run on a slow machine, before there was one
+
+Both pages were then run headless in Chrome on SwiftShader — software
+WebGPU, `--use-angle=swiftshader --enable-unsafe-swiftshader`, which
+reports itself as a fallback adapter — by a Playwright script that
+opens the page, turns the view every four seconds and reads the viewer's
+state. It measured **2800–4600 ms/Mpx**, some two hundred times the
+desktop, and the chain held: the verdict, the chess game's `fast` tier,
+the ladder to its bottom in under a minute, no GPU error. It also showed
+what a first run on a slow machine would have: a fallback adapter is
+slow before it is measured, so without a kept verdict it now opens at
+the floor and two rungs down; four calibration frames at full scale held
+the page for thirteen seconds, so the calibration stops after one
+measured frame once its frames have taken 1.5 s together; the size
+guard had judged the already-scaled canvas, so a page that opened at the
+floor was never measured, and it judges the full-scale frame now; and a
+still frame's fence from before a calibration resolved in the middle of
+it and stepped the scale under the frames being measured, which the
+report below caught.
+
+Left for the laptop itself: the first frame on SwiftShader came 17 s in,
+behind the occlusion, probe and local-shadow bakes that queue ahead of
+it, whose chunks are sized to a fixed triangle budget. On a machine ten
+times slower than the desktop that is a second or two; the bakes'
+budgets should follow the verdict, once one says how far off that is.
+
+### The report
+
+`viewer.report()` is everything the viewer knows about the machine, as
+text: browser, adapter, screen and canvas and the tick, the verdict,
+where the ladder stands and what it has given up, the last frames'
+times (in runs, and fenced when still) as min/median/max, and a journal
+— the adapter at start, each calibration's frames, and every step of the
+ladder with what moved it. Clicking the `gpu` row in artshape's stats,
+or the note under the chess game's picker, copies it. One paste from a
+machine that is elsewhere is meant to say whether the 40 ms/Mpx line
+for `fast` and the 250 ms still budget are right.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

@@ -903,7 +903,7 @@ function report(assembly: Assembly, ms: number, span: number) {
   ];
   const draw = () => {
     statsEl.innerHTML = [...rows, gpuRow()]
-      .map(([k, v, cls]) => `<tr><td>${k}</td><td class="${cls ?? ''}">${v}</td></tr>`)
+      .map(([k, v, cls]) => `<tr${k === 'gpu' ? ' class="gpu" title="click to copy a report of what this machine measured"' : ''}><td>${k}</td><td class="${cls ?? ''}">${v}</td></tr>`)
       .join('');
   };
   draw();
@@ -947,6 +947,20 @@ function gpuRow(): [string, string, string?] {
   return ['gpu', `${name}: ${v.msPerMpx.toFixed(0)} ms/Mpx${at}${without}`, slow || rung > 0 ? 'warn' : 'hi'];
 }
 let shownRung = 0, shownScale = 1;
+// the gpu row copies the viewer's report: one paste from a machine that is elsewhere
+statsEl.addEventListener('click', (e) => {
+  const row = (e.target as HTMLElement).closest('tr.gpu');
+  if (!row) return;
+  const cell = row.lastElementChild as HTMLElement;
+  const shown = cell.textContent;
+  const report = viewer.report('artshape');
+  navigator.clipboard.writeText(report).then(() => { cell.textContent = 'report copied'; }, () => {
+    // no clipboard — a page without focus, or a browser that asks — so the report opens as text instead
+    cell.textContent = 'report opened';
+    window.open(URL.createObjectURL(new Blob([report], { type: 'text/plain' })));
+  });
+  setTimeout(() => { cell.textContent = shown; }, 1200);
+});
 
 viewer.setMaterial(state.metal, state.finish);
 build();

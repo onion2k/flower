@@ -19,7 +19,7 @@ import type { Box3, Vec3 } from '../geom/types';
 import type { EnvPreset } from './env';
 import type { Film } from './post';
 import { Renderer, type InstanceGroup, type Quality, type RendererOptions, type RigLight, type TableName } from './renderer';
-import { Ladder, median, startingScale, verdicts, type Verdict } from './calibrate';
+import { Ladder, RUNGS, median, startingScale, tierFor, verdicts, type Verdict } from './calibrate';
 
 export { MAX_RIG_LIGHTS, emitterSamples, tableNames } from './renderer';
 export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } from './renderer';
@@ -59,6 +59,20 @@ export class Viewer {
   private frameMs = 16;
   /** When the ladder last moved: each step reallocates the render targets, so steps are rationed. */
   private lastScaleStep = 0;
+  /**
+   * What the viewer measured and did, a line a moment, for a report from a
+   * machine that is not to hand: the adapter, each calibration, each step of
+   * the ladder and what moved it. Bounded, so a long session keeps its
+   * latest few hundred.
+   */
+  private journal: string[] = [];
+  private note(line: string) {
+    this.journal.push(`${(performance.now() / 1000).toFixed(1)}s ${line}`);
+    if (this.journal.length > 300) this.journal.splice(0, this.journal.length - 300);
+  }
+  /** The last frames' times, gap-timed in runs and fenced when still, for the report's summary. */
+  private runFrames: number[] = [];
+  private stillFrames: number[] = [];
   /** The still frame's fence: one at a time, and the buffers it copies through. */
   private fenceBusy = false;
   private fenceSrc: GPUBuffer | null = null;
@@ -107,8 +121,15 @@ export class Viewer {
     // a machine measured slow on an earlier visit opens at the size it settled
     // on then, not at full size and a stall
     this.verdict = verdicts.load(ctx.adapter.key);
+    const a = ctx.adapter;
+    this.note(`adapter ${a.key}${a.fallback ? ' (software fallback)' : ''}; ${this.verdict ? `kept verdict ${this.verdict.msPerMpx.toFixed(0)} ms/Mpx, scale ${this.verdict.scale.toFixed(2)}, rung ${this.verdict.rung ?? 0}` : 'no verdict kept'}`);
     if (this.verdict) {
-      this.ladder = new Ladder(this.verdict.scale, this.verdict.rung);
+      // the scale it settled on, and its rungs only if it is a slow machine:
+      // on a fast one they were a passing moment — a bake, a tab in the
+      // background — and a page that opened without its shadows for it would
+      // be worse than the moment was
+      const slow = tierFor(this.verdict.msPerMpx) === 'fast';
+      this.ladder = new Ladder(this.verdict.scale, slow ? this.verdict.rung : 0);
     } else if (ctx.adapter.fallback) {
       // a software renderer, and nothing measured yet: it is slow before it
       // is measured, so it starts low and climbs if it can. SwiftShader
@@ -195,6 +216,7 @@ export class Viewer {
     this.ladder.scale = startingScale(msPerMpx, mpx, this.tickMs, Ladder.FLOOR);
     this.verdict = { key: this.ctx.adapter.key, msPerMpx, scale: this.ladder.scale, rung: this.ladder.rung, at: Date.now() };
     verdicts.save(this.verdict);
+    this.note(`calibrated: ${timings.map((t) => t.toFixed(0)).join('/')} ms at ${mpx.toFixed(2)} Mpx → ${msPerMpx.toFixed(1)} ms/Mpx, tick ${this.tickMs.toFixed(1)}, scale ${this.ladder.scale.toFixed(2)}`);
     this.resize();
     this.renderer.requestRender();
     return this.verdict;
@@ -388,14 +410,16 @@ export class Viewer {
     // only consecutive frames say anything; a gap after an idle spell does not
     if (gap > 250) return false;
     this.frameMs = this.frameMs * 0.8 + gap * 0.2;
+    this.runFrames.push(gap);
+    if (this.runFrames.length > 240) this.runFrames.shift();
     // a step swaps a few hundred megabytes of targets, so at most a few a second
     if (now - this.lastScaleStep < 300) return true;
     const missing = this.tickMs * 1.5 + 6;
     const keepingUp = this.tickMs * 1.2;
     if (this.frameMs > missing) {
-      if (this.ladder.slower(now, this.frameMs / missing)) this.stepped(now);
+      if (this.ladder.slower(now, this.frameMs / missing)) this.stepped(now, `run at ${this.frameMs.toFixed(0)} ms over ${missing.toFixed(0)}`);
     } else if (this.frameMs < keepingUp) {
-      if (this.ladder.faster(now)) this.stepped(now);
+      if (this.ladder.faster(now)) this.stepped(now, `run at ${this.frameMs.toFixed(1)} ms under ${keepingUp.toFixed(0)}`);
     }
     return true;
   }
@@ -426,19 +450,58 @@ export class Viewer {
       this.fenceBusy = false;
       const ms = performance.now() - t0;
       const now = performance.now();
-      if (document.hidden || now - this.lastScaleStep < 300) return;
+      // a fence from before a calibration resolves in the middle of it: it
+      // must not move the scale under the frames being measured
+      if (document.hidden || this.calibrating) return;
+      this.stillFrames.push(ms);
+      if (this.stillFrames.length > 60) this.stillFrames.shift();
+      if (now - this.lastScaleStep < 300) return;
       const budget = Viewer.STILL_BUDGET;
-      if (ms > budget && this.ladder.slower(now, ms / budget)) this.stepped(now);
+      if (ms > budget && this.ladder.slower(now, ms / budget)) this.stepped(now, `still frame ${ms.toFixed(0)} ms over ${budget}`);
     }, () => { this.fenceBusy = false; });
   }
 
   /** What a frame at rest may take before the ladder comes down for it. */
   static readonly STILL_BUDGET = 250;
 
+  /**
+   * Everything the viewer knows about this machine and what it did about
+   * it, as text to paste: for a slow laptop that is somewhere else, one
+   * paste says what it measured, where the ladder stands, what its frames
+   * take, and every step on the way, so the thresholds can be judged
+   * against a machine that is not to hand.
+   */
+  report(app = 'artshape'): string {
+    const a = this.ctx.adapter;
+    const { canvas } = this.ctx;
+    const v = this.verdict;
+    const e = this.ladder.economy;
+    const summary = (xs: number[]) => {
+      if (!xs.length) return 'none';
+      const s = [...xs].sort((x, y) => x - y);
+      return `${xs.length}: min ${s[0].toFixed(0)}, median ${s[s.length >> 1].toFixed(0)}, max ${s[s.length - 1].toFixed(0)} ms`;
+    };
+    const without = RUNGS.filter((_, i) => i < this.ladder.rung);
+    return [
+      `${app} report, ${new Date().toISOString()}`,
+      `browser: ${navigator.userAgent}`,
+      `adapter: ${a.key}${a.fallback ? ' (software fallback)' : ''}${a.description ? ` — ${a.description}` : ''}`,
+      `screen: ${this.host.clientWidth}×${this.host.clientHeight} css at dpr ${window.devicePixelRatio}, canvas ${canvas.width}×${canvas.height}, drawing ${(this.renderer.renderPixels / 1e6).toFixed(2)} Mpx, tick ${this.tickMs.toFixed(1)} ms`,
+      `verdict: ${v ? `${v.msPerMpx.toFixed(1)} ms/Mpx, kept ${new Date(v.at).toISOString()}` : 'none'}`,
+      `ladder: scale ${this.ladder.scale.toFixed(2)}, rung ${this.ladder.rung}${without.length ? ` (without ${without.join(', ')})` : ''}; shadow taps ×${e.shadowTaps}, contact ${e.contact ? 'on' : 'off'}, supersample ${e.supersample ? 'allowed' : 'off'}, detail ×${e.detail}`,
+      `frames in runs — ${summary(this.runFrames)}`,
+      `still frames fenced — ${summary(this.stillFrames)}`,
+      `drawn: ${this.frameCount}`,
+      'journal:',
+      ...this.journal.map((l) => `  ${l}`),
+    ].join('\n');
+  }
+
   /** After a step: the renderer told, new targets, the page asked for its detail if that changed, and the position written down for the next visit. */
-  private stepped(now: number) {
+  private stepped(now: number, why: string) {
     this.frameMs = this.tickMs;
     this.lastScaleStep = now;
+    this.note(`ladder → scale ${this.ladder.scale.toFixed(2)}, rung ${this.ladder.rung}: ${why}`);
     const was = this.renderer.setEconomy(this.ladder.economy);
     this.resize();
     if (this.verdict) {
