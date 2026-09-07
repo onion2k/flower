@@ -1,6 +1,6 @@
-import { analyseConnectivity } from '../assembly/connectivity';
-import { compile } from '../dsl/index';
-import { examples } from '../dsl/examples';
+import { analyseConnectivity } from 'artshape-render/assembly/connectivity';
+import { compile } from 'artshape-render/dsl';
+import { examples } from '../examples';
 import { forms } from '../spike/forms';
 
 const pad = (s: string | number, n: number) => String(s).padStart(n);

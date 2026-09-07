@@ -1199,6 +1199,51 @@ or the note under the chess game's picker, copies it. One paste from a
 machine that is elsewhere is meant to say whether the 40 ms/Mpx line
 for `fast` and the 250 ms still budget are right.
 
+## The renderer taken out, September 2026
+
+The chess game had vendored a copy of the renderer, and keeping it
+current was the month's steadiest cost: every change to `renderer.ts`
+was applied twice, the second time by hand. INTENT had said since it was
+written that the renderer is a library as well as a page; the game was
+the proof, so it became one.
+
+`artshape-render` holds `src/{gpu,geom,mesh,parts,pattern,assembly,
+render,dsl}` — 23,800 lines and 880 node tests and 28 GPU ones, with one
+dependency, earcut. What stayed here is the application: the editor, the
+catalogue of examples, the spike scripts and the page, 151 tests and the
+CodeMirror packages. Both this project and the game consume the library
+as a git dependency, `npm link`ed against a local checkout while both are
+being worked on.
+
+Three things had to change to make the split honest:
+
+- **`compile()` no longer falls back to a catalogue of examples.** The
+  language defaulting `resolve` to the page's own sketches was the library
+  reaching up into the application. Callers pass a resolver now; the
+  examples test and `spike/validate.ts` were the two that had leaned on
+  the default, and the render tests that drew an example keep their own
+  fixtures.
+- **The workers are made by the library.** `new URL(..., import.meta.url)`
+  resolves against the file it is written in, so the body counter
+  constructed from `main.ts` would have looked for the worker beside the
+  page's own sources. `assembly/connectivity.client.ts` makes it, as
+  `render/renderer.ts` already made the traced scene's.
+- **It ships TypeScript, not a build.** A build was the plan until the
+  workers made it untenable: `tsc` leaves `new URL('./scene.worker.ts')`
+  as it found it, and there is no `.ts` beside the emitted `.js` to
+  resolve. Both consumers are Vite projects with the same tsconfig, so
+  they compile the sources directly — `optimizeDeps.exclude` so the
+  package is transformed rather than pre-bundled, and `server.fs.allow`
+  so a linked checkout outside the project root can be served in dev.
+  That last one is the only friction the split added, and only when
+  linked.
+
+Nothing about the pictures changed, and the builds say so: chess's bundle
+came out at the same 365.32 kB with the same hash as before the move, and
+artshape's within twenty bytes. Verified in both pages that the two
+workers load from the package and do their work — the body count fills in,
+and a traced view accumulates 84 samples.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

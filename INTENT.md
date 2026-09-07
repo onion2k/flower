@@ -37,10 +37,14 @@ drawn, at once, as a photograph would show it. Concretely:
 - The picture reads as a thing on a bench: a table with a real surface, a
   cushion the piece sinks into, daylight or a studio rig with each light
   carrying its own shadow, a camera with a lens in millimetres.
-- The renderer is a library as well as a page. Anything at millimetre to
-  metre scale that stands still on a surface — a mathematical sculpture, a
-  puzzle box with moving parts, a maker's own catalogue — can be drawn by
-  it without the editor.
+- The renderer is a library as well as a page, and since September 2026 a
+  separate repository — `artshape-render` — that this project consumes
+  like any other user. Anything at millimetre to metre scale that stands
+  still on a surface — a mathematical sculpture, a puzzle box with moving
+  parts, a maker's own catalogue — can be drawn by it without the editor.
+  Nothing in it may know about jewellery, about an editor, or about a
+  particular page: a catalogue of sketches, a parts picker and a DOM
+  beyond the viewer's canvas all belong to an application.
 
 Success is a jeweller sketching a brooch in an evening, turning it in the
 light, and trusting the picture enough to make it; and a programmer using
@@ -85,9 +89,12 @@ the renderer for a sculpture in an afternoon.
 
 ## Open questions
 
-- Which application beyond jewellery is the first real user of the
-  library — a mathematical sculpture, or the puzzle box — and does that
-  decide whether the scene interface grows into a scene graph?
+- The first real user of the library beyond jewellery turned out to be a
+  chess game, which wanted a pool of placements that move rather than a
+  still piece; that is what `moveAll` and per-group draw counts came from.
+  It has not yet forced a scene graph, and the question stands for
+  whatever comes next: does an application with real motion in it make one
+  necessary, or is a pool of matrices enough?
 - How far should raster realism be pushed against the tracer: is a
   filtered table reflection for satin metal worth its cost, or is traced
   quality the answer for the final picture?

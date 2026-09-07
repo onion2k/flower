@@ -1,6 +1,6 @@
 import { HighlightStyle, StreamLanguage, syntaxHighlighting } from '@codemirror/language';
 import { tags } from '@lezer/highlight';
-import { BUILTIN_NAMES } from '../dsl/builtins';
+import { BUILTIN_NAMES } from 'artshape-render/dsl/builtins';
 
 /**
  * Highlighting for the sketch language.

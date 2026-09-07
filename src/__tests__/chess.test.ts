@@ -5,7 +5,7 @@
  * runs in node with no GPU.
  */
 import { describe, expect, it } from 'vitest';
-import { compile } from '../index';
+import { compile } from 'artshape-render/dsl';
 import { examples } from '../examples';
 
 const FILES = 'abcdefgh';

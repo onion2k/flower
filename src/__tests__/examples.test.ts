@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { compile } from '../index';
+import { compile } from 'artshape-render/dsl';
 import { exampleGroups, exampleNames, examples } from '../examples';
 
 // Every sketch shipped with the editor compiles, builds something, and is
@@ -8,7 +8,9 @@ import { exampleGroups, exampleNames, examples } from '../examples';
 describe('examples', () => {
   for (const name of exampleNames) {
     it(`${name} compiles to a piece with parts in it`, () => {
-      const result = compile(examples[name]);
+      // a sketch may `use` another: the resolver is the page's own, since the
+      // language has no catalogue of its own to fall back on
+      const result = compile(examples[name], { resolve: (n) => examples[n] });
       expect(result.error?.formatted).toBeUndefined();
       const stats = result.sketch!.assembly.stats();
       expect(stats.instances).toBeGreaterThan(1);

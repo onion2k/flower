@@ -1,20 +1,20 @@
-import type { ConnectivityRequest, ConnectivityResponse } from './assembly/connectivity.worker';
+import { createConnectivityWorker, type ConnectivityRequest, type ConnectivityResponse } from 'artshape-render/assembly/connectivity.client';
 import { catalogue, catalogueGroups, catalogueNames } from './spike/catalogue';
-import { examples, exampleGroups, exampleNames } from './dsl/examples';
-import { compile } from './dsl/index';
-import { metalNames, finishNames } from './render/materials';
-import type { EnvPreset } from './render/env';
+import { examples, exampleGroups, exampleNames } from './examples';
+import { compile } from 'artshape-render/dsl';
+import { metalNames, finishNames } from 'artshape-render/render/materials';
+import type { EnvPreset } from 'artshape-render/render/env';
 import { forms, formNames } from './spike/forms';
-import { Assembly } from './assembly/assembly';
-import { groupByMesh } from './assembly/groups';
-import { identity } from './geom/transform';
-import type { Anchor, Part } from './parts/types';
-import type { Placement } from './assembly/assembly';
-import type { Span } from './dsl/lexer';
-import type { Mesh } from './mesh/types';
-import { RUNGS, tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
-import { detail, setDetail } from './mesh/detail';
-import { meanRadiance, parseHdr } from './render/hdr';
+import { Assembly } from 'artshape-render/assembly/assembly';
+import { groupByMesh } from 'artshape-render/assembly/groups';
+import { identity } from 'artshape-render/geom/transform';
+import type { Anchor, Part } from 'artshape-render/parts/types';
+import type { Placement } from 'artshape-render/assembly/assembly';
+import type { Span } from 'artshape-render/dsl/lexer';
+import type { Mesh } from 'artshape-render/mesh/types';
+import { RUNGS, tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from 'artshape-render/render/viewer';
+import { detail, setDetail } from 'artshape-render/mesh/detail';
+import { meanRadiance, parseHdr } from 'artshape-render/render/hdr';
 import { createEditor } from './editor/index';
 import { buildPalette } from './editor/palette';
 import { sketchNames } from './editor/help';
@@ -859,7 +859,7 @@ function build() {
  * while it was working.
  */
 let connectivityToken = 0;
-const connectivityWorker = new Worker(new URL('./assembly/connectivity.worker.ts', import.meta.url), { type: 'module' });
+const connectivityWorker = createConnectivityWorker();
 let onConnectivity: ((r: ConnectivityResponse) => void) | null = null;
 // one request in flight; while it runs, only the latest edit waits behind it
 let connectivityBusy = false;

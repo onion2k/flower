@@ -1,7 +1,7 @@
 import { autocompletion, type Completion, type CompletionContext } from '@codemirror/autocomplete';
 import { EditorSelection, type EditorState } from '@codemirror/state';
 import { EditorView, showPanel } from '@codemirror/view';
-import { BUILTIN_NAMES, CURVE_NAMES, ENGRAVING_NAMES, OUTLINE_NAMES, PART_NAMES, SYMMETRY_NAMES, type ParamInfo, signature } from '../dsl/builtins';
+import { BUILTIN_NAMES, CURVE_NAMES, ENGRAVING_NAMES, OUTLINE_NAMES, PART_NAMES, SYMMETRY_NAMES, type ParamInfo, signature } from 'artshape-render/dsl/builtins';
 
 /**
  * Inline parameter help: a strip under the text that shows what the call

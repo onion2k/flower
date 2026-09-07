@@ -1,10 +1,10 @@
-import { Assembly } from '../assembly/assembly';
-import { bezier3, catmullRom, logSpiral, arc } from '../geom/curve';
-import { multiply, rotationAbout, translation, uniformScale, identity } from '../geom/transform';
-import { phyllotaxis, ring, sphereShell, radial } from '../pattern/symmetry';
-import { bead, collar, pod, rivet } from '../parts/fastener';
-import { leaf } from '../parts/leaf';
-import { blade, wire } from '../parts/wire';
+import { Assembly } from 'artshape-render/assembly/assembly';
+import { bezier3, catmullRom, logSpiral, arc } from 'artshape-render/geom/curve';
+import { multiply, rotationAbout, translation, uniformScale, identity } from 'artshape-render/geom/transform';
+import { phyllotaxis, ring, sphereShell, radial } from 'artshape-render/pattern/symmetry';
+import { bead, collar, pod, rivet } from 'artshape-render/parts/fastener';
+import { leaf } from 'artshape-render/parts/leaf';
+import { blade, wire } from 'artshape-render/parts/wire';
 
 /**
  * Assembled forms.

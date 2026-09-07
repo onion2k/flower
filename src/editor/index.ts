@@ -6,7 +6,7 @@ import { Annotation, EditorSelection, EditorState } from '@codemirror/state';
 import {
   drawSelection, EditorView, highlightActiveLine, highlightActiveLineGutter, keymap, lineNumbers,
 } from '@codemirror/view';
-import type { CompileResult } from '../dsl/index';
+import type { CompileResult } from 'artshape-render/dsl';
 import { sketchHighlighting, sketchLanguage } from './language';
 import { scrubbing } from './scrub';
 import { parameterHelp } from './help';

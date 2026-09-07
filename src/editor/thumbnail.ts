@@ -1,4 +1,4 @@
-import type { Mesh } from '../mesh/types';
+import type { Mesh } from 'artshape-render/mesh/types';
 
 /**
  * A small picture of a mesh, drawn on a 2D canvas.

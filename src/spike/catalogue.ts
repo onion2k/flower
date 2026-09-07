@@ -1,21 +1,21 @@
-import { arc, bezier3, catmullRom, logSpiral } from '../geom/curve';
-import { band, blade, wire } from '../parts/wire';
-import { bar, disc, gusset } from '../parts/panel';
-import { leaf } from '../parts/leaf';
-import { bead, bell, bud, collar, egg, pod, rivet } from '../parts/fastener';
-import { petal } from '../parts/petal';
-import { gem, type GemCut } from '../parts/gem';
-import { setting } from '../parts/setting';
-import { shank } from '../parts/ring';
-import { clasp } from '../parts/clasp';
-import { jumpRing } from '../parts/jumpring';
-import { leverBack } from '../parts/leverback';
-import { bust, earringStand, easel, ringStand } from '../parts/display';
-import { sword } from '../parts/sword';
-import { axe } from '../parts/axe';
-import { shield } from '../parts/shield';
-import { branch, stem } from '../parts/stem';
-import type { Part } from '../parts/types';
+import { arc, bezier3, catmullRom, logSpiral } from 'artshape-render/geom/curve';
+import { band, blade, wire } from 'artshape-render/parts/wire';
+import { bar, disc, gusset } from 'artshape-render/parts/panel';
+import { leaf } from 'artshape-render/parts/leaf';
+import { bead, bell, bud, collar, egg, pod, rivet } from 'artshape-render/parts/fastener';
+import { petal } from 'artshape-render/parts/petal';
+import { gem, type GemCut } from 'artshape-render/parts/gem';
+import { setting } from 'artshape-render/parts/setting';
+import { shank } from 'artshape-render/parts/ring';
+import { clasp } from 'artshape-render/parts/clasp';
+import { jumpRing } from 'artshape-render/parts/jumpring';
+import { leverBack } from 'artshape-render/parts/leverback';
+import { bust, earringStand, easel, ringStand } from 'artshape-render/parts/display';
+import { sword } from 'artshape-render/parts/sword';
+import { axe } from 'artshape-render/parts/axe';
+import { shield } from 'artshape-render/parts/shield';
+import { branch, stem } from 'artshape-render/parts/stem';
+import type { Part } from 'artshape-render/parts/types';
 
 /**
  * An art nouveau vocabulary rather than an engineering one: drawn lines that

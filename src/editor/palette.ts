@@ -1,7 +1,7 @@
 import { EditorSelection } from '@codemirror/state';
 import type { EditorView } from '@codemirror/view';
-import { compile } from '../dsl/index';
-import { enamels } from '../render/materials';
+import { compile } from 'artshape-render/dsl';
+import { enamels } from 'artshape-render/render/materials';
 import { thumbnail } from './thumbnail';
 
 /**

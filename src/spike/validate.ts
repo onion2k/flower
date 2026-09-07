@@ -9,15 +9,15 @@
  */
 import { catalogue } from './catalogue';
 import { forms } from './forms';
-import { compile } from '../dsl/index';
-import { examples } from '../dsl/examples';
-import { Assembly } from '../assembly/assembly';
-import { analyseConnectivity } from '../assembly/connectivity';
-import { dot } from '../geom/vec';
-import { rotationAbout } from '../geom/transform';
-import { leaf } from '../parts/leaf';
-import { rivet } from '../parts/fastener';
-import type { Mesh } from '../mesh/types';
+import { compile } from 'artshape-render/dsl';
+import { examples } from '../examples';
+import { Assembly } from 'artshape-render/assembly/assembly';
+import { analyseConnectivity } from 'artshape-render/assembly/connectivity';
+import { dot } from 'artshape-render/geom/vec';
+import { rotationAbout } from 'artshape-render/geom/transform';
+import { leaf } from 'artshape-render/parts/leaf';
+import { rivet } from 'artshape-render/parts/fastener';
+import type { Mesh } from 'artshape-render/mesh/types';
 
 interface Report {
   name: string;
@@ -275,7 +275,7 @@ console.log('\nuse');
   }
 
   // and the happy path: an imported flower keeps the metals it was drawn in
-  const used = compile('use rose\nform b { place rose }').sketch!;
+  const used = compile('use rose\nform b { place rose }', { resolve }).sketch!;
   const metals = new Set(used.assembly.placements.map((p) => p.part.material?.metal ?? '(default)'));
   console.log(`  imported rose carries ${metals.size} metals: ${[...metals].sort().join(', ')}`);
 }
