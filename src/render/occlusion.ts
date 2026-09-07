@@ -65,6 +65,8 @@ export interface OcclusionOptions {
   depthSize?: number;
   groundSize?: number;
   groundScale?: number;
+  /** Triangle-draws per submitted chunk: less on a slow machine, so a chunk takes the same time everywhere. */
+  triangleBudget?: number;
 }
 
 /** The fixed-point scale of the accumulation sums. */
@@ -74,7 +76,7 @@ const DIR_STRIDE = 256;
 const WORKGROUP = 64;
 /** WebGPU's guaranteed maxComputeWorkgroupsPerDimension; past it the accumulate dispatch takes rows. */
 const MAX_WORKGROUPS = 65535;
-/** Triangle-draws per submitted chunk of the bake; a comfortable fraction of a second on a small GPU. */
+/** Triangle-draws per submitted chunk of the bake unless told otherwise; a comfortable fraction of a second on a desktop GPU. */
 const TRIANGLE_BUDGET = 12_000_000;
 
 const DIR_STRUCT = `
@@ -314,7 +316,7 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
   // triangle-draws, the sums are additive so every landed chunk is already a
   // usable answer, and a bake that is superseded stops at the next chunk.
   const drawnTriangles = groups.reduce((n, g) => n + (g.mesh.indices.length / 3) * (g.matrices.length / 16), 0);
-  const chunk = Math.max(1, Math.min(32, Math.floor(TRIANGLE_BUDGET / Math.max(drawnTriangles, 1))));
+  const chunk = Math.max(1, Math.min(32, Math.floor((opts.triangleBudget ?? TRIANGLE_BUDGET) / Math.max(drawnTriangles, 1))));
   let cancelled = false;
 
   // --- bind groups and the encoding of one direction, once the pipelines have compiled ---

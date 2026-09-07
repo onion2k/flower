@@ -26,7 +26,7 @@ import { computeWear } from '../mesh/wear';
 import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
 import { CushionBake, CUSHION_SIZE } from './cushion';
-import { economyAt, type Economy } from './calibrate';
+import { FULL_BUDGETS, budgetsFor, economyAt, type Budgets, type Economy } from './calibrate';
 import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey, type Rasteriser } from './glyphs';
 import { envPipelinesReady, bakeEnvironment, filterCube, skyDistribution, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
@@ -349,11 +349,54 @@ export class Renderer {
   private faceBinds: GPUBindGroup[] = [];
   private localShadowDirty = false;
   /** The reflection probe: the lit piece and table from their centre, drawn then filtered like the sky. */
-  private probeRaw: GPUTexture;
-  private probeBackground: GPUTexture;
-  private probeSpecular: GPUTexture;
-  private probeDepth: GPUTexture;
-  private probeView: GPUTextureView;
+  private probeRaw!: GPUTexture;
+  private probeBackground!: GPUTexture;
+  private probeSpecular!: GPUTexture;
+  private probeDepth!: GPUTexture;
+  private probeView!: GPUTextureView;
+  /** The probe's face, from the budgets: reallocated when they change. */
+  private probeSize = PROBE_SIZE;
+
+  private allocateProbe(size: number) {
+    const { device } = this.ctx;
+    this.probeSize = size;
+    this.probeRaw?.destroy(); this.probeBackground?.destroy(); this.probeSpecular?.destroy(); this.probeDepth?.destroy();
+    const probeCube = (label: string, mips: number) => device.createTexture({
+      label, size: [size, size, 6], format: 'rgba16float', mipLevelCount: mips,
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
+    });
+    this.probeRaw = probeCube('probe raw', 1);
+    this.probeBackground = probeCube('probe background', Math.floor(Math.log2(size)) + 1);
+    this.probeSpecular = probeCube('probe specular', PROBE_MIPS);
+    this.probeView = this.probeSpecular.createView({ dimension: 'cube' });
+    this.probeDepth = device.createTexture({
+      label: 'probe depth', size: [size, size], format: this.post.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT,
+    });
+    this.probeReady = false;
+  }
+
+  /**
+   * What the bakes may spend, from how slow the machine measured: the
+   * viewer sets this from its verdict, before the first bake when one was
+   * kept from an earlier visit, and after the calibration otherwise. A
+   * smaller probe is reallocated and every bake that has one is due again.
+   */
+  budgets: Budgets = FULL_BUDGETS;
+  setSlowness(slowness: number) {
+    const next = budgetsFor(slowness);
+    const was = this.budgets;
+    if (JSON.stringify(next) === JSON.stringify(was)) return;
+    this.budgets = next;
+    this.probeBounces = next.probeBounces;
+    if (next.probeSize !== was.probeSize) this.allocateProbe(next.probeSize);
+    if (next.keyShadow !== was.keyShadow) this.allocateKeyShadow(next.keyShadow);
+    if (next.probeSize !== was.probeSize || next.keyShadow !== was.keyShadow) this.rebuildFrameBind();
+    this.invalidateProbe();
+    // the sky at its new size, which brings the shadows after it; otherwise just the shadows
+    if (next.envSize !== was.envSize && this.environment) this.setEnvironment(this.preset);
+    else if (this.groups.length && this.envSamples) this.bakeQueued = true;
+    this.dirty = true;
+  }
   private dummyProbeView: GPUTextureView;
   private probeFrames: GPUBuffer[] = [];
   private probeBinds: GPUBindGroup[] = [];
@@ -419,8 +462,20 @@ export class Renderer {
   private discCount: number;
 
   /** The key light's shadow map: its own depth-only view of the scene, redrawn whenever the scene or the key moves. */
-  private shadowMap: GPUTexture;
-  private shadowView: GPUTextureView;
+  private shadowMap!: GPUTexture;
+  /** The key's shadow map's side, from the budgets: reallocated when they change. */
+  private keyShadowSize = FULL_BUDGETS.keyShadow;
+  private allocateKeyShadow(size: number) {
+    this.keyShadowSize = size;
+    this.shadowMap?.destroy();
+    this.shadowMap = this.ctx.device.createTexture({
+      size: [size, size], format: 'depth24plus',
+      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'key shadow',
+    });
+    this.shadowView = this.shadowMap.createView();
+    this.shadowDirty = true;
+  }
+  private shadowView!: GPUTextureView;
   /** Stands in for the shadow map in the shadow pass's own bind group: a pass may not read the texture it is drawing. */
   private dummyShadowView: GPUTextureView;
   private shadowSampler: GPUSampler;
@@ -557,12 +612,7 @@ export class Renderer {
 
     // the key's shadow: the prepass vertex shader with the key's own
     // viewProj, into a depth-only target; there is no fragment stage at all
-    const SHADOW_SIZE = 2048;
-    this.shadowMap = device.createTexture({
-      size: [SHADOW_SIZE, SHADOW_SIZE], format: 'depth24plus',
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING, label: 'key shadow',
-    });
-    this.shadowView = this.shadowMap.createView();
+    this.allocateKeyShadow(this.budgets.keyShadow);
     this.dummyShadowView = device.createTexture({
       size: [1, 1], format: 'depth24plus', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT, label: 'no shadow',
     }).createView();
@@ -613,17 +663,7 @@ export class Renderer {
     for (let i = 0; i < 6 * MAX_LOCAL_SHADOWS; i++) {
       this.faceFrames.push(device.createBuffer({ label: `light face ${i}`, size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST }));
     }
-    const probeCube = (label: string, mips: number) => device.createTexture({
-      label, size: [PROBE_SIZE, PROBE_SIZE, 6], format: 'rgba16float', mipLevelCount: mips,
-      usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.TEXTURE_BINDING,
-    });
-    this.probeRaw = probeCube('probe raw', 1);
-    this.probeBackground = probeCube('probe background', Math.floor(Math.log2(PROBE_SIZE)) + 1);
-    this.probeSpecular = probeCube('probe specular', PROBE_MIPS);
-    this.probeView = this.probeSpecular.createView({ dimension: 'cube' });
-    this.probeDepth = device.createTexture({
-      label: 'probe depth', size: [PROBE_SIZE, PROBE_SIZE], format: this.post.depthFormat, usage: GPUTextureUsage.RENDER_ATTACHMENT,
-    });
+    this.allocateProbe(this.budgets.probeSize);
     this.dummyProbeView = device.createTexture({
       label: 'no probe', size: [1, 1, 6], format: 'rgba16float', usage: GPUTextureUsage.TEXTURE_BINDING,
     }).createView({ dimension: 'cube' });
@@ -747,6 +787,8 @@ export class Renderer {
     const previous = this.environment;
     const env = bakeEnvironment(this.ctx, preset === 'image' ? 'studio' : preset, {
       sun: this.keyDir, sunSize: this.keySize, image: preset === 'image' ? this.envImage! : undefined,
+      // smaller on a slow machine: the prefiltered mips are the costliest bake there is
+      size: this.budgets.envSize,
     });
     this.environment = env;
     this.envSamples = null;
@@ -1446,9 +1488,9 @@ export class Renderer {
     const dir: [number, number, number] = [this.keyDir[0], this.keyDir[1], this.keyDir[2]];
     orthoFromDirection(this.lightViewProj, dir, this.sceneCentre, this.sceneRadius);
     frame.set(this.lightViewProj, 36);
-    const texel = (2 * this.sceneRadius) / 2048;
+    const texel = (2 * this.sceneRadius) / this.keyShadowSize;
     frame[52] = texel * 2.5;
-    frame[53] = 1.5 / 2048;
+    frame[53] = 1.5 / this.keyShadowSize;
     frame[54] = this.keyStrength > 0 && this.groups.length ? 1 : 0;
     frame[55] = this.keySize;
     // the probe: just over the piece, where nothing is in the way, reaching
@@ -1878,7 +1920,7 @@ export class Renderer {
   }
 
   /** Bounces the probe holds: 1 draws the piece under the sky and its lights alone, 2 draws it again with the first in view. */
-  probeBounces = 2;
+  probeBounces = FULL_BUDGETS.probeBounces;
 
   private probeBindsAgain: GPUBindGroup[] = [];
 
@@ -1946,7 +1988,7 @@ export class Renderer {
       }
       pass.end();
     });
-    this.probeFilters.push(filterCube(this.ctx, encoder, this.probeRaw, this.probeBackground, this.probeSpecular, PROBE_SIZE, PROBE_MIPS));
+    this.probeFilters.push(filterCube(this.ctx, encoder, this.probeRaw, this.probeBackground, this.probeSpecular, this.probeSize, PROBE_MIPS));
   }
   /** The filters' own buffers, kept until their encoder has been submitted. */
   private probeFilters: Array<{ dispose(): void }> = [];
@@ -2070,9 +2112,11 @@ export class Renderer {
       {
         env: this.envSamples ? { samples: this.envSamples, spin: this.envSpin } : undefined,
         // a quarter of the directions at half the resolution is a tenth of the
-        // work, and soft shadows on a working model do not need more
-        directions: full ? 256 : 64,
-        depthSize: full ? 2048 : 1024,
+        // work, and soft shadows on a working model do not need more; and
+        // less again on a machine measured slow
+        directions: full ? this.budgets.occlusionDirections.full : this.budgets.occlusionDirections.draft,
+        depthSize: full ? this.budgets.occlusionDepth.full : this.budgets.occlusionDepth.draft,
+        triangleBudget: this.budgets.triangleBudget,
       },
     );
     this.occlusion = occ;

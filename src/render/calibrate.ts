@@ -210,3 +210,74 @@ export class Ladder {
     return 'rung';
   }
 }
+
+/**
+ * How far this machine is from the one the budgets were chosen on, from
+ * the verdict: 1 is the desktop (the Mac mini measures 6–17 ms/Mpx across
+ * the catalogue), 64 the most a budget is divided by. A software renderer
+ * measures in the thousands and gets the floor of everything.
+ */
+export const REFERENCE_MS_PER_MPX = 10;
+export function slownessOf(msPerMpx: number): number {
+  if (!(msPerMpx > 0)) return 1;
+  return Math.min(64, Math.max(1, msPerMpx / REFERENCE_MS_PER_MPX));
+}
+
+/**
+ * What the bakes may spend, given how slow the machine is. The bakes are
+ * not frames: they run once a scene or a light changes, and on a slow
+ * machine they are what stands between the page and its first frame, and
+ * what a chunk of them takes is what a driver's watchdog measures (two
+ * seconds on Windows, and the device is lost). Counts and sizes come down
+ * by the square root of the slowness, so a machine sixteen times slower
+ * bakes a quarter of the directions at half the size — a sixteenth of the
+ * work; a chunk's triangle budget comes down by the whole of it, so a
+ * chunk takes the same time everywhere.
+ */
+export interface Budgets {
+  /** Directions of the occlusion bake, in draft and in final. */
+  occlusionDirections: { draft: number; full: number };
+  /** The occlusion bake's depth map, in draft and in final. */
+  occlusionDepth: { draft: number; full: number };
+  /** Triangle-draws per submitted chunk of the occlusion bake. */
+  triangleBudget: number;
+  /** The reflection probe's face, a power of two. */
+  probeSize: number;
+  /** Bounces the probe is drawn with: two sees the piece in the piece. */
+  probeBounces: number;
+  /** The baked environment's face, a power of two: its prefiltered mips are the costliest bake there is on a slow machine. */
+  envSize: number;
+  /** The key light's shadow map, a power of two. */
+  keyShadow: number;
+}
+
+/** The desktop's budgets: what every constant in the renderer was chosen as. */
+export const FULL_BUDGETS: Budgets = {
+  occlusionDirections: { draft: 64, full: 256 },
+  occlusionDepth: { draft: 1024, full: 2048 },
+  triangleBudget: 12_000_000,
+  probeSize: 256,
+  probeBounces: 2,
+  envSize: 512,
+  keyShadow: 2048,
+};
+
+/** The nearest power of two at or below `n`, never below `floor`. */
+function pow2Below(n: number, floor: number): number {
+  return Math.max(floor, 2 ** Math.floor(Math.log2(Math.max(n, 1))));
+}
+
+export function budgetsFor(slowness: number): Budgets {
+  const s = Math.min(64, Math.max(1, slowness));
+  const scale = 1 / Math.sqrt(s);
+  const f = FULL_BUDGETS;
+  return {
+    occlusionDirections: { draft: Math.max(16, Math.round(f.occlusionDirections.draft * scale)), full: Math.max(64, Math.round(f.occlusionDirections.full * scale)) },
+    occlusionDepth: { draft: pow2Below(f.occlusionDepth.draft * scale, 256), full: pow2Below(f.occlusionDepth.full * scale, 512) },
+    triangleBudget: Math.max(500_000, Math.round(f.triangleBudget / s)),
+    probeSize: pow2Below(f.probeSize * scale, 64),
+    probeBounces: s >= 4 ? 1 : 2,
+    envSize: pow2Below(f.envSize * scale, 128),
+    keyShadow: pow2Below(f.keyShadow * scale, 512),
+  };
+}

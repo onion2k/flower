@@ -1119,6 +1119,42 @@ following the verdict is still the open item. The calibration waits
 for the first frame now as well as the pipelines: started the moment
 they compiled, its frames queued in front of the loop's own.
 
+### The bakes follow the verdict
+
+The bakes are not frames: they run once a scene or a light changes, and
+on a slow machine they are what stands between the page and its first
+frame — and what one chunk of them takes is what a driver's watchdog
+measures, two seconds on Windows before the device is lost. Every budget
+in them was a constant. Now `slownessOf(msPerMpx)` puts the machine at
+1 (the desktop, 10 ms/Mpx) to 64, and `budgetsFor` brings the counts
+and sizes down by its square root and a chunk's triangle budget by the
+whole of it, with floors under everything (`render/calibrate.ts`):
+
+| | desktop | 16× slower | floor |
+| --- | --- | --- | --- |
+| occlusion directions, draft/final | 64 / 256 | 16 / 64 | 16 / 64 |
+| occlusion depth map | 1024 / 2048 | 256 / 512 | 256 / 512 |
+| triangle-draws a chunk | 12M | 0.75M | 0.5M |
+| probe face, bounces | 256², 2 | 64², 1 | 64², 1 |
+| environment face | 512 | 128 | 128 |
+| key shadow map | 2048 | 512 | 512 |
+
+`Renderer.setSlowness` reallocates the probe and the key's shadow map
+when their sizes change and bakes the sky again at its new size; the
+viewer sets it from a kept verdict before the first bake, from the
+fallback flag when there is no verdict, and from the calibration
+otherwise. The report has a `bakes:` line.
+
+Measured on SwiftShader with each bake fenced on its own, the chess set
+at the ladder's floor: the environment 3.7 s → 1 s, the probe's share
+of a frame 1.85 s → 0.2 s, the occlusion 235 → 70 ms. And the same
+measurement found what the first frame there actually is: a frame
+takes 0.85 s warm and the first one thirty, whatever the budgets,
+because SwiftShader compiles each shader again at its first draw. That
+is SwiftShader's; D3D12 compiles at pipeline creation, which is now off
+the main thread and in parallel. So the software renderer has said all
+it can about the laptop, and the laptop's own report is what is left.
+
 ### The report
 
 `viewer.report()` is everything the viewer knows about the machine, as

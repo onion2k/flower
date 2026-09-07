@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { Ladder, RUNGS, SLOW_MS_PER_MPX, TIERS, VERDICT_TTL, median, startingScale, tierFor, verdicts } from '../calibrate';
+import { FULL_BUDGETS, Ladder, RUNGS, SLOW_MS_PER_MPX, TIERS, VERDICT_TTL, budgetsFor, median, slownessOf, startingScale, tierFor, verdicts } from '../calibrate';
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -179,5 +179,44 @@ describe('Ladder', () => {
   it('starts where a kept verdict left it, within bounds', () => {
     expect(new Ladder(0.1, 99)).toMatchObject({ scale: FLOOR, rung: RUNGS.length });
     expect(new Ladder(2, -1)).toMatchObject({ scale: 1, rung: 0 });
+  });
+});
+
+describe('budgets', () => {
+  it('is the desktop at a desktop verdict', () => {
+    expect(slownessOf(8)).toBe(1);
+    expect(budgetsFor(slownessOf(8))).toEqual(FULL_BUDGETS);
+    expect(slownessOf(NaN)).toBe(1);
+  });
+
+  it('comes down by the square root for counts and sizes, and by the whole for a chunk', () => {
+    // sixteen times slower: a quarter of the directions, half the size, a sixteenth of a chunk
+    const b = budgetsFor(16);
+    expect(b.occlusionDirections).toEqual({ draft: 16, full: 64 });
+    expect(b.occlusionDepth).toEqual({ draft: 256, full: 512 });
+    expect(b.triangleBudget).toBe(750_000);
+    expect(b.probeSize).toBe(64);
+    expect(b.probeBounces).toBe(1);
+    expect(b.envSize).toBe(128);
+    expect(b.keyShadow).toBe(512);
+  });
+
+  it('keeps floors under everything, however slow', () => {
+    const b = budgetsFor(slownessOf(4000));
+    expect(slownessOf(4000)).toBe(64);
+    expect(b.occlusionDirections).toEqual({ draft: 16, full: 64 });
+    expect(b.occlusionDepth).toEqual({ draft: 256, full: 512 });
+    expect(b.triangleBudget).toBe(500_000);
+    expect(b.probeSize).toBe(64);
+    expect(b.envSize).toBe(128);
+    expect(b.keyShadow).toBe(512);
+  });
+
+  it('keeps the second bounce until the machine is four times off', () => {
+    expect(budgetsFor(3).probeBounces).toBe(2);
+    expect(budgetsFor(4).probeBounces).toBe(1);
+    // and sizes are powers of two on the way down
+    expect(budgetsFor(2).probeSize).toBe(128);
+    expect(budgetsFor(2).occlusionDepth.full).toBe(1024);
   });
 });

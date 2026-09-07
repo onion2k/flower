@@ -67,7 +67,9 @@ adaptive resolution — has no automated coverage; the arithmetic under its
 calibration (the scale to open at, the tier suggested, the median, the
 stored verdict and its shelf life) and the ladder it drives (the scale
 to its floor, then the rungs in order, and the two guards on the way
-back up) are pure in `src/render/calibrate.ts` and tested in
+back up), and the bakes' budgets from the verdict (the square-root
+scaling, the floors, the second bounce given up at four times slower)
+are pure in `src/render/calibrate.ts` and tested in
 `calibrate.test.ts`; the fenced timing itself is not. The renderer under it has
 one headless test (`src/render/__tests__/renderer.gpu.test.ts`, under
 `npm run test:gpu`): a device with no canvas, the rosette sketch, a frame

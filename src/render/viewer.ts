@@ -19,7 +19,7 @@ import type { Box3, Vec3 } from '../geom/types';
 import type { EnvPreset } from './env';
 import type { Film } from './post';
 import { Renderer, type InstanceGroup, type Quality, type RendererOptions, type RigLight, type TableName } from './renderer';
-import { Ladder, RUNGS, median, startingScale, tierFor, verdicts, type Verdict } from './calibrate';
+import { Ladder, RUNGS, median, slownessOf, startingScale, tierFor, verdicts, type Verdict } from './calibrate';
 
 export { MAX_RIG_LIGHTS, emitterSamples, tableNames } from './renderer';
 export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } from './renderer';
@@ -148,11 +148,14 @@ export class Viewer {
       // be worse than the moment was
       const slow = tierFor(this.verdict.msPerMpx) === 'fast';
       this.ladder = new Ladder(this.verdict.scale, slow ? this.verdict.rung : 0);
+      // and the bakes budgeted before the first of them, which is what a kept verdict is for
+      this.renderer.setSlowness(slownessOf(this.verdict.msPerMpx));
     } else if (ctx.adapter.fallback) {
       // a software renderer, and nothing measured yet: it is slow before it
       // is measured, so it starts low and climbs if it can. SwiftShader
       // measured 2800 ms/Mpx, two hundred times a desktop
       this.ladder = new Ladder(Ladder.FLOOR, 2);
+      this.renderer.setSlowness(64);
     }
     this.renderer.setEconomy(this.ladder.economy);
     this.resize();
@@ -241,6 +244,13 @@ export class Viewer {
     this.verdict = { key: this.ctx.adapter.key, msPerMpx, scale: this.ladder.scale, rung: this.ladder.rung, at: Date.now() };
     verdicts.save(this.verdict);
     this.note(`calibrated: ${timings.map((t) => t.toFixed(0)).join('/')} ms at ${mpx.toFixed(2)} Mpx → ${msPerMpx.toFixed(1)} ms/Mpx, tick ${this.tickMs.toFixed(1)}, scale ${this.ladder.scale.toFixed(2)}`);
+    // the bakes follow the verdict from here: the next scene's, and this one's if the budgets moved
+    const slowness = slownessOf(msPerMpx);
+    if (slowness > 1 || this.renderer.budgets.probeSize !== 256) {
+      this.renderer.setSlowness(slowness);
+      const b = this.renderer.budgets;
+      this.note(`bakes budgeted at slowness ${slowness.toFixed(1)}: ${b.occlusionDirections.draft}/${b.occlusionDirections.full} directions at ${b.occlusionDepth.draft}/${b.occlusionDepth.full}, chunks of ${(b.triangleBudget / 1e6).toFixed(1)}M triangles, probe ${b.probeSize}² × ${b.probeBounces}`);
+    }
     this.resize();
     this.renderer.requestRender();
     return this.verdict;
@@ -527,6 +537,7 @@ export class Viewer {
     const { canvas } = this.ctx;
     const v = this.verdict;
     const e = this.ladder.economy;
+    const b = this.renderer.budgets;
     const summary = (xs: number[]) => {
       if (!xs.length) return 'none';
       const s = [...xs].sort((x, y) => x - y);
@@ -540,6 +551,7 @@ export class Viewer {
       `screen: ${this.host.clientWidth}×${this.host.clientHeight} css at dpr ${window.devicePixelRatio}, canvas ${canvas.width}×${canvas.height}, drawing ${(this.renderer.renderPixels / 1e6).toFixed(2)} Mpx, tick ${this.tickMs.toFixed(1)} ms`,
       `verdict: ${v ? `${v.msPerMpx.toFixed(1)} ms/Mpx, kept ${new Date(v.at).toISOString()}` : 'none'}`,
       `ladder: scale ${this.ladder.scale.toFixed(2)}, rung ${this.ladder.rung}${without.length ? ` (without ${without.join(', ')})` : ''}; shadow taps ×${e.shadowTaps}, contact ${e.contact ? 'on' : 'off'}, supersample ${e.supersample ? 'allowed' : 'off'}, detail ×${e.detail}`,
+      `bakes: ${b.occlusionDirections.draft}/${b.occlusionDirections.full} directions at ${b.occlusionDepth.draft}/${b.occlusionDepth.full}, chunks of ${(b.triangleBudget / 1e6).toFixed(1)}M triangles, probe ${b.probeSize}² × ${b.probeBounces} bounce${b.probeBounces > 1 ? 's' : ''}`,
       `frames in runs — ${summary(this.runFrames)}`,
       `still frames fenced — ${summary(this.stillFrames)}`,
       `drawn: ${this.frameCount}`,
