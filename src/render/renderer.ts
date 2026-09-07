@@ -33,9 +33,8 @@ import { envPipelinesReady, bakeEnvironment, filterCube, skyDistribution, type E
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
-import { PathTracer } from './tracer';
+import type { PathTracer } from './tracer';
 import type { SceneRequest, SceneResponse } from './scene.worker';
-import { buildScene } from './bvh';
 import { ANCHOR_WGSL, GROUND_WGSL, PBR_WGSL, PREPASS_WGSL } from './shaders';
 
 const BACKGROUND: [number, number, number] = [0.043, 0.047, 0.055];
@@ -986,6 +985,9 @@ export class Renderer {
   setQuality(q: Quality) {
     if (q === this.quality) return;
     this.quality = q;
+    // asking for traced quality again is another go at fetching the tracer,
+    // where a first attempt failed; between the two, nothing is retried
+    if (q === 'traced') this.traceLoadFailed = false;
     this.applySize();
     if (this.groups.length && this.envSamples) this.bakeQueued = true;
     this.dirty = true;
@@ -1155,6 +1157,38 @@ export class Renderer {
   }
 
   // --- the path tracer: final quality, traced while the view is still ---
+  /**
+   * The tracer and its BVH are fetched on the first traced frame and not
+   * before. They are a third of the render code and nothing else imports
+   * them, so a program that never asks for traced quality — a game, a
+   * maker's catalogue, anything drawn in raster — never loads them, and the
+   * bundle it starts with is the smaller for it. Until the module lands the
+   * raster frame is what is drawn, which is what a moving view shows anyway.
+   */
+  private traceModule: typeof import('./tracer') | null = null;
+  private bvhModule: typeof import('./bvh') | null = null;
+  /** While the import is in flight; false again whether it lands or fails. */
+  private traceLoading = false;
+  /** Set when the import failed: asked for again, it is tried again rather than never. */
+  private traceLoadFailed = false;
+
+  private loadTraceModule() {
+    if (this.traceLoading) return;
+    this.traceLoading = true;
+    this.traceLoadFailed = false;
+    Promise.all([import('./tracer'), import('./bvh')]).then(([tracer, bvh]) => {
+      this.traceModule = tracer;
+      this.bvhModule = bvh;
+      this.traceLoading = false;
+      // it landed: a frame is due, and this time there is something to sample with
+      this.dirty = true;
+    }, (err) => {
+      this.traceLoading = false;
+      this.traceLoadFailed = true;
+      console.error('the path tracer could not be loaded:', err);
+    });
+  }
+
   private tracer: PathTracer | null = null;
   private traceMaterialBind: GPUBindGroup | null = null;
   private traceSceneStale = true;
@@ -1168,9 +1202,14 @@ export class Renderer {
   get traceSamples() { return this.tracer?.samples ?? 0; }
   get traceLimit() { return this.tracer?.maxSamples ?? 0; }
 
-  private ensureTracer() {
+  private ensureTracer(): PathTracer | null {
+    const mod = this.traceModule;
+    if (!mod || !this.bvhModule) {
+      if (!this.traceLoadFailed) this.loadTraceModule();
+      return null;
+    }
     if (!this.tracer) {
-      this.tracer = new PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
+      this.tracer = new mod.PathTracer(this.ctx, this.frameLayout, this.mmPerUnit);
       if (this.envSamples) this.tracer.setSky(skyDistribution(this.envSamples).cdf, this.envSamples.size);
     }
     if (this.traceSceneStale && this.groups.length) {
@@ -1184,7 +1223,7 @@ export class Renderer {
         const request: SceneRequest = { token, groups };
         worker.postMessage(request);
       } else {
-        this.tracer.setScene(buildScene(groups), this.groundBuffer, this.cushion.height.createView());
+        this.tracer.setScene(this.bvhModule.buildScene(groups), this.groundBuffer, this.cushion.height.createView());
       }
     }
     if (!this.traceMaterialBind && this.materialBuffer && this.glyphBuffer && this.atlasTexture && this.gemPlaneBuffer) {
@@ -1217,6 +1256,9 @@ export class Renderer {
   /** One more sample of the still view, or nothing if the accumulation is complete. Returns whether a frame was drawn. */
   private traceFrameStep(encoder: GPUCommandEncoder, frame: Float32Array): boolean {
     const tracer = this.ensureTracer();
+    // the module is still being fetched, or has just failed to: the raster
+    // frame is drawn instead, and the load marks one due when it lands
+    if (!tracer) return false;
     // the tracer's own pipeline is compiling: nothing to take a sample with yet, so come back
     if (!tracer.compiled) { this.dirty = true; return false; }
     if (!this.traceMaterialBind || !this.frameBind || !this.post.sceneTexture || this.sceneBuilding || !tracer.hasScene) return false;

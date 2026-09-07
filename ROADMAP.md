@@ -1155,6 +1155,38 @@ is SwiftShader's; D3D12 compiles at pipeline creation, which is now off
 the main thread and in parallel. So the software renderer has said all
 it can about the laptop, and the laptop's own report is what is left.
 
+### The tracer, loaded when it is asked for
+
+Groundwork for taking the renderer out into its own repository, and
+worth having on its own. The path tracer, its BVH and the worker that
+builds one are a third of the render code and nothing outside `render/`
+imports them, but `render()` called `traceFrameStep()` unconditionally,
+so every program that used the renderer carried them whether or not it
+would ever trace a frame. They are fetched now with `import()` on the
+first traced frame: `Renderer.loadTraceModule` runs once, the frame it
+was asked on draws in raster, and the import marks a frame due when it
+lands — the same shape as the tracer's own pipeline compiling, which
+that frame already waited through. A failed fetch is not retried until
+traced quality is asked for again, so a blip costs an attempt and not a
+loop.
+
+The main bundle falls from 965 to 917 kB (303 to 289 kB gzipped); the
+tracer becomes a 46 kB chunk and the BVH a 5 kB one, fetched on demand.
+Watched in the page: nothing tracer-shaped is fetched at all until the
+quality picker is moved to traced, and then both arrive and the
+accumulation starts.
+
+What it was for: the chess game had deleted the tracer from its vendored
+copy, which is why `render/renderer.ts` diverged by 156 lines and every
+change to it this month had to be applied to the game by hand rather
+than copied. The game now vendors the three files it will never load,
+and every file under `vendor/artshape/render` is byte-identical to
+artshape's. One divergence is left in the whole copy: `dsl/index.ts`
+defaults `compile()`'s `resolve` to the page's own example sketches,
+which is the library reaching up into the application. That default
+should go when the split happens — `spike/validate.ts` and the examples
+test rely on it and would pass a `resolve` instead.
+
 ### The report
 
 `viewer.report()` is everything the viewer knows about the machine, as

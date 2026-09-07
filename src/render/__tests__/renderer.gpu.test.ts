@@ -315,16 +315,21 @@ describe('the renderer, headless', () => {
     renderer.setDebug(0);
   });
 
-  it('traces a sample once the view is still', async () => {
+  it('traces a sample once the view is still, having loaded the tracer only now', async () => {
+    // every frame so far was raster: the tracer's module is fetched on the
+    // first traced frame and not before, so nothing of it exists yet
+    expect(renderer.pathTracer).toBeNull();
     renderer.setQuality('traced');
     renderer.setMoving(false);
-    // the scene is built off the thread: raster frames until it lands, then a sample a frame
+    // the module is fetched and the scene built off the thread: raster frames
+    // until both land, then a sample a frame
     for (let i = 0; i < 500 && renderer.traceSamples === 0; i++) {
       renderer.requestRender();
       renderer.render(view);
       await new Promise((r) => setTimeout(r, 10));
     }
     expect(renderer.traceSamples).toBeGreaterThan(0);
+    expect(renderer.pathTracer).not.toBeNull();
     await frame('traced');
     renderer.setQuality('draft');
   });
