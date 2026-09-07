@@ -12,7 +12,7 @@ import type { Anchor, Part } from './parts/types';
 import type { Placement } from './assembly/assembly';
 import type { Span } from './dsl/lexer';
 import type { Mesh } from './mesh/types';
-import { tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
+import { RUNGS, tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from './render/viewer';
 import { detail, setDetail } from './mesh/detail';
 import { meanRadiance, parseHdr } from './render/hdr';
 import { createEditor } from './editor/index';
@@ -122,12 +122,14 @@ let framed = '';
  * bake and the frame lighter with it. Returns whether the detail changed.
  */
 function applyDetail(): boolean {
-  const d = state.quality === 'draft' ? 0.5 : 1;
+  // and less again when the viewer's ladder has found the machine cannot draw that many
+  const d = (state.quality === 'draft' ? 0.5 : 1) * viewer.detailFactor;
   if (d === detail()) return false;
   setDetail(d);
   return true;
 }
 applyDetail();
+viewer.onDetail = () => { if (applyDetail()) build(); };
 
 function toggle(label: string, key: 'showAnchors' | 'showFocus', onChange: () => void) {
   const wrap = document.createElement('label');
@@ -767,6 +769,8 @@ function layoutLabels() {
 viewer.onFrame = () => {
   if (labelled.length) layoutLabels();
   showTraceProgress();
+  // the ladder moves between builds: keep the gpu row honest as it does
+  if (viewer.pacing.rung !== shownRung || viewer.pacing.scale !== shownScale) redrawStats();
   const view = viewer.viewState();
   for (const follow of cameraFollowers) follow(view);
 };
@@ -903,7 +907,7 @@ function report(assembly: Assembly, ms: number, span: number) {
       .join('');
   };
   draw();
-  redrawStats = draw;
+  redrawStats = () => { shownRung = viewer.pacing.rung; shownScale = viewer.pacing.scale; draw(); };
 
   const token = ++connectivityToken;
   onConnectivity = ({ token: answered, bodies, floating }) => {
@@ -936,9 +940,13 @@ function gpuRow(): [string, string, string?] {
   const name = [a.vendor, a.architecture].filter(Boolean).join(' ') || 'unknown';
   if (!v) return ['gpu', a.fallback ? `${name}, software` : name];
   const slow = tierFor(v.msPerMpx) === 'fast';
-  const scale = v.scale < 1 ? `, drawn at ${Math.round(v.scale * 100)}%` : '';
-  return ['gpu', `${name}: ${v.msPerMpx.toFixed(0)} ms/Mpx${scale}`, slow ? 'warn' : 'hi'];
+  const { scale, rung } = viewer.pacing;
+  const at = scale < 1 ? `, drawn at ${Math.round(scale * 100)}%` : '';
+  // the rungs taken, named: what the frame is going without
+  const without = rung > 0 ? `, without ${RUNGS.slice(0, rung).join(', ')}` : '';
+  return ['gpu', `${name}: ${v.msPerMpx.toFixed(0)} ms/Mpx${at}${without}`, slow || rung > 0 ? 'warn' : 'hi'];
 }
+let shownRung = 0, shownScale = 1;
 
 viewer.setMaterial(state.metal, state.finish);
 build();

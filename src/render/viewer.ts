@@ -19,11 +19,11 @@ import type { Box3, Vec3 } from '../geom/types';
 import type { EnvPreset } from './env';
 import type { Film } from './post';
 import { Renderer, type InstanceGroup, type Quality, type RendererOptions, type RigLight, type TableName } from './renderer';
-import { median, startingScale, verdicts, type Verdict } from './calibrate';
+import { Ladder, median, startingScale, verdicts, type Verdict } from './calibrate';
 
 export { MAX_RIG_LIGHTS, emitterSamples, tableNames } from './renderer';
 export type { InstanceGroup, Quality, RendererOptions, RigLight, TableName } from './renderer';
-export { TIERS, tierFor, type Tier, type Verdict } from './calibrate';
+export { Ladder, RUNGS, TIERS, tierFor, type Economy, type Rung, type Tier, type Verdict } from './calibrate';
 export type { AdapterInfo } from '../gpu/context';
 
 export class Viewer {
@@ -47,15 +47,22 @@ export class Viewer {
   onFrame: (() => void) | null = null;
 
   /**
-   * Adaptive resolution. While the camera moves, frames are timed; if they
-   * cannot keep 30 a second the internal scale steps down, and steps back up
-   * when there is headroom. The user's render-scale slider is the ceiling.
+   * The ladder: the internal scale first, then what the frame gives up. Any
+   * run of consecutive frames is timed by its gaps; a still frame, drawn on
+   * its own, is fenced. Too slow and the ladder comes down; headroom and it
+   * climbs back. The user's render-scale slider and quality are the ceiling.
    */
-  private autoScale = 1;
+  private ladder = new Ladder();
+  /** The tessellation the ladder asks of the page, as a multiplier on its own: 1, or less. */
+  onDetail: ((factor: number) => void) | null = null;
   private lastFrameAt = 0;
   private frameMs = 16;
-  /** When the scale last stepped: each step reallocates the render targets, so steps are rationed. */
+  /** When the ladder last moved: each step reallocates the render targets, so steps are rationed. */
   private lastScaleStep = 0;
+  /** The still frame's fence: one at a time, and the buffers it copies through. */
+  private fenceBusy = false;
+  private fenceSrc: GPUBuffer | null = null;
+  private fenceDst: GPUBuffer | null = null;
   /**
    * What the display itself can do, measured on the ticks we draw nothing on.
    * Everything about pacing is judged against this rather than a number picked
@@ -98,10 +105,18 @@ export class Viewer {
     // a machine measured slow on an earlier visit opens at the size it settled
     // on then, not at full size and a stall
     this.verdict = verdicts.load(ctx.adapter.key);
-    if (this.verdict) this.autoScale = Math.min(1, Math.max(0.5, this.verdict.scale));
+    if (this.verdict) {
+      this.ladder = new Ladder(this.verdict.scale, this.verdict.rung);
+      this.renderer.setEconomy(this.ladder.economy);
+    }
     this.resize();
     this.loop();
   }
+
+  /** The ladder's position, for a page to show: the internal scale and how many rungs are taken. */
+  get pacing() { return { scale: this.ladder.scale, rung: this.ladder.rung, frameMs: this.frameMs, tickMs: this.tickMs }; }
+  /** What the page should multiply its tessellation detail by. */
+  get detailFactor() { return this.ladder.economy.detail; }
 
   /** The adapter, as far as the browser says. */
   get adapter() { return this.ctx.adapter; }
@@ -125,8 +140,8 @@ export class Viewer {
     // measured at full scale, whatever the scale was opened at, so one visit's
     // verdict is the same frame as the next's; a frame has a cost before its
     // first pixel, and a small frame would put that down to its pixels
-    const opened = this.autoScale;
-    this.autoScale = 1;
+    const opened = this.ladder.scale;
+    this.ladder.scale = 1;
     this.resize();
     const { device } = this.ctx;
     const src = device.createBuffer({ label: 'fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
@@ -152,14 +167,14 @@ export class Viewer {
       this.calibrating = false;
     }
     if (!timings.length) {
-      this.autoScale = opened;
+      this.ladder.scale = opened;
       this.resize();
       return this.verdict;
     }
     const mpx = this.renderer.renderPixels / 1e6;
     const msPerMpx = median(timings) / mpx;
-    this.autoScale = startingScale(msPerMpx, mpx, this.tickMs);
-    this.verdict = { key: this.ctx.adapter.key, msPerMpx, scale: this.autoScale, at: Date.now() };
+    this.ladder.scale = startingScale(msPerMpx, mpx, this.tickMs, Ladder.FLOOR);
+    this.verdict = { key: this.ctx.adapter.key, msPerMpx, scale: this.ladder.scale, rung: this.ladder.rung, at: Date.now() };
     verdicts.save(this.verdict);
     this.resize();
     this.renderer.requestRender();
@@ -280,6 +295,8 @@ export class Viewer {
 
   dispose() {
     cancelAnimationFrame(this.raf);
+    this.fenceSrc?.destroy();
+    this.fenceDst?.destroy();
     this.observer.disconnect();
     this.controls.remove();
     this.renderer.dispose();
@@ -297,7 +314,7 @@ export class Viewer {
     // however well they were multisampled, because each rendered pixel is
     // stretched over more than one on screen
     const budgeted = Math.max(Math.min(window.devicePixelRatio, Math.sqrt(budget / (cw * ch))), 1);
-    const dpr = Math.min(budgeted, 2) * this.renderScale * this.autoScale;
+    const dpr = Math.min(budgeted, 2) * this.renderScale * this.ladder.scale;
     const w = Math.max(1, Math.floor(cw * dpr));
     const h = Math.max(1, Math.floor(ch * dpr));
     this.ctx.canvas.width = w;
@@ -329,13 +346,14 @@ export class Viewer {
     const drew = this.renderer.render(() => this.ctx.context.getCurrentTexture().createView());
     if (!drew) return;
     this.frameCount++;
-    this.pace(moving);
+    if (!this.pace()) this.fenceStill();
     this.onFrame?.();
   };
 
   /**
-   * Time consecutive frames during interaction and move the internal scale to
-   * keep up with the display.
+   * Time consecutive frames by their gaps and move the ladder to keep up
+   * with the display. Returns whether this frame was one of a run; a frame
+   * on its own says nothing here, and is fenced instead.
    *
    * What counts as fast enough has to be the display's own cadence, not a
    * number chosen in advance. A frame gap is floored by the screen: on a sixty
@@ -344,35 +362,70 @@ export class Viewer {
    * one slow moment leaves the piece soft for the rest of the session. Both
    * thresholds are therefore multiples of what the idle ticks report.
    */
-  private pace(moving: boolean) {
+  private pace(): boolean {
     const now = performance.now();
     const gap = now - this.lastFrameAt;
     this.lastFrameAt = now;
     // only consecutive frames say anything; a gap after an idle spell does not
-    if (!moving || gap > 250) return;
+    if (gap > 250) return false;
     this.frameMs = this.frameMs * 0.8 + gap * 0.2;
     // a step swaps a few hundred megabytes of targets, so at most a few a second
-    if (now - this.lastScaleStep < 300) return;
+    if (now - this.lastScaleStep < 300) return true;
     const missing = this.tickMs * 1.5 + 6;
     const keepingUp = this.tickMs * 1.2;
-    if (this.frameMs > missing && this.autoScale > 0.5) {
-      // step by how far over budget the frame is, so a very slow frame drops straight to the floor
-      this.autoScale = Math.max(0.5, this.autoScale * Math.max(0.5, Math.sqrt(missing / this.frameMs)));
-      this.stepped(now);
-    } else if (this.frameMs < keepingUp && this.autoScale < 1) {
-      this.autoScale = Math.min(1, this.autoScale / 0.85);
-      this.stepped(now);
+    if (this.frameMs > missing) {
+      if (this.ladder.slower(now, this.frameMs / missing)) this.stepped(now);
+    } else if (this.frameMs < keepingUp) {
+      if (this.ladder.faster(now)) this.stepped(now);
     }
+    return true;
   }
 
-  /** After a step: new targets, and the scale written down so the next visit opens at it. */
+  /**
+   * A frame drawn on its own — the view still, a piece just rebuilt — has
+   * no neighbour to be timed against, so it is fenced: a copy of four bytes
+   * queued behind it and mapped, which resolves when the GPU has finished
+   * the frame. A still frame is allowed more than a moving one, since it is
+   * one frame and not a rate; over that and the ladder comes down, as it
+   * would for a slow run. Only one fence is in flight at a time, and a
+   * frame drawn while one is out goes unmeasured; so does one drawn while
+   * the page is hidden, whose fence would time the browser's throttling.
+   */
+  private fenceStill() {
+    // a hidden page's timers are throttled, and would time the throttle, not the frame
+    if (this.fenceBusy || this.calibrating || document.hidden) return;
+    const { device } = this.ctx;
+    this.fenceSrc ??= device.createBuffer({ label: 'still fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
+    this.fenceDst ??= device.createBuffer({ label: 'still fence dst', size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
+    this.fenceBusy = true;
+    const t0 = performance.now();
+    const encoder = device.createCommandEncoder({ label: 'still fence' });
+    encoder.copyBufferToBuffer(this.fenceSrc, 0, this.fenceDst, 0, 4);
+    device.queue.submit([encoder.finish()]);
+    this.fenceDst.mapAsync(GPUMapMode.READ).then(() => {
+      this.fenceDst?.unmap();
+      this.fenceBusy = false;
+      const ms = performance.now() - t0;
+      const now = performance.now();
+      if (document.hidden || now - this.lastScaleStep < 300) return;
+      const budget = Viewer.STILL_BUDGET;
+      if (ms > budget && this.ladder.slower(now, ms / budget)) this.stepped(now);
+    }, () => { this.fenceBusy = false; });
+  }
+
+  /** What a frame at rest may take before the ladder comes down for it. */
+  static readonly STILL_BUDGET = 250;
+
+  /** After a step: the renderer told, new targets, the page asked for its detail if that changed, and the position written down for the next visit. */
   private stepped(now: number) {
     this.frameMs = this.tickMs;
     this.lastScaleStep = now;
+    const was = this.renderer.setEconomy(this.ladder.economy);
     this.resize();
     if (this.verdict) {
-      this.verdict = { ...this.verdict, scale: this.autoScale, at: Date.now() };
+      this.verdict = { ...this.verdict, scale: this.ladder.scale, rung: this.ladder.rung, at: Date.now() };
       verdicts.save(this.verdict);
     }
+    if (was.detail !== this.ladder.economy.detail) this.onDetail?.(this.ladder.economy.detail);
   }
 }

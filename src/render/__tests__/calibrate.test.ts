@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import { SLOW_MS_PER_MPX, TIERS, VERDICT_TTL, median, startingScale, tierFor, verdicts } from '../calibrate';
+import { Ladder, RUNGS, SLOW_MS_PER_MPX, TIERS, VERDICT_TTL, median, startingScale, tierFor, verdicts } from '../calibrate';
 
 class MemoryStorage implements Storage {
   private map = new Map<string, string>();
@@ -109,5 +109,75 @@ describe('verdicts', () => {
     verdicts.save(v);
     verdicts.clear();
     expect(verdicts.load(v.key, v.at + 1)).toBeNull();
+  });
+});
+
+describe('Ladder', () => {
+  const { FLOOR, RESET, FULL_FOR } = Ladder;
+
+  it('comes down through the scale first, to the floor', () => {
+    const l = new Ladder();
+    expect(l.slower(0, 4)).toBe('scale');
+    expect(l.scale).toBeCloseTo(0.5);
+    expect(l.rung).toBe(0);
+    expect(l.slower(400, 1.2)).toBe('scale');
+    expect(l.scale).toBeLessThan(0.5);
+    for (let t = 800; l.scale > FLOOR; t += 400) l.slower(t, 2);
+    expect(l.scale).toBe(FLOOR);
+    expect(l.rung).toBe(0);
+  });
+
+  it('then takes the rungs in order, resetting the scale to the middle each time', () => {
+    const l = new Ladder(FLOOR);
+    expect(l.slower(0, 2)).toBe('rung');
+    expect(l.rung).toBe(1);
+    expect(l.scale).toBe(RESET);
+    expect(l.economy).toEqual({ supersample: false, shadowTaps: 1, contact: true, detail: 1 });
+    l.scale = FLOOR;
+    l.slower(1000, 2);
+    expect(l.economy.shadowTaps).toBe(0.25);
+    l.scale = FLOOR;
+    l.slower(2000, 2);
+    expect(l.economy.contact).toBe(false);
+    l.scale = FLOOR;
+    expect(l.slower(3000, 2)).toBe('rung');
+    expect(l.economy.detail).toBe(0.7);
+    expect(l.rung).toBe(RUNGS.length);
+    l.scale = FLOOR;
+    // the bottom: nothing more to give
+    expect(l.slower(4000, 2)).toBeNull();
+  });
+
+  it('comes back up through the scale to full before it gives a rung back', () => {
+    const l = new Ladder(FLOOR, 1);
+    let t = 0;
+    while (l.scale < 1) { expect(l.faster(t)).toBe('scale'); t += 300; }
+    expect(l.rung).toBe(1);
+    // at full, but not for long enough
+    expect(l.faster(t + 100)).toBeNull();
+    expect(l.faster(t + FULL_FOR + 1)).toBe('rung');
+    expect(l.rung).toBe(0);
+    expect(l.scale).toBe(RESET);
+    // nothing above the top
+    l.scale = 1;
+    expect(l.faster(t + 2 * FULL_FOR + 10_000)).toBeNull();
+  });
+
+  it('holds a rung it has just taken, for twice as long each time', () => {
+    const l = new Ladder(FLOOR);
+    l.slower(0, 2);                  // rung 1 at t=0, held 2 s
+    l.scale = 1; l.faster(0);        // full from t=0
+    expect(l.faster(FULL_FOR + 1)).toBeNull();       // inside the hold
+    expect(l.faster(2001)).toBe('rung');            // past it, and full long enough
+    l.scale = FLOOR;
+    l.slower(2100, 2);               // taken again: held 4 s now
+    l.scale = 1; l.faster(2100);
+    expect(l.faster(2100 + 2500)).toBeNull();
+    expect(l.faster(2100 + 4001)).toBe('rung');
+  });
+
+  it('starts where a kept verdict left it, within bounds', () => {
+    expect(new Ladder(0.1, 99)).toMatchObject({ scale: FLOOR, rung: RUNGS.length });
+    expect(new Ladder(2, -1)).toMatchObject({ scale: 1, rung: 0 });
   });
 });

@@ -49,8 +49,16 @@ struct Frame {
   aoOn: f32,
   // the studio rig: how many of the lights below are lit
   rigCount: f32,
+  // the soft shadows' taps as a fraction of the full count: 1 as designed,
+  // less on a machine that cannot afford them (the rig array below is
+  // aligned to sixteen bytes, so this sits in what would have been padding)
+  shadowTaps: f32,
   rig: array<RigLight, 3>,
 };
+// the tap counts, brought to the frame's fraction but never below a few
+fn tapCount(full: i32, floor: i32) -> i32 {
+  return max(floor, i32(round(f32(full) * frame.shadowTaps)));
+}
 /**
  * A light of the rig: a disc like the key, with its own view of the scene
  * for its shadow, kept in its own layer of the rig's shadow array.
@@ -160,8 +168,9 @@ fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
   let search = clamp(0.5 * light.radius * (major - nearest) / (nearest * major), texelUv * 2.0, 0.25);
   var blockers = 0.0;
   var blockerMajor = 0.0;
-  for (var i = 0; i < 12; i++) {
-    let at = clamp(uv + shadowTap(i, 12, phase) * search, vec2f(0.0), vec2f(1.0));
+  let searchTaps = tapCount(12, 4);
+  for (var i = 0; i < searchTaps; i++) {
+    let at = clamp(uv + shadowTap(i, searchTaps, phase) * search, vec2f(0.0), vec2f(1.0));
     let stored = textureLoad(localShadows, vec2i(at * (size - 1.0)), slice, 0);
     if (stored < test) {
       blockers += 1.0;
@@ -172,10 +181,11 @@ fn localShadowAt(light: Light, p: vec3f, n: vec3f) -> f32 {
   let mb = blockerMajor / blockers;
   let radius = max(0.5 * light.radius * (major - mb) / (mb * major), texelUv * 1.5);
   var lit = 0.0;
-  for (var i = 0; i < 16; i++) {
-    lit += textureSampleCompareLevel(localShadows, shadowSampler, uv + shadowTap(i, 16, phase) * radius, slice, test);
+  let filterTaps = tapCount(16, 4);
+  for (var i = 0; i < filterTaps; i++) {
+    lit += textureSampleCompareLevel(localShadows, shadowSampler, uv + shadowTap(i, filterTaps, phase) * radius, slice, test);
   }
-  return lit / 16.0;
+  return lit / f32(filterTaps);
 }
 @group(0) @binding(1) var envSpecular: texture_cube<f32>;
 @group(0) @binding(2) var envBrdf: texture_2d<f32>;
@@ -322,8 +332,9 @@ fn discShadow(world: vec3f, n: vec3f, viewProj: mat4x4f, size: f32, layer: i32) 
     let search = max(spread * depth, texel.x * 2.0);
     var blockers = 0.0;
     var blockerDepth = 0.0;
-    for (var i = 0; i < 12; i++) {
-      let at = uv + vogel(i, 12, phase) * search;
+    let searchTaps = tapCount(12, 4);
+    for (var i = 0; i < searchTaps; i++) {
+      let at = uv + vogel(i, searchTaps, phase) * search;
       let d = shadowLoad(layer, vec2i(clamp(at, vec2f(0.0), vec2f(1.0)) * (dims - 1.0)));
       if (d < depth) { blockers += 1.0; blockerDepth += d; }
     }
@@ -332,10 +343,11 @@ fn discShadow(world: vec3f, n: vec3f, viewProj: mat4x4f, size: f32, layer: i32) 
     radius = max(vec2f(spread * gap), texel * 1.5);
   }
   var lit = 0.0;
-  for (var i = 0; i < 24; i++) {
-    lit += shadowCompare(layer, uv + vogel(i, 24, phase) * radius, depth);
+  let filterTaps = tapCount(24, 6);
+  for (var i = 0; i < filterTaps; i++) {
+    lit += shadowCompare(layer, uv + vogel(i, filterTaps, phase) * radius, depth);
   }
-  return lit / 24.0;
+  return lit / f32(filterTaps);
 }
 
 // the key's diffuse: a disc lights a little past its own horizon, so the

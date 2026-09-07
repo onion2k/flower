@@ -26,6 +26,7 @@ import { computeWear } from '../mesh/wear';
 import { engraveCoords } from '../mesh/types';
 import { ENGRAVING_PATTERNS, type Engraving, type Inscription } from '../parts/types';
 import { CushionBake, CUSHION_SIZE } from './cushion';
+import { economyAt, type Economy } from './calibrate';
 import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey, type Rasteriser } from './glyphs';
 import { bakeEnvironment, filterCube, skyDistribution, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
@@ -45,7 +46,9 @@ const MATERIAL_STRIDE = 512;
 /** Bytes of each material record that the shader reads. */
 const MATERIAL_SIZE = 272;
 /** The frame uniform: 272 bytes of scene, then the rig's three lights at 96 each. */
-const FRAME_SIZE = 272 + 3 * 96;
+// the frame's fixed fields, padded to the rig array's alignment, then the rig
+const RIG_OFFSET = 72;
+const FRAME_SIZE = RIG_OFFSET * 4 + 3 * 96;
 const RIG_SHADOW_SIZE = 1024;
 export const MAX_RIG_LIGHTS = 3;
 /** The reflection probe: face size and prefilter levels. */
@@ -1365,7 +1368,7 @@ export class Renderer {
     this.camera.aspect = w / h;
     // final supersamples only once the view is still: four times the pixels
     // is for looking at, not for orbiting through
-    const ss = this.quality === 'final' && !this.moving && w * h * Renderer.SUPERSAMPLE ** 2 <= Renderer.PIXEL_BUDGET * 2 ? Renderer.SUPERSAMPLE : 1;
+    const ss = this.quality === 'final' && !this.moving && this.economy.supersample && w * h * Renderer.SUPERSAMPLE ** 2 <= Renderer.PIXEL_BUDGET * 2 ? Renderer.SUPERSAMPLE : 1;
     this.post.resize(w, h, ss);
     this.ao.resize(this.post.renderWidth, this.post.renderHeight);
     // the occlusion texture is new: the frame group must point at it
@@ -1435,10 +1438,11 @@ export class Renderer {
     frame[63] = this.mmPerUnit;
     frame[64] = this.post.renderWidth;
     frame[65] = this.post.renderHeight;
-    frame[66] = this.contact > 0 && this.groups.length ? 1 : 0;
+    frame[66] = this.contactDrawn ? 1 : 0;
     frame[67] = this.rig.length;
+    frame[68] = this.economy.shadowTaps;
     this.rig.forEach((l, i) => {
-      const o = 68 + i * 24;
+      const o = RIG_OFFSET + i * 24;
       const ce = Math.cos(l.elevation);
       const d: [number, number, number] = [Math.cos(l.azimuth) * ce, Math.sin(l.azimuth) * ce, Math.sin(l.elevation)];
       frame.set(d, o);
@@ -1557,7 +1561,7 @@ export class Renderer {
       }
     }
 
-    if (this.contact > 0 && this.groups.length && this.ao.depthView) {
+    if (this.contactDrawn && this.ao.depthView) {
       // the piece's depth alone, for the contact occlusion
       const dp = encoder.beginRenderPass({
         label: 'contact depth', colorAttachments: [],
@@ -1929,6 +1933,22 @@ export class Renderer {
   private dummyGroundView: GPUTextureView;
   private contact = 1;
   setContact(v: number) { this.contact = v; this.ao.strength = v; this.dirty = true; }
+  /** Whether the contact pass is drawn this frame: asked for, something to draw, and not given up. */
+  private get contactDrawn() { return this.contact > 0 && this.economy.contact && this.groups.length > 0; }
+
+  /**
+   * What the frame gives up on a machine that cannot afford all of it: the
+   * viewer's ladder sets this from the frames it times. Each field is a
+   * saving the shader or the passes honour at once, with no pipeline
+   * rebuilt; the detail is the page's to act on.
+   */
+  private economy: Economy = economyAt(0);
+  setEconomy(e: Economy): Economy {
+    const was = this.economy;
+    this.economy = e;
+    if (e.supersample !== was.supersample) this.applySize(); else this.dirty = true;
+    return was;
+  }
 
   /**
    * Where the probe stands: above the piece's top by a little, at its

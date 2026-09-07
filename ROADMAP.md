@@ -992,13 +992,57 @@ triangles against 58.9k), `fine` is final at full detail (112k), `auto`
 is whichever the machine measures itself into. A change of detail casts
 every man again.
 
-Not yet done, and the rest of the plan: the pacer still runs only while
-the camera moves, and moves only pixels. A still frame that takes a second
-steps nothing down, and final's supersample at rest is gated on the pixel
-budget alone. The next slice is a ladder under the pacer — supersample,
-the contact pass, the rig's shadows, the probe's and the key's sizes, the
-local shadow count, and last the detail — with hysteresis, and a floor
-below 0.5 for a machine that needs it.
+### The ladder
+
+The pacer moved only pixels, only while the camera moved, and stopped at
+half. Before choosing what else a frame could give up, the frame was
+measured — the chess sketch at 1.8 Mpx on the Mac mini, fenced, the median
+of six:
+
+| | ms/Mpx |
+| --- | --- |
+| as drawn | 14.9 |
+| contact occlusion off | 15.1 (nothing) |
+| key's shadow hard (no blocker search) | 11.1 |
+| key off | 8.5 |
+| rosette, as drawn | 6.2 |
+
+And three sizes of the same frame put the fixed cost at 8–9 ms for the
+chess sketch's 1.3M triangles against 5.5 for the rosette's 4.5k: the
+triangles are the floor, the soft shadow is nearly half of what a pixel
+costs, and the contact pass is free. So the rungs, in the order they are
+taken once the scale has reached its floor of 0.35
+(`render/calibrate.ts`, `Ladder`, `RUNGS`):
+
+1. **Supersample** off — four times the pixels of a final frame at rest.
+2. **Shadows** at a quarter of their taps — the key's, the rig's and the
+   local lights' blocker search and filter, from a `shadowTaps` fraction
+   in the frame uniform (it sits in what was padding before the rig
+   array), never below four. The rosette went from 6.2 to 3.8 ms/Mpx.
+3. **Contact** pass off — one pass over every triangle, for the vertex
+   bound machine rather than this one.
+4. **Detail** at 0.7 of the page's own — the triangles themselves, which
+   the page recasts (`viewer.onDetail`, `viewer.detailFactor`): the
+   rosette from 4,468 unique triangles to 2,888, the chess game's set
+   from 58.9k to 43.7k.
+
+Going down is quick — a frame over its budget steps the scale by the
+square root of how far, and at the floor takes a rung and sets the scale
+back to 0.7 for the frames to correct from. Coming up is guarded twice: a
+rung is given back only after the scale has stood at full for 1.5 s, and
+after a hold that doubles each time a rung is taken, from 2 s to 64 s, so
+a machine on the edge settles low rather than flickering. Any run of
+consecutive frames is timed by its gaps as before, whether the camera or
+the men are what moves; a frame drawn on its own — the view still, a
+piece just rebuilt — is fenced, and over 250 ms brings the ladder down
+too. A hidden page fences nothing, since its timers would time the
+browser's throttling. The position, scale and rung, is kept with the
+verdict.
+
+Watched on the Mac mini with the still budget forced to nothing: scale
+1 → 0.5 → 0.35, then supersample, shadows, contact, detail, each with the
+scale reset to 0.7 and brought back to the floor by the next frame; and
+with frames driven at 10 ms, back up the same way, a rung every 2.4 s.
 
 ## Open, from the first phase
 
