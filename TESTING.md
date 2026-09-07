@@ -1,7 +1,5 @@
 # Testing
 
-[![Check](https://github.com/onion2k/flower/actions/workflows/check.yml/badge.svg)](https://github.com/onion2k/flower/actions/workflows/check.yml)
-
 `npm test` runs the suite once; `npm run test:watch` keeps it open. Vitest,
 configured in `vitest.config.ts` to pick up `src/**/*.test.ts`. Tests live
 next to what they cover, in a `__tests__` directory alongside the module.
