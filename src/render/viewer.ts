@@ -72,6 +72,8 @@ export class Viewer {
   private lastTickAt = 0;
   /** A frame smaller than this is not measured: its fixed cost would pass for a cost per pixel. */
   static readonly MIN_CALIBRATION_PIXELS = 200_000;
+  /** Once the calibration's frames have taken this long together, one measured frame is verdict enough. */
+  static readonly CALIBRATION_MS = 1500;
   /** What was measured of this GPU, here or on an earlier visit; null until either. */
   verdict: Verdict | null = null;
   /** While frames are being timed, the loop stands aside. */
@@ -107,8 +109,13 @@ export class Viewer {
     this.verdict = verdicts.load(ctx.adapter.key);
     if (this.verdict) {
       this.ladder = new Ladder(this.verdict.scale, this.verdict.rung);
-      this.renderer.setEconomy(this.ladder.economy);
+    } else if (ctx.adapter.fallback) {
+      // a software renderer, and nothing measured yet: it is slow before it
+      // is measured, so it starts low and climbs if it can. SwiftShader
+      // measured 2800 ms/Mpx, two hundred times a desktop
+      this.ladder = new Ladder(Ladder.FLOOR, 2);
     }
+    this.renderer.setEconomy(this.ladder.economy);
     this.resize();
     this.loop();
   }
@@ -135,7 +142,7 @@ export class Viewer {
     // a frame has a cost of its own before its first pixel, so a canvas that
     // has no size yet — a pane not laid out, a tab not shown — would measure
     // the overhead and call it the cost per pixel; say nothing until there is one
-    if (this.calibrating || !this.renderer.hasScene || this.renderer.renderPixels < Viewer.MIN_CALIBRATION_PIXELS) return this.verdict;
+    if (this.calibrating || !this.renderer.hasScene) return this.verdict;
     this.calibrating = true;
     // measured at full scale, whatever the scale was opened at, so one visit's
     // verdict is the same frame as the next's; a frame has a cost before its
@@ -143,12 +150,22 @@ export class Viewer {
     const opened = this.ladder.scale;
     this.ladder.scale = 1;
     this.resize();
+    if (this.renderer.renderPixels < Viewer.MIN_CALIBRATION_PIXELS) {
+      this.ladder.scale = opened;
+      this.resize();
+      this.calibrating = false;
+      return this.verdict;
+    }
     const { device } = this.ctx;
     const src = device.createBuffer({ label: 'fence src', size: 4, usage: GPUBufferUsage.COPY_SRC });
     const dst = device.createBuffer({ label: 'fence dst', size: 4, usage: GPUBufferUsage.COPY_DST | GPUBufferUsage.MAP_READ });
     const timings: number[] = [];
     try {
+      let spent = 0;
       for (let i = 0; i <= frames; i++) {
+        // enough: a machine that takes seconds a frame has said what it is,
+        // and the page should not be held for the rest of the sample
+        if (timings.length && spent > Viewer.CALIBRATION_MS) break;
         this.renderer.requestRender();
         const t0 = performance.now();
         const drew = this.renderer.render(() => this.ctx.context.getCurrentTexture().createView());
@@ -157,7 +174,9 @@ export class Viewer {
         device.queue.submit([encoder.finish()]);
         await dst.mapAsync(GPUMapMode.READ);
         dst.unmap();
-        if (drew && i > 0) timings.push(performance.now() - t0);
+        const took = performance.now() - t0;
+        spent += took;
+        if (drew && i > 0) timings.push(took);
         // no animation frame is waited on between: a page opened in a
         // background tab gets none, and would never finish measuring
       }
