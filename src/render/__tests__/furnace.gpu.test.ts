@@ -37,6 +37,7 @@ describe('the furnace', () => {
   beforeAll(async () => {
     gpu = await createDevice();
     renderer = new Renderer(gpu);
+    await renderer.ready;
     target = gpu.device.createTexture({ size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     const r = compile('part b = bead(radius: 6, point: 3) in silver satin\nform f {\n  place b at (0, 0, 3)\n}\n');
     renderer.setSize(SIZE, SIZE);

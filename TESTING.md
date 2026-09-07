@@ -50,7 +50,9 @@ Roughly bottom-up, from the math to the DOM:
   the localStorage-backed sketch store; and `createEditor` itself under
   jsdom.
 
-A GPU test that reads a frame back waits on `renderer.pending`, not on
+A GPU test awaits `renderer.ready` after constructing a renderer: the
+pipelines compile off the main thread, and `render` draws nothing until
+the last is in. A GPU test that reads a frame back waits on `renderer.pending`, not on
 a count of frames: an occlusion bake lands in chunks with a gap between
 each in which nothing is dirty, and `pending` now covers a bake still
 landing, so a loop that stops when it goes false has the whole bake and

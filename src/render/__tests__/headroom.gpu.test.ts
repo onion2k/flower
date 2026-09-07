@@ -31,6 +31,7 @@ describe('headroom', () => {
     const l = gpu.device.limits;
     console.log(`limits: maxBufferSize ${l.maxBufferSize / 1e6} MB, maxStorageBufferBindingSize ${l.maxStorageBufferBindingSize / 1e6} MB, maxUniformBufferBindingSize ${l.maxUniformBufferBindingSize / 1e3} kB`);
     renderer = new Renderer(gpu);
+    await renderer.ready;
     renderer.setSize(SIZE, SIZE);
     target = gpu.device.createTexture({ label: 'headroom target', size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
     renderer.setEnvironment('studio');

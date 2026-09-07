@@ -120,6 +120,7 @@ export class Viewer {
   }
 
   private constructor(ctx: GpuContext, host: HTMLElement, opts: RendererOptions) {
+    this.firstFrame = new Promise((resolve) => { this.firstFrameLanded = resolve; });
     this.ctx = ctx;
     this.host = host;
     host.appendChild(ctx.canvas);
@@ -181,6 +182,12 @@ export class Viewer {
     // has no size yet — a pane not laid out, a tab not shown — would measure
     // the overhead and call it the cost per pixel; say nothing until there is one
     if (this.calibrating || !this.renderer.hasScene) return this.verdict;
+    // nothing can be timed until the shaders have compiled and the first
+    // frame has landed: measured before it, the frames would queue behind
+    // the bakes' chunks and hold the loop's own first frame back
+    await this.renderer.ready;
+    await this.firstFrame;
+    if (this.calibrating) return this.verdict;
     this.calibrating = true;
     // measured at full scale, whatever the scale was opened at, so one visit's
     // verdict is the same frame as the next's; a frame has a cost before its
@@ -417,12 +424,16 @@ export class Viewer {
    * shows a spinner for, and `onFirstFrame` fires when it has landed.
    */
   onFirstFrame: ((ms: number) => void) | null = null;
+  /** Resolves once the first frame has landed; what the calibration waits on. */
+  private readonly firstFrame: Promise<void>;
+  private firstFrameLanded: () => void = () => {};
   private fenceFirst() {
     this.fence().then((ms) => {
       performance.mark('viewer:first-frame');
       this.note(`first frame landed: ${ms.toFixed(0)} ms after its submit (bakes and, on some drivers, the shaders)`);
+      this.firstFrameLanded();
       this.onFirstFrame?.(ms);
-    }, () => {});
+    }, () => { this.firstFrameLanded(); });
   }
 
   /** Queue four bytes behind what is submitted and resolve, with the time taken, when the GPU has done it. */

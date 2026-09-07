@@ -131,6 +131,7 @@ describe('the renderer, headless', () => {
     console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); consoleError(...args); };
     gpu = await createDevice();
     renderer = new Renderer(gpu);
+    await renderer.ready;
     target = gpu.device.createTexture({ label: 'test target', size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   });
 
@@ -367,6 +368,7 @@ describe('the renderer in other units', () => {
     console.error = (...args: unknown[]) => { errors.push(args.map(String).join(' ')); consoleError(...args); };
     gpu = await createDevice();
     renderer = new Renderer(gpu, { mmPerUnit: 1000 });
+    await renderer.ready;
     target = gpu.device.createTexture({ label: 'metre target', size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   });
 

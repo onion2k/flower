@@ -1087,6 +1087,38 @@ first frame lands 4 s after its submit. Deferring the probe to the
 second frame was tried and moved that by nothing, so it was not
 kept; what the laptop's report says will decide what is next.
 
+### The pipelines compiled together
+
+The worst case for the laptop, assumed rather than measured: a driver
+that compiles every shader behind the first frame, one after another.
+Every pipeline in the renderer was made with `createRenderPipeline`,
+which the browser compiles on the GPU process's own thread in the
+order asked, and on D3D12 each is HLSL through the shader compiler.
+Twenty-nine of them, across seven files, are now asked for with the
+async call, which compiles them on a pool of threads at once, and
+`Renderer.ready` resolves when the last is in — the renderer's nine,
+the film's six, the contact occlusion's two, the cushion's, the
+environment's six and the occlusion bake's three; the tracer's, made
+when tracing is first asked for, compiles the same way. Until then
+`render` draws nothing and the frame stays due, the film's bind groups
+follow its `ready`, and the bakes wait for theirs only the first time:
+once compiled they encode and submit before returning, as a caller that
+draws with the environment straight after relies on — the first
+version deferred them always, and a frame submitted right after
+`setEnvironment` saw a black sky, which two GPU tests caught.
+
+On the Mac the first frame lands 21 ms after its submit where it landed
+75, and the chess set's 33 where it landed 200; the page's first frame
+is at 0.16 s where it was 0.28. SwiftShader compiles the lot in 1.2 s
+and submits its first frame at 2.5 s — and that frame lands fifteen
+seconds later, behind the key's shadow, the probe's twelve views and
+the bake's first chunk, which on a software renderer is what a first
+frame costs. So the compile is out of the way, and what is left on the
+slowest machine is the bakes ahead of the first frame; their budgets
+following the verdict is still the open item. The calibration waits
+for the first frame now as well as the pipelines: started the moment
+they compiled, its frames queued in front of the loop's own.
+
 ### The report
 
 `viewer.report()` is everything the viewer knows about the machine, as

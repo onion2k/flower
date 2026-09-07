@@ -21,6 +21,7 @@ describe('shadows from the piece\'s own lights', () => {
   beforeAll(async () => {
     gpu = await createDevice();
     renderer = new Renderer(gpu);
+    await renderer.ready;
     target = gpu.device.createTexture({ size: [SIZE, SIZE], format: gpu.format, usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC });
   });
   afterAll(() => { renderer.dispose(); target.destroy(); gpu.device.destroy(); });

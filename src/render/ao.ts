@@ -148,8 +148,11 @@ export class ContactOcclusion {
   view: GPUTextureView | null = null;
   private raw: GPUTexture | null = null;
   private blurred: GPUTexture | null = null;
-  private aoPipe: GPURenderPipeline;
-  private blurPipe: GPURenderPipeline;
+  // assigned as each compiles; nothing here runs before `ready`
+  private aoPipe!: GPURenderPipeline;
+  private blurPipe!: GPURenderPipeline;
+  /** Resolves when both pipelines have compiled. */
+  readonly ready: Promise<void>;
   private params: GPUBuffer;
   private sampler: GPUSampler;
   private width = 0;
@@ -162,14 +165,16 @@ export class ContactOcclusion {
     const { device } = ctx;
     const make = (code: string, label: string) => {
       const module = shader(device, code, label);
-      return device.createRenderPipeline({
+      return device.createRenderPipelineAsync({
         label, layout: 'auto',
         vertex: { module, entryPoint: 'vsFullscreen' },
         fragment: { module, entryPoint: 'fsMain', targets: [{ format: 'r8unorm' }] },
       });
     };
-    this.aoPipe = make(AO, 'contact occlusion');
-    this.blurPipe = make(BLUR, 'contact occlusion blur');
+    this.ready = Promise.all([
+      make(AO, 'contact occlusion').then((p) => { this.aoPipe = p; }),
+      make(BLUR, 'contact occlusion blur').then((p) => { this.blurPipe = p; }),
+    ]).then(() => {});
     this.params = device.createBuffer({ label: 'ao params', size: 48, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
   }

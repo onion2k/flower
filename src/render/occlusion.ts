@@ -160,9 +160,11 @@ interface Pipelines {
   ground: GPURenderPipeline;
 }
 
-const pipelines = new WeakMap<GPUDevice, Pipelines>();
+const pipelines = new WeakMap<GPUDevice, Promise<Pipelines>>();
+const compiled = new WeakMap<GPUDevice, Pipelines>();
 
-function getPipelines(device: GPUDevice): Pipelines {
+/** The bake's pipelines, compiled off the main thread once per device and awaited before the first chunk. */
+function getPipelines(device: GPUDevice): Promise<Pipelines> {
   let p = pipelines.get(device);
   if (p) return p;
   // the direction slot is addressed by dynamic offset, so every layout that
@@ -186,7 +188,7 @@ function getPipelines(device: GPUDevice): Pipelines {
   });
 
   const depthModule = shader(device, DEPTH, 'occlusion depth');
-  const depth = device.createRenderPipeline({
+  const depth = device.createRenderPipelineAsync({
     label: 'occlusion depth',
     layout: device.createPipelineLayout({ bindGroupLayouts: [dirLayout] }),
     vertex: {
@@ -202,13 +204,13 @@ function getPipelines(device: GPUDevice): Pipelines {
     primitive: { topology: 'triangle-list', cullMode: 'none' },
     depthStencil: { format: 'depth32float', depthWriteEnabled: true, depthCompare: 'less' },
   });
-  const accumulate = device.createComputePipeline({
+  const accumulate = device.createComputePipelineAsync({
     label: 'occlusion accumulate',
     layout: device.createPipelineLayout({ bindGroupLayouts: [dirDepthLayout, groupLayout] }),
     compute: { module: shader(device, ACCUMULATE, 'occlusion accumulate'), entryPoint: 'main' },
   });
   const groundModule = shader(device, GROUND, 'occlusion ground');
-  const ground = device.createRenderPipeline({
+  const ground = device.createRenderPipelineAsync({
     label: 'occlusion ground',
     layout: device.createPipelineLayout({ bindGroupLayouts: [groundLayout] }),
     vertex: { module: groundModule, entryPoint: 'vsFullscreen' },
@@ -223,7 +225,11 @@ function getPipelines(device: GPUDevice): Pipelines {
       }],
     },
   });
-  p = { depth, accumulate, ground };
+  p = Promise.all([depth, accumulate, ground]).then(([depth, accumulate, ground]) => {
+    const all = { depth, accumulate, ground };
+    compiled.set(device, all);
+    return all;
+  });
   pipelines.set(device, p);
   return p;
 }
@@ -231,7 +237,7 @@ function getPipelines(device: GPUDevice): Pipelines {
 export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: OcclusionOptions = {}): Occlusion | null {
   if (!groups.length) return null;
   const { device } = ctx;
-  const pipes = getPipelines(device);
+  const pipesReady = getPipelines(device);
 
   const directions = opts.directions ?? 256;
   const depthSize = opts.depthSize ?? 2048;
@@ -299,49 +305,6 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
   const discIndex = bufferFrom(device, disc.indices, GPUBufferUsage.INDEX);
   const discInstance = bufferFrom(device, new Float32Array([1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1, 0, 0, 0, 0, 1]), GPUBufferUsage.VERTEX);
 
-  // --- bind groups ---
-  const depthView = depthTex.createView();
-  const dirBind = device.createBindGroup({
-    layout: pipes.depth.getBindGroupLayout(0),
-    entries: [{ binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } }],
-  });
-  const accDirBind = device.createBindGroup({
-    layout: pipes.accumulate.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } },
-      { binding: 1, resource: depthView },
-    ],
-  });
-  const paramBuffers: GPUBuffer[] = [];
-  const groupBinds = groups.map((g, k) => {
-    const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-    const vertexCount = g.mesh.positions.length / 3;
-    const instanceCount = g.matrices.length / 16;
-    device.queue.writeBuffer(params, 0, new Uint32Array([bases[k], vertexCount, instanceCount, 0]));
-    device.queue.writeBuffer(params, 16, new Float32Array([normalOffset, depthBias, depthSize, 0]));
-    paramBuffers.push(params);
-    return device.createBindGroup({
-      layout: pipes.accumulate.getBindGroupLayout(1),
-      entries: [
-        { binding: 0, resource: { buffer: g.position } },
-        { binding: 1, resource: { buffer: g.normal } },
-        { binding: 2, resource: { buffer: g.instance } },
-        { binding: 3, resource: { buffer: lookup } },
-        { binding: 4, resource: { buffer: params } },
-      ],
-    });
-  });
-  const groundParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
-  device.queue.writeBuffer(groundParams, 0, new Float32Array([cx, cy, groundZ, groundRadius, normalOffset, depthBias, depthSize, 0]));
-  const groundBind = device.createBindGroup({
-    layout: pipes.ground.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } },
-      { binding: 1, resource: depthView },
-      { binding: 2, resource: { buffer: groundParams } },
-    ],
-  });
-
   // --- the bake: for every direction, depth, then splat, then ground ---
   //
   // Submitted in chunks rather than as one command buffer. The GPU driver
@@ -352,57 +315,106 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
   // usable answer, and a bake that is superseded stops at the next chunk.
   const drawnTriangles = groups.reduce((n, g) => n + (g.mesh.indices.length / 3) * (g.matrices.length / 16), 0);
   const chunk = Math.max(1, Math.min(32, Math.floor(TRIANGLE_BUDGET / Math.max(drawnTriangles, 1))));
-  const groundView = ground.createView();
   let cancelled = false;
 
-  const encodeDirection = (encoder: GPUCommandEncoder, i: number) => {
-    const d = dirs[i];
-    const offset = [i * DIR_STRIDE];
-
-    const depthPass = encoder.beginRenderPass({
-      colorAttachments: [],
-      depthStencilAttachment: { view: depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+  // --- bind groups and the encoding of one direction, once the pipelines have compiled ---
+  const paramBuffers: GPUBuffer[] = [];
+  let groundParams: GPUBuffer | null = null;
+  const depthView = depthTex.createView();
+  const groundView = ground.createView();
+  const prepare = (pipes: Pipelines) => {
+  // --- bind groups ---
+    const dirBind = device.createBindGroup({
+      layout: pipes.depth.getBindGroupLayout(0),
+      entries: [{ binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } }],
     });
-    depthPass.setPipeline(pipes.depth);
-    depthPass.setBindGroup(0, dirBind, offset);
-    for (const g of groups) {
-      if (g.dynamic) continue;
-      depthPass.setVertexBuffer(0, g.position);
-      depthPass.setVertexBuffer(1, g.instance);
-      depthPass.setIndexBuffer(g.index, 'uint32');
-      depthPass.drawIndexed(g.mesh.indices.length, g.matrices.length / 16);
-    }
-    if (d[2] > 0) {
-      // the disc only occludes from above; from below it is the table's underside
-      depthPass.setVertexBuffer(0, discPosition);
-      depthPass.setVertexBuffer(1, discInstance);
-      depthPass.setIndexBuffer(discIndex, 'uint32');
-      depthPass.drawIndexed(disc.indices.length, 1);
-    }
-    depthPass.end();
-
-    const compute = encoder.beginComputePass();
-    compute.setPipeline(pipes.accumulate);
-    compute.setBindGroup(0, accDirBind, offset);
-    groups.forEach((g, k) => {
-      if (g.dynamic) return;
-      compute.setBindGroup(1, groupBinds[k]);
-      const count = (g.mesh.positions.length / 3) * (g.matrices.length / 16);
-      const workgroups = Math.ceil(count / WORKGROUP);
-      compute.dispatchWorkgroups(Math.min(workgroups, MAX_WORKGROUPS), Math.ceil(workgroups / MAX_WORKGROUPS));
+    const accDirBind = device.createBindGroup({
+      layout: pipes.accumulate.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } },
+        { binding: 1, resource: depthView },
+      ],
     });
-    compute.end();
-
-    if (d[2] > 0.02) {
-      const pass = encoder.beginRenderPass({
-        colorAttachments: [{ view: groundView, loadOp: 'load', storeOp: 'store' }],
+    const groupBinds = groups.map((g, k) => {
+      const params = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+      const vertexCount = g.mesh.positions.length / 3;
+      const instanceCount = g.matrices.length / 16;
+      device.queue.writeBuffer(params, 0, new Uint32Array([bases[k], vertexCount, instanceCount, 0]));
+      device.queue.writeBuffer(params, 16, new Float32Array([normalOffset, depthBias, depthSize, 0]));
+      paramBuffers.push(params);
+      return device.createBindGroup({
+        layout: pipes.accumulate.getBindGroupLayout(1),
+        entries: [
+          { binding: 0, resource: { buffer: g.position } },
+          { binding: 1, resource: { buffer: g.normal } },
+          { binding: 2, resource: { buffer: g.instance } },
+          { binding: 3, resource: { buffer: lookup } },
+          { binding: 4, resource: { buffer: params } },
+        ],
       });
-      pass.setPipeline(pipes.ground);
-      pass.setBindGroup(0, groundBind, offset);
-      pass.draw(3);
-      pass.end();
-    }
+    });
+    groundParams = device.createBuffer({ size: 32, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
+    device.queue.writeBuffer(groundParams, 0, new Float32Array([cx, cy, groundZ, groundRadius, normalOffset, depthBias, depthSize, 0]));
+    const groundBind = device.createBindGroup({
+      layout: pipes.ground.getBindGroupLayout(0),
+      entries: [
+        { binding: 0, resource: { buffer: dirBuffer, size: DIR_STRIDE } },
+        { binding: 1, resource: depthView },
+        { binding: 2, resource: { buffer: groundParams } },
+      ],
+    });
+
+  const encodeDirection = (encoder: GPUCommandEncoder, i: number) => {
+      const d = dirs[i];
+      const offset = [i * DIR_STRIDE];
+
+      const depthPass = encoder.beginRenderPass({
+        colorAttachments: [],
+        depthStencilAttachment: { view: depthView, depthClearValue: 1, depthLoadOp: 'clear', depthStoreOp: 'store' },
+      });
+      depthPass.setPipeline(pipes.depth);
+      depthPass.setBindGroup(0, dirBind, offset);
+      for (const g of groups) {
+        if (g.dynamic) continue;
+        depthPass.setVertexBuffer(0, g.position);
+        depthPass.setVertexBuffer(1, g.instance);
+        depthPass.setIndexBuffer(g.index, 'uint32');
+        depthPass.drawIndexed(g.mesh.indices.length, g.matrices.length / 16);
+      }
+      if (d[2] > 0) {
+        // the disc only occludes from above; from below it is the table's underside
+        depthPass.setVertexBuffer(0, discPosition);
+        depthPass.setVertexBuffer(1, discInstance);
+        depthPass.setIndexBuffer(discIndex, 'uint32');
+        depthPass.drawIndexed(disc.indices.length, 1);
+      }
+      depthPass.end();
+
+      const compute = encoder.beginComputePass();
+      compute.setPipeline(pipes.accumulate);
+      compute.setBindGroup(0, accDirBind, offset);
+      groups.forEach((g, k) => {
+        if (g.dynamic) return;
+        compute.setBindGroup(1, groupBinds[k]);
+        const count = (g.mesh.positions.length / 3) * (g.matrices.length / 16);
+        const workgroups = Math.ceil(count / WORKGROUP);
+        compute.dispatchWorkgroups(Math.min(workgroups, MAX_WORKGROUPS), Math.ceil(workgroups / MAX_WORKGROUPS));
+      });
+      compute.end();
+
+      if (d[2] > 0.02) {
+        const pass = encoder.beginRenderPass({
+          colorAttachments: [{ view: groundView, loadOp: 'load', storeOp: 'store' }],
+        });
+        pass.setPipeline(pipes.ground);
+        pass.setBindGroup(0, groundBind, offset);
+        pass.draw(3);
+        pass.end();
+      }
+    };
+    return encodeDirection;
   };
+
 
   const releaseScratch = () => {
     depthTex.destroy();
@@ -410,7 +422,7 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
     discIndex.destroy();
     discInstance.destroy();
     dirBuffer.destroy();
-    groundParams.destroy();
+    groundParams?.destroy();
     for (const b of paramBuffers) b.destroy();
   };
 
@@ -429,6 +441,12 @@ export function bakeOcclusion(ctx: Gpu, groups: OcclusionGroup[], opts: Occlusio
   };
 
   occlusion.done = (async () => {
+    // the pipelines compile off the main thread: the first bake waits for
+    // them, and every later one finds them compiled and encodes its first
+    // chunk before this call returns, so what is submitted after it is
+    // ordered behind it as before
+    const encodeDirection = prepare(compiled.get(device) ?? (await pipesReady));
+    if (cancelled) { releaseScratch(); return; }
     // the first chunk is small, so a shadowed frame is on screen before the rest lands
     for (let first = 0, size = Math.min(chunk, 8); first < directions && !cancelled; first += size, size = chunk) {
       const encoder = device.createCommandEncoder({ label: 'occlusion bake' });

@@ -351,9 +351,11 @@ interface Pipelines {
   imageSampler: GPUSampler;
 }
 
-const pipelines = new WeakMap<GPUDevice, Pipelines>();
+const pipelines = new WeakMap<GPUDevice, Promise<Pipelines>>();
+const compiled = new WeakMap<GPUDevice, Pipelines>();
 
-function getPipelines(device: GPUDevice): Pipelines {
+/** The bake's pipelines, compiled off the main thread once per device. */
+function getPipelines(device: GPUDevice): Promise<Pipelines> {
   let p = pipelines.get(device);
   if (p) return p;
   // The basis slot is addressed by dynamic offset, which an automatic layout
@@ -378,20 +380,14 @@ function getPipelines(device: GPUDevice): Pipelines {
   });
   const make = (code: string, label: string, layout?: GPUBindGroupLayout) => {
     const module = shader(device, code, label);
-    return device.createRenderPipeline({
+    return device.createRenderPipelineAsync({
       label,
       layout: layout ? device.createPipelineLayout({ bindGroupLayouts: [layout] }) : 'auto',
       vertex: { module, entryPoint: 'vsFullscreen' },
       fragment: { module, entryPoint: 'fsMain', targets: [{ format: FORMAT }] },
     });
   };
-  p = {
-    sky: make(SKY, 'env sky', skyLayout),
-    equirect: make(EQUIRECT, 'env equirect', equirectLayout),
-    down: make(DOWNSAMPLE, 'env downsample'),
-    mask: make(MASK, 'probe mask'),
-    prefilter: make(PREFILTER, 'env prefilter', prefilterLayout),
-    brdf: make(BRDF, 'env brdf'),
+  const samplers = {
     sampler: device.createSampler({
       magFilter: 'linear', minFilter: 'linear', mipmapFilter: 'linear',
       addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge', addressModeW: 'clamp-to-edge',
@@ -400,7 +396,27 @@ function getPipelines(device: GPUDevice): Pipelines {
       magFilter: 'linear', minFilter: 'linear', addressModeU: 'repeat', addressModeV: 'clamp-to-edge',
     }),
   };
+  p = Promise.all([
+    make(SKY, 'env sky', skyLayout), make(EQUIRECT, 'env equirect', equirectLayout), make(DOWNSAMPLE, 'env downsample'),
+    make(MASK, 'probe mask'), make(PREFILTER, 'env prefilter', prefilterLayout), make(BRDF, 'env brdf'),
+  ]).then(([sky, equirect, down, mask, prefilter, brdf]) => {
+    const all = { sky, equirect, down, mask, prefilter, brdf, ...samplers };
+    compiled.set(device, all);
+    return all;
+  });
   pipelines.set(device, p);
+  return p;
+}
+
+/** Resolves once the environment's pipelines have compiled on this device; asked for early, they compile beside the renderer's. */
+export function envPipelinesReady(device: GPUDevice): Promise<void> {
+  return getPipelines(device).then(() => {});
+}
+
+/** The pipelines, which must have compiled: `envPipelinesReady` says when. */
+function pipelinesNow(device: GPUDevice): Pipelines {
+  const p = compiled.get(device);
+  if (!p) throw new Error('environment pipelines used before they compiled');
   return p;
 }
 
@@ -433,11 +449,11 @@ export function bakeEnvironment(
     });
     device.queue.writeTexture({ texture: imageTexture }, half as Uint16Array<ArrayBuffer>, { bytesPerRow: img.width * 8 }, [img.width, img.height]);
   }
+  let disposed = false;
   const size = opts.size ?? 512;
   const mips = opts.mips ?? 8;
   const brdfSize = opts.brdfSize ?? 128;
   const sampleSize = opts.sampleSize ?? 64;
-  const pipes = getPipelines(device);
 
   const cube = (levels: number, label: string) => device.createTexture({
     label, size: [size, size, 6], format: FORMAT, mipLevelCount: levels,
@@ -483,56 +499,64 @@ export function bakeEnvironment(
     pass.end();
   };
 
-  const encoder = device.createCommandEncoder({ label: 'env bake' });
+  // The bake waits for its pipelines only the first time, while they compile
+  // off the main thread — the textures are handed out now and are black until
+  // it lands. Once compiled it encodes and submits before returning, as a
+  // caller that draws with the environment straight after relies on.
+  const drawn = (async () => {
+    const pipes = compiled.get(device) ?? (await getPipelines(device));
+    if (disposed) return;
+    const encoder = device.createCommandEncoder({ label: 'env bake' });
 
-  // --- 1. the environment itself, then its mip chain one level at a time ---
-  const skyPipe = imageTexture ? pipes.equirect : pipes.sky;
-  const skyBind = device.createBindGroup({
-    layout: skyPipe.getBindGroupLayout(0),
-    entries: imageTexture
-      ? [
+    // --- 1. the environment itself, then its mip chain one level at a time ---
+    const skyPipe = imageTexture ? pipes.equirect : pipes.sky;
+    const skyBind = device.createBindGroup({
+      layout: skyPipe.getBindGroupLayout(0),
+      entries: imageTexture
+        ? [
+          { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
+          { binding: 1, resource: imageTexture.createView() },
+          { binding: 2, resource: pipes.imageSampler },
+        ]
+        : [{ binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } }],
+    });
+    for (let face = 0; face < 6; face++) {
+      drawTo(encoder, faceView(background, face, 0), skyPipe, skyBind, [face * BASIS_STRIDE]);
+    }
+    for (let level = 1; level < backgroundMips; level++) {
+      for (let face = 0; face < 6; face++) {
+        const bind = device.createBindGroup({
+          layout: pipes.down.getBindGroupLayout(0),
+          entries: [
+            { binding: 0, resource: faceView(background, face, level - 1) },
+            { binding: 1, resource: pipes.sampler },
+          ],
+        });
+        drawTo(encoder, faceView(background, face, level), pipes.down, bind);
+      }
+    }
+
+    // --- 2. GGX prefilter into a second cube, level by level ---
+    const prefilterBind = device.createBindGroup({
+      layout: pipes.prefilter.getBindGroupLayout(0),
+      entries: [
         { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
-        { binding: 1, resource: imageTexture.createView() },
-        { binding: 2, resource: pipes.imageSampler },
-      ]
-      : [{ binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } }],
-  });
-  for (let face = 0; face < 6; face++) {
-    drawTo(encoder, faceView(background, face, 0), skyPipe, skyBind, [face * BASIS_STRIDE]);
-  }
-  for (let level = 1; level < backgroundMips; level++) {
-    for (let face = 0; face < 6; face++) {
-      const bind = device.createBindGroup({
-        layout: pipes.down.getBindGroupLayout(0),
-        entries: [
-          { binding: 0, resource: faceView(background, face, level - 1) },
-          { binding: 1, resource: pipes.sampler },
-        ],
-      });
-      drawTo(encoder, faceView(background, face, level), pipes.down, bind);
+        { binding: 1, resource: background.createView({ dimension: 'cube' }) },
+        { binding: 2, resource: pipes.sampler },
+      ],
+    });
+    for (let level = 0; level < mips; level++) {
+      for (let face = 0; face < 6; face++) {
+        drawTo(encoder, faceView(specular, face, level), pipes.prefilter, prefilterBind, [(6 + level * 6 + face) * BASIS_STRIDE]);
+      }
     }
-  }
 
-  // --- 2. GGX prefilter into a second cube, level by level ---
-  const prefilterBind = device.createBindGroup({
-    layout: pipes.prefilter.getBindGroupLayout(0),
-    entries: [
-      { binding: 0, resource: { buffer: basisBuffer, size: BASIS_STRIDE } },
-      { binding: 1, resource: background.createView({ dimension: 'cube' }) },
-      { binding: 2, resource: pipes.sampler },
-    ],
-  });
-  for (let level = 0; level < mips; level++) {
-    for (let face = 0; face < 6; face++) {
-      drawTo(encoder, faceView(specular, face, level), pipes.prefilter, prefilterBind, [(6 + level * 6 + face) * BASIS_STRIDE]);
-    }
-  }
+    // --- 3. split-sum BRDF lookup ---
+    const brdfBind = device.createBindGroup({ layout: pipes.brdf.getBindGroupLayout(0), entries: [] });
+    drawTo(encoder, brdf.createView(), pipes.brdf, brdfBind);
 
-  // --- 3. split-sum BRDF lookup ---
-  const brdfBind = device.createBindGroup({ layout: pipes.brdf.getBindGroupLayout(0), entries: [] });
-  drawTo(encoder, brdf.createView(), pipes.brdf, brdfBind);
-
-  device.queue.submit([encoder.finish()]);
+    device.queue.submit([encoder.finish()]);
+  })();
 
   // --- 4. a small mip of the background, read back for direction sampling ---
   const sampleLod = Math.max(0, Math.round(Math.log2(size / sampleSize)));
@@ -540,8 +564,8 @@ export function bakeEnvironment(
   // Six readbacks, one submit each, awaited in turn: an environment disposed
   // while they are under way — the light moved again before the first bake's
   // sky had been read — must not submit copies from a destroyed texture.
-  let disposed = false;
   const samples = (async () => {
+    await drawn;
     const faces: Float32Array[] = [];
     for (let face = 0; face < 6 && !disposed; face++) {
       const raw = new Uint16Array(await readbackLayer(device, background, face, sampleLod, realSize, 8));
@@ -583,7 +607,7 @@ export function filterCube(
   raw: GPUTexture, background: GPUTexture, specular: GPUTexture, size: number, mips: number,
 ): { dispose(): void } {
   const { device } = ctx;
-  const pipes = getPipelines(device);
+  const pipes = pipelinesNow(device);
   const backgroundMips = Math.floor(Math.log2(size)) + 1;
   const slots = 6 * mips;
   const basisBuffer = device.createBuffer({ size: slots * BASIS_STRIDE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });

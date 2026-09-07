@@ -29,7 +29,7 @@ import { CushionBake, CUSHION_SIZE } from './cushion';
 import { economyAt, type Economy } from './calibrate';
 import { ContactOcclusion } from './ao';
 import { CanvasRasteriser, CELL, GlyphAtlas, layout as layoutGlyphs, transliterate, type GlyphKey, type Rasteriser } from './glyphs';
-import { bakeEnvironment, filterCube, skyDistribution, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
+import { envPipelinesReady, bakeEnvironment, filterCube, skyDistribution, type EnvImage, type Environment, type EnvPreset, type EnvSamples } from './env';
 import { enamels, finishes, metals, patinaColour, type Finish, type Metal } from './materials';
 import { bakeOcclusion, orthoFromDirection, type Occlusion } from './occlusion';
 import { PostChain, inverseTonemap, type Film } from './post';
@@ -303,10 +303,10 @@ export class Renderer {
   private frameLayout: GPUBindGroupLayout;
   private materialLayout: GPUBindGroupLayout;
   private groundLayout: GPUBindGroupLayout;
-  private prepassPipeline: GPURenderPipeline;
-  private pbrPipeline: GPURenderPipeline;
-  private groundPipeline: GPURenderPipeline;
-  private anchorPipeline: GPURenderPipeline;
+  private prepassPipeline!: GPURenderPipeline;
+  private pbrPipeline!: GPURenderPipeline;
+  private groundPipeline!: GPURenderPipeline;
+  private anchorPipeline!: GPURenderPipeline;
   private sampler: GPUSampler;
 
   private frameBuffer: GPUBuffer;
@@ -359,10 +359,10 @@ export class Renderer {
   private probeBinds: GPUBindGroup[] = [];
   private probeDirty = true;
   private probeReady = false;
-  private prepassProbePipeline: GPURenderPipeline;
-  private pbrProbePipeline: GPURenderPipeline;
-  private groundProbePipeline: GPURenderPipeline;
-  private groundDepthPipeline: GPURenderPipeline;
+  private prepassProbePipeline!: GPURenderPipeline;
+  private pbrProbePipeline!: GPURenderPipeline;
+  private groundProbePipeline!: GPURenderPipeline;
+  private groundDepthPipeline!: GPURenderPipeline;
   /** The lights as last written: where each is, and which group it belongs to (not shadowed by itself). */
   private lightList: Array<{ position: [number, number, number]; group: number }> = [];
   /** Glyphs for engraved lettering: the atlas, its texture, and each group's placed glyphs. */
@@ -386,6 +386,9 @@ export class Renderer {
   private dirty = true;
   /** Rewritten in place each frame rather than allocated. */
   private frameData = new Float32Array(FRAME_SIZE / 4);
+  /** Resolves when every pipeline — the renderer's, the film's, the bakes' — has compiled; `render` draws nothing before. */
+  readonly ready: Promise<void>;
+  private compiled = false;
   /** Ask for a frame on the next render. */
   requestRender() { this.dirty = true; }
   /** A length in millimetres, in world units. */
@@ -421,7 +424,7 @@ export class Renderer {
   /** Stands in for the shadow map in the shadow pass's own bind group: a pass may not read the texture it is drawing. */
   private dummyShadowView: GPUTextureView;
   private shadowSampler: GPUSampler;
-  private shadowPipeline: GPURenderPipeline;
+  private shadowPipeline!: GPURenderPipeline;
   /** The frame uniform as the key sees it: only viewProj differs. */
   private shadowFrameBuffer: GPUBuffer;
   /** The rig's shadows: one layer per light, and the frame as each sees it. */
@@ -541,8 +544,16 @@ export class Renderer {
       depthStencil: depth(true),
       multisample: ms,
     });
-    this.prepassPipeline = device.createRenderPipeline(prepassPipelineDesc(multisample));
-    this.prepassProbePipeline = device.createRenderPipeline({ ...prepassPipelineDesc({ count: 1 }), label: 'prepass probe' });
+    // Every pipeline is asked for at once and compiled off the main thread:
+    // with the synchronous call the browser compiles them one after another
+    // on the GPU process's own thread, and on a driver that compiles slowly —
+    // D3D12, where each is HLSL through the shader compiler — a laptop sat
+    // for the sum of them before its first frame. `ready` resolves when all
+    // are in; until then `render` draws nothing and stays due.
+    const waits: Promise<unknown>[] = [];
+    const later = <T extends GPURenderPipeline>(p: Promise<T>, assign: (v: T) => void) => { waits.push(p.then(assign)); };
+    later(device.createRenderPipelineAsync(prepassPipelineDesc(multisample)), (p) => { this.prepassPipeline = p; });
+    later(device.createRenderPipelineAsync({ ...prepassPipelineDesc({ count: 1 }), label: 'prepass probe' }), (p) => { this.prepassProbePipeline = p; });
 
     // the key's shadow: the prepass vertex shader with the key's own
     // viewProj, into a depth-only target; there is no fragment stage at all
@@ -556,7 +567,7 @@ export class Renderer {
       size: [1, 1], format: 'depth24plus', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.RENDER_ATTACHMENT, label: 'no shadow',
     }).createView();
     this.shadowSampler = device.createSampler({ compare: 'less', magFilter: 'linear', minFilter: 'linear' });
-    this.shadowPipeline = device.createRenderPipeline({
+    later(device.createRenderPipelineAsync({
       label: 'key shadow',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
       vertex: {
@@ -565,7 +576,7 @@ export class Renderer {
       },
       primitive: { topology: 'triangle-list', cullMode: 'none' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-    });
+    }), (p) => { this.shadowPipeline = p; });
     this.shadowFrameBuffer = device.createBuffer({ label: 'shadow frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     // the rig's shadows, coarser than the key's: fill and rim are soft and
     // off to the side, and their shadows are read at a quarter the density
@@ -643,8 +654,8 @@ export class Renderer {
       depthStencil: { format: this.post.depthFormat, depthWriteEnabled: false, depthCompare: 'less-equal' },
       multisample: ms,
     });
-    this.pbrPipeline = device.createRenderPipeline(pbrPipelineDesc(multisample));
-    this.pbrProbePipeline = device.createRenderPipeline({ ...pbrPipelineDesc({ count: 1 }), label: 'pbr probe' });
+    later(device.createRenderPipelineAsync(pbrPipelineDesc(multisample)), (p) => { this.pbrPipeline = p; });
+    later(device.createRenderPipelineAsync({ ...pbrPipelineDesc({ count: 1 }), label: 'pbr probe' }), (p) => { this.pbrProbePipeline = p; });
 
     const ground = shader(device, GROUND_WGSL, 'ground');
     const groundPipelineDesc = (ms: GPUMultisampleState): GPURenderPipelineDescriptor => ({
@@ -660,11 +671,11 @@ export class Renderer {
       depthStencil: depth(true),
       multisample: ms,
     });
-    this.groundPipeline = device.createRenderPipeline(groundPipelineDesc(multisample));
-    this.groundProbePipeline = device.createRenderPipeline({ ...groundPipelineDesc({ count: 1 }), label: 'ground probe' });
+    later(device.createRenderPipelineAsync(groundPipelineDesc(multisample)), (p) => { this.groundPipeline = p; });
+    later(device.createRenderPipelineAsync({ ...groundPipelineDesc({ count: 1 }), label: 'ground probe' }), (p) => { this.groundProbePipeline = p; });
     // the table's depth alone, for the contact occlusion: its own vertex
     // shader, since a cushion is not flat, and no fragment stage
-    this.groundDepthPipeline = device.createRenderPipeline({
+    later(device.createRenderPipelineAsync({
       label: 'ground depth',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout, this.groundLayout] }),
       vertex: {
@@ -673,10 +684,10 @@ export class Renderer {
       },
       primitive: { topology: 'triangle-list', cullMode: 'back', frontFace: 'ccw' },
       depthStencil: { format: 'depth24plus', depthWriteEnabled: true, depthCompare: 'less' },
-    });
+    }), (p) => { this.groundDepthPipeline = p; });
 
     const anchor = shader(device, ANCHOR_WGSL, 'anchors');
-    this.anchorPipeline = device.createRenderPipeline({
+    later(device.createRenderPipelineAsync({
       label: 'anchors',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.frameLayout] }),
       vertex: {
@@ -690,7 +701,10 @@ export class Renderer {
       primitive: { topology: 'line-list' },
       depthStencil: depth(false),
       multisample,
-    });
+    }), (p) => { this.anchorPipeline = p; });
+    // the bakes' and the film's pipelines compile beside these; a frame needs all of them
+    this.ready = Promise.all([...waits, this.post.ready, this.ao.ready, this.cushion.ready, envPipelinesReady(device)])
+      .then(() => { this.compiled = true; performance.mark('renderer:compiled'); }, (err) => { console.error('a pipeline failed to compile:', err); throw err; });
 
     this.frameBuffer = device.createBuffer({ label: 'frame', size: FRAME_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.lightsBuffer = device.createBuffer({ label: 'lights', size: LIGHTS_SIZE, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -1161,6 +1175,8 @@ export class Renderer {
   /** One more sample of the still view, or nothing if the accumulation is complete. Returns whether a frame was drawn. */
   private traceFrameStep(encoder: GPUCommandEncoder, frame: Float32Array): boolean {
     const tracer = this.ensureTracer();
+    // the tracer's own pipeline is compiling: nothing to take a sample with yet, so come back
+    if (!tracer.compiled) { this.dirty = true; return false; }
     if (!this.traceMaterialBind || !this.frameBind || !this.post.sceneTexture || this.sceneBuilding || !tracer.hasScene) return false;
     tracer.resize(this.post.renderWidth, this.post.renderHeight, this.post.sceneTexture);
     // anything that moved — the camera, a light, the exposure — starts the accumulation over
@@ -1392,7 +1408,8 @@ export class Renderer {
   render(target: () => GPUTextureView): boolean {
     const moving = this.moving;
     this.camera.update();
-    if (!this.frameBind) return false;
+    // nothing to draw with until every pipeline has compiled; the frame stays due
+    if (!this.compiled || !this.frameBind) return false;
     if (this.focusHelper) this.buildFocusHelper();
     if (this.bakeQueued) {
       this.bakeQueued = false;

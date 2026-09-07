@@ -76,6 +76,7 @@ describe('every table the renderer offers', () => {
     setDetail(0.5);
     gpu = await createDevice();
     renderer = new Renderer(gpu);
+    await renderer.ready;
     target = gpu.device.createTexture({
       label: 'table target', size: [SIZE, SIZE], format: gpu.format,
       usage: GPUTextureUsage.RENDER_ATTACHMENT | GPUTextureUsage.COPY_SRC,

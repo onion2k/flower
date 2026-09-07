@@ -971,7 +971,10 @@ export interface TraceCamera {
 }
 
 export class PathTracer {
-  private pipeline: GPUComputePipeline;
+  // assigned when it compiles, off the main thread; no sample is taken before `compiled`
+  private pipeline!: GPUComputePipeline;
+  /** Whether the pipeline has compiled: a frame before then takes no sample and comes back. */
+  compiled = false;
   private params: GPUBuffer;
   private sceneBuffers: GPUBuffer[] = [];
   private accum: GPUTexture[] = [];
@@ -1029,11 +1032,11 @@ export class PathTracer {
       ],
     });
     const module = shader(device, TRACE_WGSL, 'path tracer');
-    this.pipeline = device.createComputePipeline({
+    device.createComputePipelineAsync({
       label: 'path tracer',
       layout: device.createPipelineLayout({ bindGroupLayouts: [frameLayout, this.materialLayout, this.layout] }),
       compute: { module, entryPoint: 'main' },
-    });
+    }).then((p) => { this.pipeline = p; this.compiled = true; }, (err) => console.error('path tracer failed to compile:', err));
     this.params = device.createBuffer({ label: 'trace params', size: 128, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
     this.skyTexture = device.createTexture({ label: 'sky cdf', size: [1, 1], format: 'r32float', usage: GPUTextureUsage.TEXTURE_BINDING | GPUTextureUsage.COPY_DST });
   }

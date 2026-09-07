@@ -147,7 +147,10 @@ export class CushionBake {
   readonly height: GPUTexture;
   private scratch: GPUTexture;
   private pressure: GPUTexture;
-  private pipeline: GPUComputePipeline;
+  // assigned when it compiles; no bake runs before `ready`
+  private pipeline!: GPUComputePipeline;
+  /** Resolves when the pipeline has compiled. */
+  readonly ready: Promise<void>;
   private layout: GPUBindGroupLayout;
   private params: GPUBuffer;
 
@@ -170,11 +173,11 @@ export class CushionBake {
         { binding: 4, visibility: GPUShaderStage.COMPUTE, texture: { sampleType: 'unfilterable-float' } },
       ],
     });
-    this.pipeline = device.createComputePipeline({
+    this.ready = device.createComputePipelineAsync({
       label: 'cushion',
       layout: device.createPipelineLayout({ bindGroupLayouts: [this.layout] }),
       compute: { module: shader(device, CONE_WGSL, 'cushion'), entryPoint: 'main' },
-    });
+    }).then((p) => { this.pipeline = p; });
     // eleven passes, each with its own slice of parameters
     this.params = device.createBuffer({ label: 'cushion params', size: 256 * 11, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
   }

@@ -287,12 +287,15 @@ export class PostChain {
   private factor = 1;
 
   private sampler: GPUSampler;
-  private brightPipe: GPURenderPipeline;
-  private downPipe: GPURenderPipeline;
-  private upPipe: GPURenderPipeline;
-  private compositePipe: GPURenderPipeline;
-  private dofPipe: GPURenderPipeline;
-  private downsamplePipe: GPURenderPipeline;
+  // assigned as each compiles; nothing here is drawn with before `ready`
+  private brightPipe!: GPURenderPipeline;
+  private downPipe!: GPURenderPipeline;
+  private upPipe!: GPURenderPipeline;
+  private compositePipe!: GPURenderPipeline;
+  private dofPipe!: GPURenderPipeline;
+  private downsamplePipe!: GPURenderPipeline;
+  /** Resolves when every pipeline has compiled. */
+  readonly ready: Promise<void>;
   private downsampleParams: GPUBuffer;
   private brightParams: GPUBuffer;
   private compositeParams: GPUBuffer;
@@ -327,26 +330,29 @@ export class PostChain {
   constructor(private ctx: Gpu) {
     const { device } = ctx;
     this.sampler = device.createSampler({ magFilter: 'linear', minFilter: 'linear', addressModeU: 'clamp-to-edge', addressModeV: 'clamp-to-edge' });
-    const pipe = (code: string, label: string, blend?: GPUBlendState, format: GPUTextureFormat = HDR) => {
+    // compiled off the main thread, all at once: `ready` resolves when every one is
+    const waits: Promise<unknown>[] = [];
+    const pipe = (code: string, label: string, assign: (p: GPURenderPipeline) => void, blend?: GPUBlendState, format: GPUTextureFormat = HDR) => {
       const module = shader(device, code, label);
-      return device.createRenderPipeline({
+      waits.push(device.createRenderPipelineAsync({
         label,
         layout: 'auto',
         vertex: { module, entryPoint: 'vsFullscreen' },
         fragment: { module, entryPoint: 'fsMain', targets: [{ format, blend }] },
         primitive: { topology: 'triangle-list' },
-      });
+      }).then(assign));
     };
     const additive: GPUBlendState = {
       color: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
       alpha: { srcFactor: 'one', dstFactor: 'one', operation: 'add' },
     };
-    this.brightPipe = pipe(BRIGHT, 'bloom bright');
-    this.downPipe = pipe(DOWN, 'bloom down');
-    this.upPipe = pipe(UP, 'bloom up', additive);
-    this.compositePipe = pipe(COMPOSITE, 'composite', undefined, ctx.format);
-    this.dofPipe = pipe(DOF, 'depth of field');
-    this.downsamplePipe = pipe(DOWNSAMPLE, 'supersample down');
+    pipe(BRIGHT, 'bloom bright', (p) => { this.brightPipe = p; });
+    pipe(DOWN, 'bloom down', (p) => { this.downPipe = p; });
+    pipe(UP, 'bloom up', (p) => { this.upPipe = p; }, additive);
+    pipe(COMPOSITE, 'composite', (p) => { this.compositePipe = p; }, undefined, ctx.format);
+    pipe(DOF, 'depth of field', (p) => { this.dofPipe = p; });
+    pipe(DOWNSAMPLE, 'supersample down', (p) => { this.downsamplePipe = p; });
+    this.ready = Promise.all(waits).then(() => { this.compiled = true; this.makeBinds(); });
     this.downsampleParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
 
     this.brightParams = device.createBuffer({ size: 16, usage: GPUBufferUsage.UNIFORM | GPUBufferUsage.COPY_DST });
@@ -416,7 +422,16 @@ export class PostChain {
     this.dofView = this.dof.createView();
     this.depthView = this.depth.createView();
     this.bloomViews = this.bloom.map((t) => t.createView());
+    // the bind groups want the pipelines' layouts, which may still be compiling: then they follow `ready`
+    if (this.compiled) this.makeBinds();
+  }
 
+  /** Whether every pipeline has compiled, so bind groups can be made against their layouts. */
+  private compiled = false;
+
+  private makeBinds() {
+    const { device } = this.ctx;
+    if (!this.resolve || !this.dof || !this.bloom.length) return;
     const view = (t: GPUTexture) => t.createView();
     this.brightBind = device.createBindGroup({
       layout: this.brightPipe.getBindGroupLayout(0),
