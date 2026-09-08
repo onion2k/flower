@@ -78,9 +78,24 @@ the renderer for a sculpture in an afternoon.
 - **Millimetres are the native unit**, and the renderer converts through
   one number where another unit is wanted; nothing fixed in real size may
   bypass it.
-- **Raw WebGPU, no engine.** A thin device layer; the renderer talks to
-  the API. No scene graph, no animation system, no culling: this is a
-  still-life renderer and should stay one until an application needs more.
+- **Raw WebGPU, no engine.** A thin device layer; the renderers talk to
+  the API. No scene graph, no animation system, no culling.
+
+  The still-life renderer was to stay one *until an application needed
+  more*, and in September 2026 one did. `artshape-render` is now a shared
+  core — the device, the geometry, the parts, the language, and the
+  measurement that fits a picture to the machine — under two render paths:
+  `render/`, the still life this project draws, and `game/`, which draws
+  every frame for an application with things moving in it. Neither may
+  reach into the other. The core may not learn about either: it knows
+  meshes and matrices, not frames.
+
+  The second path did not begin as a preference. A spike measured the
+  still-life shader at about 11 ms a megapixel on the pixels it covers,
+  which is a 22 ms frame at 1080p — over a 60 fps budget on a desktop GPU
+  with nothing moving — against under a tenth of a millisecond for a
+  material with one light and no table reflected in it. Sharing was
+  measured and found to cost more than the duplication.
 - **The language stays small and the words stay the maker's.** A new part
   is added when a real piece needs it; a new builtin name must not shadow a
   word a sketch would naturally use.
@@ -89,12 +104,17 @@ the renderer for a sculpture in an afternoon.
 
 ## Open questions
 
-- The first real user of the library beyond jewellery turned out to be a
-  chess game, which wanted a pool of placements that move rather than a
-  still piece; that is what `moveAll` and per-group draw counts came from.
-  It has not yet forced a scene graph, and the question stands for
-  whatever comes next: does an application with real motion in it make one
-  necessary, or is a pool of matrices enough?
+- A pool of matrices has been enough so far. The chess game wanted
+  placements that move rather than a still piece, which gave the library
+  `moveAll` and per-group draw counts; the game path wants eight thousand
+  of them moving every frame, which it does with one buffer write and no
+  scene graph at all. The question stands for whatever comes next, and the
+  answer is still no.
+- **When should `game/` leave?** It lives beside `render/` because the two
+  are being built together and a version pin between them would be paid on
+  every change. It should become its own repository when it has consumers
+  of its own, or when its release cadence starts fighting this one's.
+  Neither is true yet.
 - How far should raster realism be pushed against the tracer: is a
   filtered table reflection for satin metal worth its cost, or is traced
   quality the answer for the final picture?
