@@ -1216,9 +1216,25 @@ Two things follow that are worth remembering. The first is that the
 guarded features are not free either: the relief, pattern and lettering
 height fields are each behind `material.relief > 0.0` and its like, and
 never run for a plain metal — and compiling them out still saved 1.1
-ms/Mpx. The second is that the contact rung is a uniform flag of exactly
-the kind that was just shown not to work, and measured ~0 when cut. It
-should be a permutation too, or it is a rung that does nothing.
+ms/Mpx.
+
+The second was written here as a suspicion and turned out to be wrong, so
+it is recorded as a correction. The contact rung looked like a uniform
+flag of the same worthless kind, and a measurement appeared to agree. That
+measurement was void: it stubbed `contactAt` while the renderer had
+contact switched off, so `frame.aoOn` was already 0 and the stub removed
+nothing. Measured properly, with the passes running and `aoOn` at 1,
+compiling `contactAt` out saves **-0.22 ms/Mpx** — nothing, and rightly:
+it is one bilinear read of a half-resolution r8, with no loop and nothing
+held live across it. There is nothing there to recover.
+
+The contact rung is not a shader flag at all. What it removes is the
+depth prepass over every triangle and the occlusion passes that follow,
+and that is real work: **0.75 ms a frame on a slab of two thousand
+triangles, 1.5 ms on a piece of four hundred thousand.** It scales with
+geometry where the reflection rung scales with pixels, which is a useful
+pair to have on the ladder. It is already implemented correctly and
+should be left alone.
 
 ### The report
 
