@@ -1293,6 +1293,65 @@ artshape's within twenty bytes. Verified in both pages that the two
 workers load from the package and do their work — the body count fills in,
 and a traced view accumulates 84 samples.
 
+## A game drawn on it, September 2026
+
+`artshape-render/src/game/` had a renderer, an API and thirty-eight passing
+GPU tests, and had never drawn a game. An arena demo — a twin-stick shooter,
+in its own repo at `~/projects/arena` — was built on it to find out what was
+missing. Four things were.
+
+Three were the library's. The material was one albedo and one roughness in
+the frame uniform, which is fine for a test drawing one kind of thing and
+useless for an arena wanting a dark floor, a gold player and enemies that
+flash white when hit; colour and roughness moved to a second instance
+buffer, kept apart from the matrix so that moving a thing every frame and
+recolouring a few things occasionally stay separate writes. Effect layers
+had one colour for the whole batch, so a white muzzle flash, a cyan trail
+and an orange explosion in the same frame were three draws or one colour;
+colour and a falloff exponent moved onto the quad, and the batch uniform
+picked up the viewport aspect, because a quad square in clip space is an
+ellipse on a wide screen. And the frame's clear was hardcoded at 0.02 grey —
+the environment lights the material but is never drawn, so that value is the
+whole sky past the arena's edge. It joined the look. Tagged v0.3.0.
+
+The fourth was the demo's, and worth recording because it is a class of bug
+the still-life renderer cannot have: the camera distance was hardcoded, which
+cropped the near corners on a window the wrong shape, which in a game where
+enemies come in from the edges means being killed by something that was never
+on screen. It is solved for by projecting the arena's corners on every resize.
+
+**What a game frame costs.** At 1920×1080, fenced on the queue, medians of
+five runs of 120 frames:
+
+| scene | lights | ms |
+| --- | ---: | ---: |
+| empty arena | 18 | 0.64 |
+| 20 enemies | 37 | 1.05 |
+| 70 enemies | 90 | 1.91 |
+| 140 enemies | 146 | 3.12 |
+| 140 enemies, points off | — | 0.29 |
+| 140 enemies, effects off | 146 | 3.14 |
+
+The point-light loop is 2.8 ms of the 3.1, about 0.019 ms a light; the
+additive effect stage does not clear the noise. That is a fifth of a 60 fps
+frame for a hundred and forty movers and a hundred and forty-six moving
+lights, and it confirms the spike's ceiling from the other direction: the
+forward loop has room for several hundred more before tiles or clusters are
+worth their complexity.
+
+Two measurement traps caught in the doing, both already known and both still
+effective. A tab the browser is not compositing stops calling
+`requestAnimationFrame`, so the demo's own frame counter read 39 fps while
+the fenced measurement said 3 ms — and a `await requestAnimationFrame` in the
+loading sequence hung forever for the same reason. And a hidden pane lays its
+canvas out at nothing, so the first fenced run measured a one-pixel frame and
+reported the driver's overhead as the scene's cost; `measure()` sizes the
+target explicitly now.
+
+The demo does not use the calibrator or the quality ladder. Every number
+above is a Mac mini and every one is fill-bound, which is exactly the shape
+of machine the Windows laptop is worst at. Still not run there.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
