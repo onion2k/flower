@@ -1352,6 +1352,41 @@ The demo does not use the calibrator or the quality ladder. Every number
 above is a Mac mini and every one is fill-bound, which is exactly the shape
 of machine the Windows laptop is worst at. Still not run there.
 
+**Made into a game.** Asteroids handling — turn, thrust along the nose,
+momentum with drag as an exponential rate so it does not depend on the frame
+rate, walls that give back half of what they take, and the ship's velocity
+carried into its shots. That needed a hull with a direction, so the player is
+a triangular plate that banks into a turn with the stone riding on top of it;
+a gem alone read as a blob from overhead and gave no way to tell where the
+nose was pointing.
+
+Then the arena went to nearly three times the floor, because at the old size
+a ship at full speed crossed it in two seconds. Which broke the camera: a
+fixed frame that fits an arena that size makes the ship four percent of the
+width and wastes every reflective surface in the scene on something too small
+to see. So it follows the ship, on a leash whose length is how much of the
+arena is off screen — at the fitted distance the leash is zero and the camera
+sits dead centre, and it lengthens in proportion as you zoom in. Zooming out
+is the overview mode rather than there being one. The fit solves for exactly
+the point the camera looks at when fully out, so "nothing arrives unseen" is
+a property and not a hope; it is checked by projecting all eight arena
+corners with the ship jammed in a far corner.
+
+Costs at 1080p after the growth, medians of five runs: 1.25 ms empty at 22
+lights, 4.82 at 140 enemies and 150 lights, 4.89 with the pool of 220 full —
+the last two match because only the first 128 enemies carry a light. The
+point loop is 4.5 of the 4.9, so 0.031 ms a light with the bigger ambient
+wash. The CPU is not the problem: one step with 220 enemies is 0.139 ms
+including forty-eight thousand separation tests.
+
+Three notes for anyone building the next thing on this path. Colour and
+roughness per placement earned their keep immediately — the ship, the posts,
+the floor and enemies that flash white when hit are one pass. So did colour
+per effect quad: a blue thrust plume, cyan trails, a white muzzle flash and
+orange explosions are one draw. And the ladder still has nothing to do here,
+because the honest answer at these numbers is that a 60 fps frame has three
+quarters of itself left over.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
