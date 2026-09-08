@@ -1187,6 +1187,39 @@ which is the library reaching up into the application. That default
 should go when the split happens — `spike/validate.ts` and the examples
 test rely on it and would pass a `resolve` instead.
 
+### A rung for the table's reflection, September 2026
+
+A spike for a game renderer measured what the shader costs on the pixels
+it covers — about 11 ms a megapixel, where a 1080p frame at 60 fps can
+afford 4.8 — and then cut parts out of it to find where that goes. Two
+things were three quarters of it: the table reflected in a glossy face
+(`seen`, ~4–6 ms/Mpx) and the key's soft shadow (~4.7). Neither is the
+material model, which with those gone costs about 2.7.
+
+So the reflection became the ladder's second rung, above the shadow taps:
+it saves as much and gives up less, because what it falls back to is the
+probe's own reading of the same table — which is what every reflection
+was before the table became geometry.
+
+**The rung had to be a shader permutation, not a uniform.** Written first
+as a flag in the frame uniform, it saved nothing at all: measured
+interleaved against itself, 34.65 ms with the reflection against 35.50 ms
+without it, which is noise. The same cut made by removing the code saved
+5.4 ms/Mpx in the same session. A branch the compiler cannot fold leaves
+the code resident, and on this GPU residency is most of the cost. So
+`pbrSource({ reflectTable })` puts a module-scope `const` in front of the
+shader and the renderer builds both permutations at startup, alongside
+every other pipeline and at no wall-clock cost; `setEconomy` swaps between
+them. Through the library's own API the rung now saves **4.6 ms/Mpx**.
+
+Two things follow that are worth remembering. The first is that the
+guarded features are not free either: the relief, pattern and lettering
+height fields are each behind `material.relief > 0.0` and its like, and
+never run for a plain metal — and compiling them out still saved 1.1
+ms/Mpx. The second is that the contact rung is a uniform flag of exactly
+the kind that was just shown not to work, and measured ~0 when cut. It
+should be a permutation too, or it is a rung that does nothing.
+
 ### The report
 
 `viewer.report()` is everything the viewer knows about the machine, as

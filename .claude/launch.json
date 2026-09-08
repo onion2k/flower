@@ -24,6 +24,21 @@
         "--strictPort"
       ],
       "port": 5180
+    },
+    {
+      "name": "spike",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": [
+        "--prefix",
+        "/Users/christopherneale/projects/arena-spike",
+        "run",
+        "dev",
+        "--",
+        "--port",
+        "5195",
+        "--strictPort"
+      ],
+      "port": 5195
     }
   ]
 }
