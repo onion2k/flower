@@ -4,40 +4,25 @@
     {
       "name": "artshape",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "run",
-        "dev"
-      ],
+      "runtimeArgs": ["run", "dev"],
       "port": 5173
     },
     {
       "name": "chess",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "--prefix",
-        "/Users/christopherneale/projects/chess",
-        "run",
-        "dev",
-        "--",
-        "--port",
-        "5180",
-        "--strictPort"
-      ],
-      "port": 5180
+      "runtimeArgs": ["--prefix", "/Users/christopherneale/projects/chess", "run", "dev"],
+      "port": 5188
+    },
+    {
+      "name": "arena",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["--prefix", "/Users/christopherneale/projects/arena", "run", "dev"],
+      "port": 5190
     },
     {
       "name": "spike",
       "runtimeExecutable": "npm",
-      "runtimeArgs": [
-        "--prefix",
-        "/Users/christopherneale/projects/arena-spike",
-        "run",
-        "dev",
-        "--",
-        "--port",
-        "5195",
-        "--strictPort"
-      ],
+      "runtimeArgs": ["--prefix", "/Users/christopherneale/projects/arena-spike", "run", "dev"],
       "port": 5195
     }
   ]
