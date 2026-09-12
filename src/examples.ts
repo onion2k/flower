@@ -272,6 +272,10 @@ form studs {
 # the whole point of a prop rather than a piece. ringStand's peg and bust's
 # neck are landmarks like any other anchor, so a piece fastens to them, or
 # simply sits near them, the same as it would to a setting or a mount.
+# Light it with the case spot in the rig picker: a rig light may stand in the
+# scene rather than hang in the sky, and a narrow cone from just overhead
+# leaves the table dark a little way out, which is what a case does for a
+# piece. The bench lamp beside it is the same thing leaned over the work.
 material gold polished
 
 part rest  = ringStand(baseRadius: 9) in grey plastic matte

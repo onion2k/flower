@@ -1420,6 +1420,53 @@ metre-scale consumer would have hit on its first spotlight, with no symptom
 beyond a missing shadow. 920 node tests and 71 GPU tests pass; the arena,
 which works in millimetres, draws the same as before.
 
+## A lamp that stands in the scene, September 2026
+
+The still-life path's lights have all been in the sky: the key and the rig
+are discs at an elevation and an azimuth, which is right for a studio and has
+nothing to say about a lamp leaned over a bench. `render/` now takes either —
+a `RigLight` given `at` hangs there instead, points at what it is told to,
+throws a cone with a soft edge, falls away with the square of the distance
+and ends at its reach, and its `size` becomes the shade's radius in world
+units so its penumbra widens across the piece. Its shadow is a perspective
+map in the rig's own array, read through the same lookup, which now divides
+by w — exactly one for an orthographic map, so the sky's discs are untouched.
+
+The tracer takes the same lamp as a sphere of light with a cone mask and the
+same three terms, and `lamp.gpu.test.ts` holds the two together to within
+eight levels at the pool, the shadow, its mirror in the pool, and outside the
+cone. That test found two faults nothing else would have, both of them places
+where the raster quietly did nothing:
+
+- **A rig light did not cast unless the key was lit.** `shadowOn` was the
+  key's strength alone. A scene lit by a bench lamp with the key turned down
+  threw no shadow of any kind, which reads as a broken map rather than as a
+  switch left off.
+- **A perspective map wants its bias in its own depth.** The figure the sky's
+  orthographic maps use is worth a few world units close to a lamp and some
+  tens further out, so the shadow lifted off the table and started six
+  millimetres late. The lamp carries `depthScale` — near·far/(far−near) — and
+  the shader divides it by the squared distance. Putting the old bias back
+  moves the near half of the shadow by 28 levels against the tracer, which is
+  what says the conversion is load-bearing rather than tidy.
+
+The way both were found is worth keeping: profile a line of table across the
+shadow and print raster and traced side by side. Both showed as a run of
+pixels disagreeing by twenty or thirty levels while the rest of the line
+agreed to within four.
+
+**In the page.** The rig presets moved out of `main.ts` into `rigs.ts`, where
+they can be tested, and gained two that are lamps: *bench lamp*, leaned over
+the work from the key's side, and *case spot*, narrow and nearly overhead for
+a piece on a stand. Both take the piece's own extent and hang against it, so
+one preset works over a ring and over a tiara — a lamp two hundred
+millimetres over a brooch is a bench lamp, and the same two hundred over a
+tiara is a light in the ceiling. The `display` example names them, since it is
+the sketch they were drawn for.
+
+Taken from the chess set, which wanted its photograph lit by the pendant it
+is played under rather than by a studio bench rig. Library v0.13.0.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,

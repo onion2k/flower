@@ -12,7 +12,8 @@ import type { Anchor, Part } from 'artshape-render/parts/types';
 import type { Placement } from 'artshape-render/assembly/assembly';
 import type { Span } from 'artshape-render/dsl/lexer';
 import type { Mesh } from 'artshape-render/mesh/types';
-import { RUNGS, tierFor, Viewer, tableNames, type Quality, type RigLight, type TableName } from 'artshape-render/render/viewer';
+import { RUNGS, tierFor, Viewer, tableNames, type Quality, type TableName } from 'artshape-render/render/viewer';
+import { RIGS, rigNames, type Piece, type RigName } from './rigs';
 import { detail, setDetail } from 'artshape-render/mesh/detail';
 import { meanRadiance, parseHdr } from 'artshape-render/render/hdr';
 import { createEditor } from './editor/index';
@@ -59,32 +60,13 @@ viewer.onFirstFrame = (ms) => {
   console.info(`first frame ${ms.toFixed(0)} ms after submit; ${(performance.now() / 1000).toFixed(2)} s from the page's start`);
 };
 
+
 /**
- * The studio rig, as presets set round the key: each takes the key's
- * azimuth and strength and returns the lights beside it. A fill is broad,
- * low and cool on the far side, at a fraction of the key, to open the
- * shadows without casting one of its own to speak of; a rim is small and
- * behind, opposite the key, to draw a bright line round the piece's edge.
+ * How big the subject is, for the rigs that hang a lamp over it rather than
+ * putting a disc in the sky. It is replaced whenever a subject is built; the
+ * opening value is a ring's, which is what the page opens on.
  */
-const RIGS: Record<string, (azimuth: number, strength: number) => RigLight[]> = {
-  none: () => [],
-  fill: (a, k) => [
-    { elevation: 0.35, azimuth: a + 2.0, strength: 0.3 * k, warmth: -0.25, size: 0.45 },
-  ],
-  rim: (a, k) => [
-    { elevation: 0.65, azimuth: a + Math.PI, strength: 0.9 * k, warmth: 0.1, size: 0.05 },
-  ],
-  'three point': (a, k) => [
-    { elevation: 0.35, azimuth: a + 2.0, strength: 0.3 * k, warmth: -0.25, size: 0.45 },
-    { elevation: 0.65, azimuth: a + Math.PI, strength: 0.9 * k, warmth: 0.1, size: 0.05 },
-  ],
-  clamshell: (a, k) => [
-    { elevation: 0.15, azimuth: a, strength: 0.4 * k, warmth: 0, size: 0.5 },
-    { elevation: 0.7, azimuth: a - 2.4, strength: 0.6 * k, warmth: 0.15, size: 0.08 },
-    { elevation: 0.7, azimuth: a + 2.4, strength: 0.6 * k, warmth: 0.15, size: 0.08 },
-  ],
-};
-type RigName = keyof typeof RIGS;
+let piece: Piece = { span: 30, top: 12 };
 
 const state = {
   subject: formNames[0],
@@ -503,7 +485,7 @@ const applyKey = () => {
   viewer.setKeyLight({
     elevation: state.keyElevation, azimuth: state.keyAzimuth, strength: state.keyStrength, warmth: state.keyWarmth, size: state.keySize,
   });
-  viewer.setRig(RIGS[state.rig](state.keyAzimuth, state.keyStrength));
+  viewer.setRig(RIGS[state.rig](state.keyAzimuth, state.keyStrength, piece));
 };
 const keySet = document.createElement('fieldset');
 keySet.innerHTML = '<legend>Key light</legend>';
@@ -513,7 +495,7 @@ keySet.append(
   slider('azimuth', -3.142, 3.142, 0.02, state.keyAzimuth, degrees, (v) => { state.keyAzimuth = v; applyKey(); }),
   slider('warmth', -1, 1, 0.05, state.keyWarmth, (v) => v.toFixed(2), (v) => { state.keyWarmth = v; applyKey(); }),
   slider('size', 0, 0.6, 0.01, state.keySize, (v) => (v < 0.005 ? 'point' : degrees(v * 2)), (v) => { state.keySize = v; applyKey(); }),
-  picker('rig', Object.keys(RIGS), state.rig, (v) => { state.rig = v as RigName; applyKey(); }),
+  picker('rig', rigNames, state.rig, (v) => { state.rig = v as RigName; applyKey(); }),
 );
 const hdrNote = document.createElement('div');
 hdrNote.className = 'note';
@@ -835,6 +817,10 @@ function build() {
     bounds.max[1] - bounds.min[1],
     bounds.max[2] - bounds.min[2],
   );
+  // a rig with a lamp in it hangs that lamp against the piece's own size, so
+  // the same preset works over a ring and over a candelabrum
+  piece = { span, top: bounds.max[2] };
+  if (RIGS[state.rig].length > 2) applyKey();
 
   const anchors: Anchor[] = state.showAnchors
     ? assembly.placements.flatMap((p) => p.anchors)
