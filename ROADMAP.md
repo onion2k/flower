@@ -1387,6 +1387,39 @@ orange explosions are one draw. And the ladder still has nothing to do here,
 because the honest answer at these numbers is that a 60 fps frame has three
 quarters of itself left over.
 
+## A unit for the game path, September 2026
+
+`render/` was given `mmPerUnit` when it became a library; `game/` never was,
+and a survey found what that cost. Its fixed sizes were written as bare
+numbers in a scale nobody had named: a spotlight's shadow map started twenty
+world units from the lamp, the soft kernel's bias was a constant 0.15 (that
+near plane times the angle a texel spans), gravity defaulted to 9.81 with a
+comment saying it was "a metre's worth", and three floors — the fog's reach
+and height, the look's `falloffHalf`, in the shader as well as on the CPU —
+clamped a length to at least one world unit. The arena had already paid twice
+for this and fixed it by hand each time: `renderer.gravity = 9810`, and a
+`falloffHalf` of 900 with the comment "rather than the library's 50".
+
+`GameRenderer` now takes `mmPerUnit` as its fifth argument and converts what
+it fixes itself: the spot near plane through `mm(20)`, the soft bias as that
+near plane times the texel angle (computed and passed in a new `spotSoft` slot
+of the shadow uniform, since a length cannot be a shader constant), gravity
+through `mm(9810)`, and the opening look and fog through `defaultLook()` and
+`noFog()`. The floors became 1e-6, which is nothing in any unit; the spot's
+frustum floors became fractions of its reach, and its default near plane a
+three-hundredth of it — which is exactly the old twenty at the arena's 6.5 m
+lamp, so nothing in millimetres moved. The fog's density and the look's
+`spotSoftness` are per length and convert the other way, and now say so.
+
+**What it was worth.** `units.gpu.test.ts` draws a lamp over a slab over a
+floor, in mist, in millimetres and in metres: mean absolute difference 0.001
+of a level. The same metre world drawn by a renderer not told the unit differs
+by 8.9 — and the frame shows why, because the slab casts no shadow at all: a
+near plane of twenty metres is past the whole scene. That is the bug a
+metre-scale consumer would have hit on its first spotlight, with no symptom
+beyond a missing shadow. 920 node tests and 71 GPU tests pass; the arena,
+which works in millimetres, draws the same as before.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
