@@ -96,6 +96,15 @@ the renderer for a sculpture in an afternoon.
   with nothing moving — against under a tenth of a millisecond for a
   material with one light and no table reflected in it. Sharing was
   measured and found to cost more than the duplication.
+- **A measured property is data; a consumer's realism is a permutation.**
+  The library's material record may carry any measured property at a
+  neutral default, so a stone that does not fluoresce pays nothing for
+  the field; and any tracer feature beyond the shared model — spectral
+  fire, birefringence, scattering inside a stone — is a renderer option
+  the consumer that wants it asks for, compiled out for everyone else.
+  This sketchbook's stones need neither, and its shaders must not carry
+  them. Residency is most of what a shader costs, so a feature gated by a
+  uniform is not opt-in; only a compiled-out one is.
 - **The language stays small and the words stay the maker's.** A new part
   is added when a real piece needs it; a new builtin name must not shadow a
   word a sketch would naturally use.
