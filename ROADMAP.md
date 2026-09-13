@@ -1515,7 +1515,17 @@ and heist asks for sixteen. The rule under it — a measured property is
 data, a consumer's realism is a permutation — went into INTENT and the
 library's README, and a test in the library now hashes the shaders a
 default build compiles, so a permutation that leaks a line into them is
-caught. Library v0.14.1, which this sketchbook pins from here.
+caught. Library v0.14.1.
+
+**Every cut a cutter has a name for.** The gem part's engine — an outline
+and a stack of tiers — now takes a polygon as an outline as readily as a
+curve, and any of fourteen tier stacks as a style, and builds thirty-three
+cuts from them: the brilliants to the princess and radiant, the old
+European and old mine with their open culets, the step cuts to the asscher
+and the French cut, the calibrated shapes from the kite to the half-moon,
+and the rose, the briolette, the checkerboard and the lens. A sketch may
+ask for any of them by name. Heist keeps the sheets. Library v0.15.0, which
+this sketchbook pins from here.
 
 ## Open, from the first phase
 
