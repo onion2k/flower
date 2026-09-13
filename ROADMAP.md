@@ -1467,6 +1467,44 @@ the sketch they were drawn for.
 Taken from the chess set, which wanted its photograph lit by the pendant it
 is played under rather than by a studio bench rig. Library v0.13.0.
 
+## The stones, September 2026
+
+A third consumer, [heist](https://github.com/onion2k/heist): a gemmologist's
+bench that puts one cut stone under the tracer and lays over it everything
+that can be measured off the mesh — the facets read back from the fans the
+builder emits, the trade's proportions, a weight in carats from the closed
+volume. Three things in the library came of looking that hard at a stone.
+
+**The trace could not converge.** The viewer's pacing judged a traced still's
+sample-a-frame as a slow run: 32 ms a sample against a 31 ms threshold at
+1.1 Mpx on an M-series laptop stepped the ladder down, the step resized the
+targets, the resize changed the frame's aspect by a rounding, and that
+restarted the accumulation — every 300 ms, the scale falling from 0.66 to
+0.46 while the count never passed a handful. A traced still is now neither
+paced nor fenced. The same machine reaches 1024 samples in about forty
+seconds. Library v0.13.2.
+
+**A stone's paths were cut short.** A path in a diamond makes three to five
+reflections inside before it finds a facet it can leave by; at the ordinary
+six bounces the pavilion went dark. Paths at or inside a stone now run to
+sixteen. A 6.5 mm brilliant in diamond on slate, the mean over a block of the
+crown at 48 samples: 98.6 at six bounces, 114.5 at sixteen, 116.9 at
+twenty-four, and a GPU test holds both the gain and the settling. Library
+v0.13.3.
+
+**The brilliant was not a brilliant.** Built from an outline and tiers it
+came out as 129 triangles with a crown angle of 30° nobody chose. The round
+and the oval are now laid out as a cutter lays them: the bezel's plane set by
+the crown angle through the girdle edge and the table vertex, the star tips
+and upper halves on it; the mains' plane by the pavilion angle down to the
+culet, the lower halves on that. Laid out on a circle and scaled along the
+length, so an oval's facets stay planes. `gem` takes `crownAngle`,
+`pavilionAngle`, `star`, `lowerHalf` and `culet`, with Tolkowsky's as the
+defaults. A 6.5 mm round: 73 facets — the trade's 57 and sixteen round the
+girdle — a 56 % table, 61.2 % depth, bezels at 34.5°, mains at 40.75°,
+1.02 ct in diamond where it weighed 0.90. The pear, marquise and trillion
+keep their tiers. Library v0.14.0, which this sketchbook pins from here.
+
 ## Open, from the first phase
 
 - A cushion whose collar softens with the cloth rather than a fixed slope,
