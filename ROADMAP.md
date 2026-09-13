@@ -1503,7 +1503,19 @@ length, so an oval's facets stay planes. `gem` takes `crownAngle`,
 defaults. A 6.5 mm round: 73 facets — the trade's 57 and sixteen round the
 girdle — a 56 % table, 61.2 % depth, bezels at 34.5°, mains at 40.75°,
 1.02 ct in diamond where it weighed 0.90. The pear, marquise and trillion
-keep their tiers. Library v0.14.0, which this sketchbook pins from here.
+keep their tiers. Library v0.14.0.
+
+**And what a stone's bounces cost.** Measured at 1024², median milliseconds
+a traced sample: a ring with a 7 mm diamond 9.10 at six bounces and 10.80 at
+sixteen, a fifth more; a stone alone half again; a bead with no stone the
+same either way. A fifth more on every sketch with a stone, for a pavilion
+this sketchbook was living with, is the consumer's call and not the
+library's: the budget became `RendererOptions.gemBounces`, six unless asked,
+and heist asks for sixteen. The rule under it — a measured property is
+data, a consumer's realism is a permutation — went into INTENT and the
+library's README, and a test in the library now hashes the shaders a
+default build compiles, so a permutation that leaks a line into them is
+caught. Library v0.14.1, which this sketchbook pins from here.
 
 ## Open, from the first phase
 
