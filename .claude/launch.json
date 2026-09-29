@@ -18,12 +18,6 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["--prefix", "/Users/christopherneale/projects/ooerrace", "run", "dev"],
       "port": 5190
-    },
-    {
-      "name": "spike",
-      "runtimeExecutable": "npm",
-      "runtimeArgs": ["--prefix", "/Users/christopherneale/projects/arena-spike", "run", "dev"],
-      "port": 5195
     }
   ]
 }
